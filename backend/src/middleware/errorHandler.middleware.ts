@@ -5,11 +5,17 @@
  */
 import { NextFunction, Request, Response } from "express";
 import { ZodError } from "zod";
+import { HttpError } from "../utils/httpError";
 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 export function errorHandler(err: unknown, req: Request, res: Response, next: NextFunction): void {
   if (err instanceof ZodError) {
     res.status(400).json({ error: "Validation failed", details: err.flatten() });
+    return;
+  }
+
+  if (err instanceof HttpError) {
+    res.status(err.statusCode).json({ error: err.message });
     return;
   }
 
