@@ -21,8 +21,13 @@ describe("AppServer skeleton", () => {
   });
 
   it("does not require auth for /auth/login", async () => {
-    const res = await request(app).post("/auth/login").send({ email: "a@b.com", password: "x" });
-    // Not 401 — route is reachable without a token (may still 501, that's fine here).
-    expect(res.status).not.toBe(401);
+    // A malformed body reaches Zod validation (400) without ever touching
+    // the DB, which proves the route was reachable without a bearer token
+    // — a real bad-credentials attempt would also legitimately 401, so
+    // that status alone can't distinguish "blocked by requireAuth" from
+    // "rejected by AuthService", but the auth-gate's own message can:
+    const res = await request(app).post("/auth/login").send({ email: "not-an-email" });
+    expect(res.status).toBe(400);
+    expect(res.body.error).not.toBe("Missing or malformed Authorization header");
   });
 });
