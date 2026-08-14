@@ -63,15 +63,32 @@ JWT + bcrypt · Jest. See Design Model §6.
 ### Prerequisites
 
 - Node.js 20+ and npm
-- A local or hosted PostgreSQL instance
+- Docker Desktop (for the local PostgreSQL container — see below)
 - Expo Go app (iOS/Android) or a simulator, for the mobile client
+
+### Database (PostgreSQL via Docker)
+
+`docker-compose.yml` at the repo root defines a local Postgres 16 container
+matching `backend/.env.example`'s `DATABASE_URL` out of the box (user
+`postgres`, password `postgres`, db `micro_invest`, port 5432).
+
+```bash
+docker compose up -d        # start Postgres in the background
+docker compose ps           # confirm the `db` service is healthy
+```
+
+Data persists in a named Docker volume (`micro-invest-db-data`) across
+restarts. To wipe it and start clean: `docker compose down -v`. Shortcuts
+for the same commands are also available from `backend/` once you've run
+`npm install` there: `npm run db:up`, `npm run db:down`, `npm run db:logs`,
+`npm run db:reset`.
 
 ### Backend
 
 ```bash
 cd backend
 npm install
-cp .env.example .env        # then fill in DATABASE_URL and JWT_SECRET
+cp .env.example .env        # already matches the docker-compose credentials
 npx prisma migrate dev --name init
 npm run dev                 # starts on http://localhost:4000
 ```
