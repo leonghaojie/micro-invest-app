@@ -1,0 +1,20 @@
+{
+  "expo": {
+    "name": "Micro-Invest",
+    "slug": "micro-invest-mobile",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "assetBundlePatterns": ["**/*"],
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.microinvest.mobile"
+    },
+    "android": {
+      "package": "com.microinvest.mobile"
+    },
+    "web": {
+      "bundler": "metro"
+    }
+  }
+}

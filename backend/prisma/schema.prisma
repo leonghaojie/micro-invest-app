@@ -1,0 +1,155 @@
+// Prisma schema — Design Model v1.0 §4 (Database Schema).
+// Derived directly from the SRS Data Dictionary (§4) and the Phase 1 locked
+// decisions (roadmap.md Phase 1 / DECISIONS.md).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ── §4.1 Enums ──────────────────────────────────────────────────────────
+
+enum RiskLevel {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+enum GoalType {
+  LEARN
+  HABIT
+  GROWTH
+}
+
+enum BudgetBand {
+  B1
+  B2
+  B3
+  B4
+}
+
+enum ContributionFrequency {
+  WEEKLY
+  MONTHLY
+}
+
+enum PeerGroupTier {
+  FULL
+  RISK_BUDGET
+  RISK_ONLY
+}
+
+// ── §4.2 Tables ─────────────────────────────────────────────────────────
+
+model User {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  // bcrypt salted hash (NFR-06) — never stores plaintext.
+  passwordHash String
+  // SRS §2.6 / v1.2: marks users created by prisma/seed.ts to fill peer
+  // groups up to MIN_GROUP_SIZE. Synthetic users participate in peer-group
+  // counts and percentile computation but cannot authenticate and are
+  // excluded from every endpoint/view that lists individual real users.
+  isSynthetic  Boolean  @default(false)
+  createdAt    DateTime @default(now())
+
+  profile     UserProfile?
+  simulations Simulation[]
+
+  @@map("users")
+}
+
+model UserProfile {
+  id         String     @id @default(uuid())
+  userId     String     @unique
+  riskLevel  RiskLevel
+  goalType   GoalType
+  // Derived server-side from raw monthly budget input (UC-02 step 4).
+  budgetBand BudgetBand
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_profiles")
+}
+
+model PortfolioTemplate {
+  id             String    @id @default(uuid())
+  name           String
+  riskLevel      RiskLevel
+  expectedReturn Decimal   @db.Decimal(6, 4)
+  // Unused by the MVP simulation (locked Phase 1 decision, SRS §2.5).
+  // Retained for a possible future extension only.
+  volatility     Decimal   @db.Decimal(6, 4)
+
+  simulations Simulation[]
+
+  @@map("portfolio_templates")
+}
+
+model Simulation {
+  id                 String                @id @default(uuid())
+  userId             String
+  templateId         String
+  frequency          ContributionFrequency
+  contributionAmount Decimal               @db.Decimal(12, 2)
+  durationMonths     Int
+  // Populated once the run completes (FR06).
+  finalValue         Decimal?              @db.Decimal(14, 2)
+  createdAt          DateTime              @default(now())
+
+  user          User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  template      PortfolioTemplate   @relation(fields: [templateId], references: [id])
+  contributions Contribution[]
+
+  @@map("simulations")
+}
+
+model Contribution {
+  id             String  @id @default(uuid())
+  simulationId   String
+  // One row per period; ordered by periodIndex.
+  periodIndex    Int
+  amount         Decimal @db.Decimal(12, 2)
+  portfolioValue Decimal @db.Decimal(14, 2)
+
+  simulation Simulation @relation(fields: [simulationId], references: [id], onDelete: Cascade)
+
+  @@unique([simulationId, periodIndex])
+  @@map("contributions")
+}
+
+model PeerGroup {
+  id         String        @id @default(uuid())
+  riskLevel  RiskLevel
+  // Nullable — null once relaxed past FULL/RISK_BUDGET (Design Model §5.1).
+  budgetBand BudgetBand?
+  goalType   GoalType?
+  tier       PeerGroupTier
+
+  stats PeerGroupStats?
+
+  @@map("peer_groups")
+}
+
+model PeerGroupStats {
+  id                String   @id @default(uuid())
+  peerGroupId       String   @unique
+  medianValue       Decimal  @db.Decimal(14, 2)
+  p25               Decimal  @db.Decimal(14, 2)
+  p50               Decimal  @db.Decimal(14, 2)
+  p75               Decimal  @db.Decimal(14, 2)
+  // Still blocked on the ConsistencyScore formula per the Design Model open
+  // items — SRS v1.1 §4 now defines the formula, this column stores it once
+  // the aggregation query (Design Model §5.3) is extended to compute it.
+  medianConsistency Decimal? @db.Decimal(5, 2)
+  memberCount       Int
+  lastComputedAt    DateTime @default(now())
+
+  peerGroup PeerGroup @relation(fields: [peerGroupId], references: [id], onDelete: Cascade)
+
+  @@map("peer_group_stats")
+}
