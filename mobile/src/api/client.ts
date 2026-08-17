@@ -11,7 +11,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 // EXPO_PUBLIC_* env vars are inlined by Expo at build time.
 // Set in mobile/.env (see mobile/.env.example) — defaults to the local
 // backend dev server for the Expo Go / simulator workflow.
-const API_BASE_URL = process.env.EXPO_PUBLIC_API_BASE_URL ?? "http://localhost:4000";
+const API_BASE_URL = process.env.EXPO_PUBLIC_API_BASE_URL ?? "http://10.65.95.96:4000";
 
 const AUTH_TOKEN_STORAGE_KEY = "micro-invest.authToken";
 

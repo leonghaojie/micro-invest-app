@@ -70,7 +70,8 @@ JWT + bcrypt · Jest. See Design Model §6.
 
 `docker-compose.yml` at the repo root defines a local Postgres 16 container
 matching `backend/.env.example`'s `DATABASE_URL` out of the box (user
-`postgres`, password `postgres`, db `micro_invest`, port 5432).
+`postgres`, password `postgres`, db `micro_invest`, port 5433 — not the
+default 5432, to avoid clashing with a native Postgres install).
 
 ```bash
 docker compose up -d        # start Postgres in the background
