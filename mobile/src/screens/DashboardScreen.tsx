@@ -165,6 +165,9 @@ export function DashboardScreen({ navigation }: Props) {
       <Pressable style={styles.submitButton} onPress={() => navigation.navigate("SimulationSetup")}>
         <Text style={styles.submitButtonText}>Run another simulation</Text>
       </Pressable>
+      <Pressable style={styles.secondaryButton} onPress={() => navigation.navigate("PeerComparison")}>
+        <Text style={styles.secondaryButtonText}>Compare with peers</Text>
+      </Pressable>
     </ScrollView>
   );
 }
