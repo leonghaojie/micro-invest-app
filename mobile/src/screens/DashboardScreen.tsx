@@ -168,6 +168,9 @@ export function DashboardScreen({ navigation }: Props) {
       <Pressable style={styles.secondaryButton} onPress={() => navigation.navigate("PeerComparison")}>
         <Text style={styles.secondaryButtonText}>Compare with peers</Text>
       </Pressable>
+      <Pressable style={styles.secondaryButton} onPress={() => navigation.navigate("Insights")}>
+        <Text style={styles.secondaryButtonText}>View insights</Text>
+      </Pressable>
     </ScrollView>
   );
 }
