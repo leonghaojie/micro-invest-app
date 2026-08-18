@@ -22,11 +22,19 @@ export interface ProfileResult {
 }
 
 /**
- * ⚠️ PLACEHOLDER thresholds — the SRS Data Dictionary defines the real
- * B1–B4 cutoffs and this repo doesn't carry a copy of it. Round-number
- * quartile split chosen so the pipeline (UI → derivation → peer grouping)
- * is exercisable end-to-end; swap these for the SRS-locked values before
- * Phase 5 peer grouping depends on band correctness.
+ * ⚠️ PLACEHOLDER thresholds — checked against every version of the actual
+ * SRS/Design Model docs (Phase0_SRS_UseCase_Model_v1.0, Phase1_SRS_v1.1,
+ * Phase1_Analysis_Model_v1.0, Phase2_Design_Model_v1.0): all of them say
+ * "System maps the budget to a budget band (B1–B4)" without ever locking
+ * exact dollar cutoffs. Unlike TBD-01/02/04 (simulation model, peer-group
+ * fallback, ConsistencyScore), which v1.1 explicitly resolves, this one
+ * was never assigned a TBD number and never closed — it's a genuine gap
+ * in the requirements, not something this repo is just missing a copy of.
+ * Round-number quartile split chosen so the pipeline (UI → derivation →
+ * peer grouping) is exercisable end-to-end; swap these for real values
+ * once the SRS actually defines them — peer grouping (FULL/RISK_BUDGET
+ * tiers) keys off this band, so getting it wrong silently misgroups
+ * users rather than erroring.
  */
 function deriveBudgetBand(monthlyBudget: number): BudgetBand {
   if (monthlyBudget < 50) return BudgetBand.B1;

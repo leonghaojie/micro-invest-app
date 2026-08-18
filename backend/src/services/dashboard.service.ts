@@ -46,6 +46,30 @@ function monthIndex(date: Date): number {
   return date.getUTCFullYear() * 12 + date.getUTCMonth();
 }
 
+// Exported so peerBenchmark.service.ts can compute each peer group
+// member's own ConsistencyScore with the identical formula, rather than
+// re-deriving the same month-bucketing logic a second time (in raw SQL, no
+// less) — SRS v1.1 §4 Data Dictionary defines exactly one ConsistencyScore
+// formula, so there must be exactly one implementation of it.
+export function computeConsistencyScore(simulationDates: Date[], now: Date = new Date()): DashboardBehaviour {
+  if (simulationDates.length === 0) {
+    return { consistencyScore: 0, monthsWithActivity: 0, monthsSinceFirstRun: 0 };
+  }
+
+  const monthIndexes = simulationDates.map(monthIndex);
+  const monthsWithActivity = new Set(monthIndexes).size;
+
+  const firstRunMonth = Math.min(...monthIndexes);
+  const currentMonth = monthIndex(now);
+  const monthsSinceFirstRun = currentMonth - firstRunMonth + 1;
+
+  return {
+    consistencyScore: round2((monthsWithActivity / monthsSinceFirstRun) * 100),
+    monthsWithActivity,
+    monthsSinceFirstRun,
+  };
+}
+
 class DashboardService {
   async getSummary(userId: string): Promise<DashboardSummary> {
     const [totalSimulations, latest] = await Promise.all([
@@ -113,22 +137,7 @@ class DashboardService {
       select: { createdAt: true },
     });
 
-    if (simulations.length === 0) {
-      return { consistencyScore: 0, monthsWithActivity: 0, monthsSinceFirstRun: 0 };
-    }
-
-    const monthIndexes = simulations.map((s) => monthIndex(s.createdAt));
-    const monthsWithActivity = new Set(monthIndexes).size;
-
-    const firstRunMonth = Math.min(...monthIndexes);
-    const currentMonth = monthIndex(new Date());
-    const monthsSinceFirstRun = currentMonth - firstRunMonth + 1;
-
-    return {
-      consistencyScore: round2((monthsWithActivity / monthsSinceFirstRun) * 100),
-      monthsWithActivity,
-      monthsSinceFirstRun,
-    };
+    return computeConsistencyScore(simulations.map((s) => s.createdAt));
   }
 }
 
