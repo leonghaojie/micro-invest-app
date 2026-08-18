@@ -39,6 +39,20 @@ function mockLatestSimulation(finalValue: number, contributionAmount: number) {
   });
 }
 
+// medianConsistency defaults to 100 (== STEADY_BEHAVIOUR's score) so tests
+// that aren't specifically about the consistency card don't accidentally
+// trigger it via an unset/undefined comparison.
+function mockPeerStats(overrides: Partial<{ p25: number; p50: number; p75: number; memberCount: number; medianConsistency: number }>) {
+  mockedBenchmark.computePeerGroupStats.mockResolvedValue({
+    p25: 100,
+    p50: 200,
+    p75: 300,
+    memberCount: 10,
+    medianConsistency: 100,
+    ...overrides,
+  });
+}
+
 describe("InsightService", () => {
   beforeEach(() => {
     mockedGrouping.assignPeerGroup.mockResolvedValue(GROUP);
@@ -55,7 +69,7 @@ describe("InsightService", () => {
 
   it("returns a no-peer-data card when the peer group has no members yet", async () => {
     mockLatestSimulation(100, 50);
-    mockedBenchmark.computePeerGroupStats.mockResolvedValue({ p25: 0, p50: 0, p75: 0, memberCount: 0 });
+    mockPeerStats({ p25: 0, p50: 0, p75: 0, memberCount: 0 });
 
     const cards = await insightService.generate("user-1");
 
@@ -64,7 +78,7 @@ describe("InsightService", () => {
 
   it("flags a gap and computes the exact contribution to reach the peer median", async () => {
     mockLatestSimulation(80, 50);
-    mockedBenchmark.computePeerGroupStats.mockResolvedValue({ p25: 100, p50: 200, p75: 300, memberCount: 10 });
+    mockPeerStats({ p25: 100, p50: 200, p75: 300 });
 
     const cards = await insightService.generate("user-1");
 
@@ -78,7 +92,7 @@ describe("InsightService", () => {
 
   it("flags in-line-with-peers and suggests reaching the 75th percentile", async () => {
     mockLatestSimulation(150, 50);
-    mockedBenchmark.computePeerGroupStats.mockResolvedValue({ p25: 100, p50: 200, p75: 300, memberCount: 10 });
+    mockPeerStats({ p25: 100, p50: 200, p75: 300 });
 
     const cards = await insightService.generate("user-1");
 
@@ -89,36 +103,50 @@ describe("InsightService", () => {
 
   it("gives positive reinforcement with no suggestion when ahead of the median", async () => {
     mockLatestSimulation(250, 50);
-    mockedBenchmark.computePeerGroupStats.mockResolvedValue({ p25: 100, p50: 200, p75: 300, memberCount: 10 });
+    mockPeerStats({ p25: 100, p50: 200, p75: 300 });
 
     const cards = await insightService.generate("user-1");
 
     expect(cards[0]).toEqual(expect.objectContaining({ id: "peer-ahead", tone: "positive", showAdjustPlanAction: false }));
   });
 
-  it("skips the peer card (without crashing) when the user has no profile yet", async () => {
+  it("skips peer-relative cards (without crashing) when the user has no profile yet", async () => {
     mockLatestSimulation(100, 50);
     mockedGrouping.assignPeerGroup.mockRejectedValue(Object.assign(new Error("no profile"), { statusCode: 404 }));
 
     const cards = await insightService.generate("user-1");
 
-    expect(cards.find((c) => c.id.startsWith("peer"))).toBeUndefined();
+    expect(cards).toEqual([]);
   });
 
-  it("adds a consistency card when behaviour is inconsistent past the first month", async () => {
+  it("adds a consistency card when the user is below the peer median ConsistencyScore (UC-06 step 3)", async () => {
     mockLatestSimulation(250, 50);
-    mockedBenchmark.computePeerGroupStats.mockResolvedValue({ p25: 100, p50: 200, p75: 300, memberCount: 10 });
+    mockPeerStats({ p25: 100, p50: 200, p75: 300, medianConsistency: 80 });
     mockedDashboard.getBehaviour.mockResolvedValue({ consistencyScore: 50, monthsWithActivity: 1, monthsSinceFirstRun: 2 });
 
     const cards = await insightService.generate("user-1");
 
-    expect(cards.map((c) => c.id)).toContain("consistency");
+    const consistencyCard = cards.find((c) => c.id === "consistency");
+    expect(consistencyCard).toBeDefined();
+    expect(consistencyCard?.body).toContain("50%");
+    expect(consistencyCard?.body).toContain("80%");
   });
 
-  it("omits the consistency card for a cold-start user (one month in, already 100%)", async () => {
+  it("omits the consistency card when at or above the peer median (cold-start users can never be below it)", async () => {
     mockLatestSimulation(250, 50);
-    mockedBenchmark.computePeerGroupStats.mockResolvedValue({ p25: 100, p50: 200, p75: 300, memberCount: 10 });
-    // STEADY_BEHAVIOUR from beforeEach: consistencyScore 100, monthsSinceFirstRun 1.
+    mockPeerStats({ p25: 100, p50: 200, p75: 300, medianConsistency: 100 });
+    // STEADY_BEHAVIOUR from beforeEach: consistencyScore 100 — equal to,
+    // never below, the peer median.
+
+    const cards = await insightService.generate("user-1");
+
+    expect(cards.map((c) => c.id)).not.toContain("consistency");
+  });
+
+  it("omits the consistency card when there's no peer data to compare against", async () => {
+    mockLatestSimulation(250, 50);
+    mockPeerStats({ p25: 0, p50: 0, p75: 0, memberCount: 0, medianConsistency: 0 });
+    mockedDashboard.getBehaviour.mockResolvedValue({ consistencyScore: 10, monthsWithActivity: 1, monthsSinceFirstRun: 5 });
 
     const cards = await insightService.generate("user-1");
 
@@ -127,7 +155,7 @@ describe("InsightService", () => {
 
   it("never returns more than 3 cards", async () => {
     mockLatestSimulation(250, 50);
-    mockedBenchmark.computePeerGroupStats.mockResolvedValue({ p25: 100, p50: 200, p75: 300, memberCount: 10 });
+    mockPeerStats({ p25: 100, p50: 200, p75: 300, medianConsistency: 80 });
     mockedDashboard.getBehaviour.mockResolvedValue({ consistencyScore: 50, monthsWithActivity: 1, monthsSinceFirstRun: 2 });
 
     const cards = await insightService.generate("user-1");

@@ -45,10 +45,14 @@ This is the designated Lab #4 basis-path testing target (roadmap.md Phase 5)
 > — SRS v1.2 §4 Data Dictionary
 
 Implements: FR08, FR10 (`PeerGroupStats.medianConsistency`). Owner:
-`backend/src/services/dashboard.service.ts` (Phase 4) and
-`backend/src/services/peerBenchmark.service.ts` (Phase 5 — still an open
-item per Design Model §8: this column is not yet computed by the §5.3
-aggregation query).
+`backend/src/services/dashboard.service.ts` (Phase 4, `computeConsistencyScore`
+— shared, not reimplemented, by peerBenchmark.service.ts below) and
+`backend/src/services/peerBenchmark.service.ts` (Phase 5 — `medianConsistency`
+is now computed: each peer group member's own ConsistencyScore, via the same
+shared function, median-aggregated in application code and persisted into
+`peer_group_stats`). `insight.service.ts` (Phase 6, FR12) uses this to
+implement UC-06 step 3's own example of a "meaningful gap": the user's
+ConsistencyScore falling below the peer group's median.
 
 ## 4. Synthetic peer data generation strategy (SRS TBD-03 — resolved v1.2, Phase 2)
 
@@ -82,14 +86,26 @@ escape hatch in the codebase (Design Model §3.1). Owner:
 
 ## Open items (Design Model §8, carried forward)
 
-- `medianConsistency` is not yet populated by the §5.3 aggregation query —
-  blocked on wiring decision #3 above into that query.
 - Synthetic peer data generation (decision #4) is documented here and in
   `prisma/seed.ts` but not yet implemented — Phase 5.
+- **Budget band (B1–B4) thresholds are undefined in the SRS.** Checked
+  every saved version of the requirements docs (Phase0_SRS_UseCase_Model
+  v1.0, Phase1_SRS_v1.1, Phase1_Analysis_Model_v1.0, Phase2_Design_Model
+  v1.0) — all of them describe deriving a budget band from the raw
+  monthly-budget input (FR03, UC-02 step 4) but none ever locks the exact
+  dollar cutoffs. Unlike TBD-01/02/03/04 below, this was never assigned a
+  TBD number and never closed, so it's easy to miss that it's still open.
+  `backend/src/services/profile.service.ts` currently uses a placeholder
+  round-number quartile split, flagged inline — since peer grouping keys
+  off this band, a wrong threshold would silently misgroup users rather
+  than error. Needs an actual SRS decision (and probably a TBD-05 entry)
+  before it can be called locked.
 
 ## Status
 
-All four SRS TBDs (TBD-01 through TBD-04) are closed as of SRS v1.2 / Design
-Model v1.0 (Phase 2). This skeleton repo wires the structure these
-decisions imply; the implementations land per the phases noted above
-(see `roadmap.md`).
+All four numbered SRS TBDs (TBD-01 through TBD-04) are closed as of SRS
+v1.1/v1.2 / Design Model v1.0 (Phase 2). The budget-band gap above was
+never numbered as a TBD in the first place, so it isn't covered by that
+"all closed" statement — see Open items. This skeleton repo wires the
+structure these decisions imply; the implementations land per the phases
+noted above (see `roadmap.md`).

@@ -3,13 +3,24 @@
  * gaps, with a positive-reinforcement fallback when no meaningful gap is
  * detected (UC-06 alt flow) instead of always nagging about a shortfall.
  *
- * ⚠️ The gap thresholds and card copy below are a placeholder rule set —
- * DECISIONS.md doesn't lock a "meaningful gap" formula the way it does for
- * e.g. ConsistencyScore. What IS exact: the suggested contribution
- * figures. Since the compounding recurrence (simulation.service.ts,
- * DECISIONS.md #1) has no additive term besides contributionAmount each
- * period, finalValue is exactly proportional to contributionAmount for a
- * fixed rate/period count — so
+ * UC-06 step 3 (SRS v1.1 §6): "System applies insight rules to detect
+ * meaningful gaps (e.g., below peer median ConsistencyScore)." That's the
+ * one gap type the SRS names explicitly, so buildConsistencyCard compares
+ * the user's own ConsistencyScore against PeerGroupStats.medianConsistency
+ * (peerBenchmark.service.ts), not just against their own history. The
+ * value-gap card (below/near/above the peer p25/p50/p75) is a second,
+ * complementary gap type the SRS doesn't rule out ("e.g." implies the
+ * ConsistencyScore case is an example, not the only one) — and the Data
+ * Dictionary's own PeerGroupStats fields (median_value, p25, p50, p75)
+ * exist specifically to support exactly this kind of comparison, so it's
+ * not an invented rule the way an arbitrary percentile cutoff would be.
+ * The exact "meaningful" percentile boundary (p25 vs p50 as the behind/
+ * in-line line) is still a placeholder judgement call, flagged below.
+ *
+ * What IS exact: the suggested contribution figures. Since the compounding
+ * recurrence (simulation.service.ts, DECISIONS.md #1) has no additive term
+ * besides contributionAmount each period, finalValue is exactly
+ * proportional to contributionAmount for a fixed rate/period count — so
  *   newContribution = currentContribution * (targetValue / currentFinalValue)
  * reaches targetValue exactly, not an approximation.
  */
@@ -49,6 +60,8 @@ async function getLatestSimulation(userId: string): Promise<LatestSimulation | n
   };
 }
 
+// ⚠️ p25/p50 as the behind/in-line boundary is a placeholder judgement
+// call — DECISIONS.md doesn't lock an exact "meaningful gap" percentile.
 function buildPeerCard(latest: LatestSimulation, stats: PeerGroupStats): InsightCard {
   if (stats.memberCount === 0) {
     return {
@@ -99,12 +112,22 @@ function buildPeerCard(latest: LatestSimulation, stats: PeerGroupStats): Insight
   };
 }
 
-function buildConsistencyCard(behaviour: DashboardBehaviour): InsightCard {
+// UC-06's literal example gap: user's own ConsistencyScore vs the peer
+// group's median (PeerGroupStats.medianConsistency). Cold-start users
+// always score 100 (SRS v1.1 §4) and can therefore never trigger this —
+// no separate guard needed for that case.
+function buildConsistencyCard(behaviour: DashboardBehaviour, peerMedianConsistency: number): InsightCard {
   return {
     id: "consistency",
     tone: "suggestion",
-    title: "Build a more consistent habit",
-    body: `You've been active in ${behaviour.monthsWithActivity} of ${behaviour.monthsSinceFirstRun} months since your first simulation. Running one every month builds a stronger track record.`,
+    title: "Below peer consistency",
+    body: `Your ConsistencyScore is ${behaviour.consistencyScore.toFixed(
+      0
+    )}%, below the peer median of ${peerMedianConsistency.toFixed(0)}%. You've been active in ${
+      behaviour.monthsWithActivity
+    } of ${behaviour.monthsSinceFirstRun} month${
+      behaviour.monthsSinceFirstRun === 1 ? "" : "s"
+    } since your first simulation — running one every month builds a stronger track record.`,
     showAdjustPlanAction: true,
   };
 }
@@ -126,6 +149,7 @@ class InsightService {
     }
 
     const cards: InsightCard[] = [];
+    const behaviour = await dashboardService.getBehaviour(userId);
 
     // A user profile is required for peer grouping (assignPeerGroup 404s
     // without one), but by this point they've already gone through
@@ -135,13 +159,12 @@ class InsightService {
       const group = await peerGroupingService.assignPeerGroup(userId);
       const stats = await peerBenchmarkService.computePeerGroupStats(group);
       cards.push(buildPeerCard(latest, stats));
-    } catch {
-      // no profile — skip the peer card rather than fail the whole screen
-    }
 
-    const behaviour = await dashboardService.getBehaviour(userId);
-    if (behaviour.monthsSinceFirstRun > 1 && behaviour.consistencyScore < 100) {
-      cards.push(buildConsistencyCard(behaviour));
+      if (stats.memberCount > 0 && behaviour.consistencyScore < stats.medianConsistency) {
+        cards.push(buildConsistencyCard(behaviour, stats.medianConsistency));
+      }
+    } catch {
+      // no profile — skip peer-relative cards rather than fail the whole screen
     }
 
     return cards.slice(0, 3);
