@@ -49,11 +49,14 @@ export interface SimulationHistoryItem {
   createdAt: string;
 }
 
-function round2(value: number): number {
+// Exported for reuse by dashboard.service.ts, which needs the same
+// contribution-amount-times-periods derivation to reconstruct a past
+// simulation's totalContributed (not itself persisted on Simulation).
+export function round2(value: number): number {
   return Math.round(value * 100) / 100;
 }
 
-function computePeriods(frequency: ContributionFrequency, durationMonths: number): number {
+export function computePeriods(frequency: ContributionFrequency, durationMonths: number): number {
   return frequency === ContributionFrequency.WEEKLY ? Math.round((durationMonths * 52) / 12) : durationMonths;
 }
 
