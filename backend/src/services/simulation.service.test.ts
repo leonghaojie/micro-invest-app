@@ -1,7 +1,8 @@
 /**
  * SimulationService unit tests — FR05/FR06/FR07. Prisma is mocked so these
  * run without a live Postgres connection and pin down the deterministic
- * compounding formula (DECISIONS.md #1) against hand-computed values.
+ * compounding formula (DECISIONS.md #1, and its amendment) against
+ * hand-computed values.
  */
 import { prisma } from "../config/prisma";
 import { simulationService } from "./simulation.service";
@@ -18,13 +19,29 @@ const mockedPrisma = prisma as unknown as {
   simulation: { create: jest.Mock };
 };
 
-function mockTemplate(expectedReturn: string) {
+// No historicalReturns rows — exercises the pre-amendment constant-rate
+// fallback, unchanged from the original locked model.
+function mockTemplateWithoutHistory(expectedReturn: string) {
   mockedPrisma.portfolioTemplate.findUnique.mockResolvedValue({
     id: "template-1",
     name: "Test Template",
     riskLevel: "MEDIUM",
     expectedReturn,
     volatility: "0.1000",
+    historicalReturns: [],
+  });
+}
+
+// historicalReturns present — exercises the DECISIONS.md #1 amendment
+// (real annual-return replay). `returns` is ascending by year.
+function mockTemplateWithHistory(returns: string[]) {
+  mockedPrisma.portfolioTemplate.findUnique.mockResolvedValue({
+    id: "template-1",
+    name: "Test Template",
+    riskLevel: "MEDIUM",
+    expectedReturn: "0.0700",
+    volatility: "0.1000",
+    historicalReturns: returns.map((returnRate, i) => ({ year: 2016 + i, returnRate })),
   });
 }
 
@@ -62,73 +79,161 @@ describe("SimulationService", () => {
       expect(mockedPrisma.portfolioTemplate.findUnique).not.toHaveBeenCalled();
     });
 
-    it("at 0% expected return, final value equals total contributed exactly", async () => {
-      mockTemplate("0.0000");
-      mockCreate();
+    describe("fallback: no HistoricalReturn rows (pre-amendment constant-rate model)", () => {
+      it("at 0% expected return, final value equals total contributed exactly", async () => {
+        mockTemplateWithoutHistory("0.0000");
+        mockCreate();
 
-      const result = await simulationService.run("user-1", {
-        templateId: "11111111-1111-1111-1111-111111111111",
-        frequency: "MONTHLY",
-        contributionAmount: 50,
-        durationMonths: 6,
+        const result = await simulationService.run("user-1", {
+          templateId: "11111111-1111-1111-1111-111111111111",
+          frequency: "MONTHLY",
+          contributionAmount: 50,
+          durationMonths: 6,
+        });
+
+        expect(result.finalValue).toBe(300);
+        expect(result.totalContributed).toBe(300);
+        expect(result.growth).toBe(0);
+        expect(result.historyWrapped).toBe(false);
       });
 
-      expect(result.finalValue).toBe(300);
-      expect(result.totalContributed).toBe(300);
-      expect(result.growth).toBe(0);
+      it("matches a hand-computed value for a 12% annual return over 2 monthly periods", async () => {
+        // periodicRate = 0.12 / 12 = 0.01 (linear division, not geometric —
+        // this is the original locked model's formula, unchanged)
+        // n=0: (0 + 100) * 1.01 = 101
+        // n=1: (101 + 100) * 1.01 = 203.01
+        mockTemplateWithoutHistory("0.1200");
+        mockCreate();
+
+        const result = await simulationService.run("user-1", {
+          templateId: "11111111-1111-1111-1111-111111111111",
+          frequency: "MONTHLY",
+          contributionAmount: 100,
+          durationMonths: 2,
+        });
+
+        expect(result.finalValue).toBe(203.01);
+        expect(result.totalContributed).toBe(200);
+        expect(result.growth).toBe(3.01);
+      });
+
+      it("derives a WEEKLY period count from durationMonths (52/12 weeks per month)", async () => {
+        mockTemplateWithoutHistory("0.0000");
+        mockCreate();
+
+        await simulationService.run("user-1", {
+          templateId: "11111111-1111-1111-1111-111111111111",
+          frequency: "WEEKLY",
+          contributionAmount: 10,
+          durationMonths: 1,
+        });
+
+        const createArgs = mockedPrisma.simulation.create.mock.calls[0][0];
+        expect(createArgs.data.contributions.createMany.data).toHaveLength(4); // round(52/12) = 4
+      });
+
+      it("persists one Contribution row per period via nested createMany", async () => {
+        mockTemplateWithoutHistory("0.0000");
+        mockCreate();
+
+        await simulationService.run("user-1", {
+          templateId: "11111111-1111-1111-1111-111111111111",
+          frequency: "MONTHLY",
+          contributionAmount: 25,
+          durationMonths: 3,
+        });
+
+        const createArgs = mockedPrisma.simulation.create.mock.calls[0][0];
+        expect(createArgs.data.contributions.createMany.data).toEqual([
+          { periodIndex: 0, amount: 25, portfolioValue: 25 },
+          { periodIndex: 1, amount: 25, portfolioValue: 50 },
+          { periodIndex: 2, amount: 25, portfolioValue: 75 },
+        ]);
+      });
     });
 
-    it("matches a hand-computed value for a 12% annual return over 2 monthly periods", async () => {
-      // periodicRate = 0.12 / 12 = 0.01
-      // n=0: (0 + 100) * 1.01 = 101
-      // n=1: (101 + 100) * 1.01 = 203.01
-      mockTemplate("0.1200");
-      mockCreate();
+    describe("DECISIONS.md #1 amendment: real historical-return replay", () => {
+      it("derives the periodic rate geometrically so a full year reproduces the real annual return", async () => {
+        // periodicRate = 1.10^(1/12) - 1 ≈ 0.0079741404
+        // after 1 period: 100 * (1 + periodicRate) = 100.7974... -> 100.80
+        mockTemplateWithHistory(["0.1000"]);
+        mockCreate();
 
-      const result = await simulationService.run("user-1", {
-        templateId: "11111111-1111-1111-1111-111111111111",
-        frequency: "MONTHLY",
-        contributionAmount: 100,
-        durationMonths: 2,
+        const result = await simulationService.run("user-1", {
+          templateId: "11111111-1111-1111-1111-111111111111",
+          frequency: "MONTHLY",
+          contributionAmount: 100,
+          durationMonths: 1,
+        });
+
+        expect(result.finalValue).toBe(100.8);
       });
 
-      expect(result.finalValue).toBe(203.01);
-      expect(result.totalContributed).toBe(200);
-      expect(result.growth).toBe(3.01);
-    });
+      it("walks through consecutive real years without wrapping when duration fits the series", async () => {
+        // year 0 = 10%, year 1 = 20%, monthly, 24 periods = exactly 2 years
+        mockTemplateWithHistory(["0.1000", "0.2000"]);
+        mockCreate();
 
-    it("derives a WEEKLY period count from durationMonths (52/12 weeks per month)", async () => {
-      mockTemplate("0.0000");
-      mockCreate();
+        const result = await simulationService.run("user-1", {
+          templateId: "11111111-1111-1111-1111-111111111111",
+          frequency: "MONTHLY",
+          contributionAmount: 100,
+          durationMonths: 24,
+        });
 
-      await simulationService.run("user-1", {
-        templateId: "11111111-1111-1111-1111-111111111111",
-        frequency: "WEEKLY",
-        contributionAmount: 10,
-        durationMonths: 1,
+        expect(result.finalValue).toBe(2843.25);
+        expect(result.historyWrapped).toBe(false);
       });
 
-      const createArgs = mockedPrisma.simulation.create.mock.calls[0][0];
-      expect(createArgs.data.contributions.createMany.data).toHaveLength(4); // round(52/12) = 4
-    });
+      it("wraps back to the start of the series once it's exhausted, and flags historyWrapped", async () => {
+        // only 1 real year of history, but a 24-month (2-year) plan —
+        // year 2 replays year 0's real return again.
+        mockTemplateWithHistory(["0.1000"]);
+        mockCreate();
 
-    it("persists one Contribution row per period via nested createMany", async () => {
-      mockTemplate("0.0000");
-      mockCreate();
+        const result = await simulationService.run("user-1", {
+          templateId: "11111111-1111-1111-1111-111111111111",
+          frequency: "MONTHLY",
+          contributionAmount: 100,
+          durationMonths: 24,
+        });
 
-      await simulationService.run("user-1", {
-        templateId: "11111111-1111-1111-1111-111111111111",
-        frequency: "MONTHLY",
-        contributionAmount: 25,
-        durationMonths: 3,
+        expect(result.finalValue).toBe(2654.51);
+        expect(result.historyWrapped).toBe(true);
       });
 
-      const createArgs = mockedPrisma.simulation.create.mock.calls[0][0];
-      expect(createArgs.data.contributions.createMany.data).toEqual([
-        { periodIndex: 0, amount: 25, portfolioValue: 25 },
-        { periodIndex: 1, amount: 25, portfolioValue: 50 },
-        { periodIndex: 2, amount: 25, portfolioValue: 75 },
-      ]);
+      it("does not flag historyWrapped for a plan shorter than the available history", async () => {
+        mockTemplateWithHistory(["0.1000", "0.2000", "-0.0500"]);
+        mockCreate();
+
+        const result = await simulationService.run("user-1", {
+          templateId: "11111111-1111-1111-1111-111111111111",
+          frequency: "MONTHLY",
+          contributionAmount: 100,
+          durationMonths: 6,
+        });
+
+        expect(result.historyWrapped).toBe(false);
+      });
+
+      it("persists one Contribution row per period, same shape as the fallback path", async () => {
+        mockTemplateWithHistory(["0.0000"]);
+        mockCreate();
+
+        await simulationService.run("user-1", {
+          templateId: "11111111-1111-1111-1111-111111111111",
+          frequency: "MONTHLY",
+          contributionAmount: 25,
+          durationMonths: 3,
+        });
+
+        const createArgs = mockedPrisma.simulation.create.mock.calls[0][0];
+        expect(createArgs.data.contributions.createMany.data).toEqual([
+          { periodIndex: 0, amount: 25, portfolioValue: 25 },
+          { periodIndex: 1, amount: 25, portfolioValue: 50 },
+          { periodIndex: 2, amount: 25, portfolioValue: 75 },
+        ]);
+      });
     });
   });
 });

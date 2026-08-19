@@ -1,7 +1,8 @@
 /**
- * Sanity test for the skeleton — confirms AppServer boots and wires
- * middleware correctly. Real FR-level test suites land per-phase
- * (roadmap.md Phases 3–8, Lab #4 alignment).
+ * Sanity test — confirms AppServer boots and wires middleware correctly
+ * (auth gate, error handler). Per-service FR-level test suites now live
+ * alongside each service (`*.service.test.ts`), per `FYP Roadmap.docx`
+ * Phases 3–6; this file stays scoped to app-level wiring only.
  */
 import request from "supertest";
 import { createApp } from "./app";

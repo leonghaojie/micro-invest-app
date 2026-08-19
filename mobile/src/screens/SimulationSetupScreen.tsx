@@ -25,6 +25,10 @@ interface RunSimulationResult {
   finalValue: number;
   totalContributed: number;
   growth: number;
+  // DECISIONS.md #1 amendment: true when this plan's duration outlasted
+  // the real historical-return series for the chosen template, so history
+  // was replayed from its start to fill the remaining periods.
+  historyWrapped: boolean;
 }
 
 const FREQUENCY_OPTIONS: { value: Frequency; label: string }[] = [
@@ -124,6 +128,12 @@ export function SimulationSetupScreen({ navigation }: Props) {
           <ResultRow label="Growth" value={formatCurrency(result.growth)} />
           <ResultRow label="Final value" value={formatCurrency(result.finalValue)} emphasized />
         </View>
+        {result.historyWrapped && (
+          <Text style={styles.historyNote}>
+            This plan runs longer than the real historical data available for this portfolio, so its return history
+            was replayed from the start to fill the remaining years.
+          </Text>
+        )}
         <Pressable style={styles.submitButton} onPress={() => navigation.replace("Dashboard")}>
           <Text style={styles.submitButtonText}>Continue to Dashboard</Text>
         </Pressable>
@@ -278,6 +288,14 @@ const styles = StyleSheet.create({
     fontSize: 16,
   },
   error: { color: "#c0392b", textAlign: "center", marginTop: 8 },
+  historyNote: {
+    fontSize: 12,
+    color: "#777",
+    textAlign: "center",
+    width: "100%",
+    maxWidth: 360,
+    marginTop: -4,
+  },
   submitButton: {
     backgroundColor: "#2e6fdb",
     borderRadius: 8,
