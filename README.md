@@ -6,12 +6,23 @@ A mobile app that simulates micro-investment behaviour and benchmarks a
 user's simulated outcomes against an anonymised peer group using
 percentile-based statistics.
 
-This is the **Phase 2 (Design) skeleton** — scaffolded directly from
-`Phase2_Design_Model_v1.0.docx` §7. Business logic is not implemented yet;
-routes return `501 Not Implemented` with a `todo` field pointing at the
-roadmap phase that implements them. See `roadmap.md` for the full phase
-plan and `DECISIONS.md` for the algorithm decisions this structure
+This repo has grown from the Phase 2 (Design) skeleton into a working
+implementation of the full SRS v1.2 feature set: **FR01–FR12** (register/
+login through insights, SRS §3.2) are implemented end-to-end, backend and
+mobile, with unit test coverage per service. **FR13** (simulation history)
+and the synthetic-peer-data seed script are the two remaining functional
+gaps — see [Status](#status) below. See `FYP Roadmap.docx` for the full
+phase plan and `DECISIONS.md` for the algorithm decisions this structure
 encodes.
+
+The simulation engine's return model was amended (19 Aug 2026, see
+`DECISIONS.md` #1) from a constant expected-return rate to deterministic
+replay of real historical annual returns for the actual SGX-listed fund
+each portfolio template is anchored to (A35 / CFA / ES3) — still fully
+reproducible (NFR-04), just grounded in real market history instead of an
+arbitrary constant. `Phase2_SRS_v1.3.docx` (alongside — not replacing —
+`Phase2_SRS_v1.2.docx`) reflects this: §2.5 updated, TBD-01 reopened in
+Appendix C.
 
 ## Architecture
 
@@ -39,11 +50,11 @@ Strategy pattern for peer-group fallback).
 ```
 micro-invest-app/
 ├─ backend/
-│  ├─ prisma/schema.prisma        Design Model §4 — DB schema
-│  ├─ prisma/seed.ts              Synthetic peer data (SRS §2.6, not yet implemented)
+│  ├─ prisma/schema.prisma        Design Model §4 — DB schema (+ HistoricalReturn, DECISIONS.md #1 amendment)
+│  ├─ prisma/seed.ts              Portfolio templates + real historical returns (seeded); synthetic peer data (SRS §2.6) still a TODO
 │  ├─ src/routes/                 auth, profile, portfolio, simulation, dashboard, peers, insights
 │  ├─ src/controllers/            thin — delegate to services
-│  ├─ src/services/               simulation, peerGrouping, peerBenchmark, ...
+│  ├─ src/services/               auth, profile, portfolio, simulation, dashboard, peerGrouping, peerBenchmark, insight
 │  ├─ src/middleware/             auth.middleware.ts (requireAuth), errorHandler.middleware.ts
 │  ├─ src/config/                 prisma.ts (PrismaClient singleton), env.ts
 │  └─ src/app.ts, src/index.ts    AppServer
@@ -91,12 +102,13 @@ cd backend
 npm install
 cp .env.example .env        # already matches the docker-compose credentials
 npx prisma migrate dev --name init
+npm run prisma:seed         # seeds portfolio templates (Conservative/Balanced/Growth)
 npm run dev                 # starts on http://localhost:4000
 ```
 
 Verify it booted: `curl http://localhost:4000/health` → `{"status":"ok"}`.
 
-Run the skeleton's sanity tests:
+Run the test suite (66 tests across every service):
 
 ```bash
 npm test
@@ -116,13 +128,64 @@ IP, not `localhost`.
 
 ## Project documentation
 
-The full requirements and design history lives in the project's document
-set (SRS v1.0 → v1.2, Analysis Model, Design Model) and `roadmap.md`. Key
-locked decisions are summarised in `DECISIONS.md` with the exact SRS
-wording for traceability.
+The full requirements and design history lives in this repo's root as the
+original Word documents, each superseding the last within its phase:
+
+- `Phase0_SRS_UseCase_Model_v1.0.docx` — Phase 0 / Lab #1: initial SRS, use
+  case model, low-fidelity UI mockups.
+- `Phase1_SRS_v1.1.docx`, `Phase1_Analysis_Model_v1.0.docx` — Phase 1 /
+  Lab #2: TBD-01/02/04 resolved (simulation return model, peer-grouping
+  fallback, ConsistencyScore formula).
+- `Phase2_SRS_v1.2.docx`, `Phase2_Design_Model_v1.0.docx` — Phase 2 /
+  Lab #3: TBD-03 resolved (synthetic peer data strategy) — **all four SRS
+  TBDs are closed as of v1.2**; design class diagram, DB schema,
+  architecture diagram.
+- `Phase2_SRS_v1.3.docx` — Phase 4 amendment (19 Aug 2026): **TBD-01
+  reopened** — the simulation engine's constant fixed-rate model is
+  replaced with deterministic replay of real historical fund data
+  (`DECISIONS.md` #1 amendment). Kept alongside v1.2, not replacing it, so
+  the closure/reopen history stays visible.
+- `FYP Roadmap.docx` — the full Phase 0–9 plan mapped to the Lab #1–#5
+  sequence and semester timeline.
+- `FYP_SRS_UseCase_UI_Lab1Style.docx` — an earlier Lab #1-formatted SRS
+  draft, superseded by the documents above.
+
+Key locked decisions are summarised in `DECISIONS.md`, quoting the exact
+SRS wording for traceability — every quote has been cross-checked directly
+against `Phase2_SRS_v1.2.docx`.
 
 ## Status
 
-Phase 2 (Design) deliverable: design class diagram, DB schema, architecture
-diagram, empty skeleton repo — this repo is the last of those four. Phase 3
-onward implements the business logic phase by phase; see `roadmap.md`.
+FR01–FR12 (SRS v1.2 §3.2) are implemented end-to-end, backend and mobile,
+matching `FYP Roadmap.docx` Phases 3–6:
+
+| Phase | Scope | FRs | Status |
+|---|---|---|---|
+| 3 | Auth, profile, portfolio templates | FR01–04 | ✅ Done |
+| 4 | Simulation engine, dashboard | FR05–08 | ✅ Done |
+| 5 | Peer benchmarking engine | FR09–11 | ✅ Done — grouping algorithm and percentile computation both implemented; synthetic peer *data generation* still open, see below |
+| 6 | Insight generation | FR12 | ✅ Done |
+| 7 | History, polish, NFRs | FR13 | ⬜ Not started |
+| 8 | Testing (Lab #4) | — | 🟡 Unit tests exist per-service, including basis-path coverage of the peer-grouping fallback branches and equivalence-class/boundary coverage of the simulation engine — exactly what Phases 4–5 flagged as the Lab #4 targets — but not yet packaged as a formal Lab #4 deliverable (documented results, reflection report) |
+| 9 | Demo prep & submission | — | ⬜ Not started |
+
+Remaining functional gaps against the SRS:
+
+- **FR13 / UC-07 Simulation History** — `GET /simulation/history` is still
+  a `501` stub (`simulation.service.ts`); no mobile screen. Per the SRS
+  screen list (§7.1) this belongs on the Dashboard (S-04), not a new
+  screen — FR13 traces to `UC-07/S-04`.
+- **Synthetic peer data generation** (SRS §2.6, DECISIONS.md #4) —
+  `prisma/seed.ts` seeds portfolio templates but still only prints a TODO
+  for the ~30-synthetic-peers-per-group strategy; no `isSynthetic` users
+  are actually generated yet. Peer grouping/benchmarking work correctly
+  without it — the RISK_ONLY floor tier and small-sample transparency
+  messaging handle sparse real data by design (UC-05 alt flow) — but peer
+  groups stay thin until either real users grow or this script is built.
+- **Budget band (B1–B4) thresholds** — genuinely undefined in every
+  version of the SRS, confirmed by direct inspection of all documents
+  listed above, not just an artifact of an earlier missing copy. See
+  `DECISIONS.md` Open Items.
+
+NFR verification (performance pass, usability testing, offline resilience
+— `FYP Roadmap.docx` Phase 7) hasn't been formally run yet.

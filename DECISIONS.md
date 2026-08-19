@@ -18,6 +18,80 @@ drift apart silently.
 
 Implements: FR05, FR06, FR07. Owner: `backend/src/services/simulation.service.ts` (Phase 4).
 
+### Amendment (19 Aug 2026) — grounded in real historical fund data
+
+This amends the locked decision above — not a fresh Phase 1 choice, but a
+genuine change to a decision the code already implemented and tested
+(`simulation.service.ts`'s `computeContributions`/`computePeriodicRate`,
+the mobile `SimulationSetupScreen`). Raised and worked through with the
+user in a prior chat (shared transcript, `Micro-investing in Singapore.pdf`)
+before landing here; explicit user sign-off obtained on the direction
+below before implementation.
+
+> Round-up, RSP, and fractional shares are all just different ways money
+> *enters* the portfolio (timing/amount pattern)... Historical performance
+> would attach to your `PortfolioTemplate` (i.e., which asset class... not
+> to the contribution mechanism.
+>
+> There are two ways to bring in real data... A — Realistic fixed rates
+> (minimal change)... B — Deterministic historical sequence replay...
+> Because the series is static (seeded once, not live-fetched or randomly
+> resampled), it's still 100% reproducible for identical inputs — NFR-04
+> survives.
+> — prior chat transcript, user selected option B
+
+**What changed:** `periodicRate` is no longer a single constant derived
+from `PortfolioTemplate.expectedReturn`. Each template now optionally has
+a `HistoricalReturn[]` series — one row per real calendar year, sourced
+from the actual SGX-listed fund the template is anchored to:
+
+| Template | Fund | Years |
+|---|---|---|
+| Conservative | A35 — ABF Singapore Bond Index Fund ETF | 2016–2025 (10) |
+| Balanced | CFA — Amova/NikkoAM-StraitsTrading Asia ex Japan REIT ETF | 2018–2025 (8 — real fund launched Mar 2017) |
+| Growth | ES3 — SPDR Straits Times Index ETF | 2016–2025 (10) |
+
+All three are on POSB Invest-Saver's real counter list (continuity with
+the Singapore micro-investing market research from Assignment 1) — "your
+simulated LOW-risk portfolio behaves like real ABF Bond ETF history" is a
+genuinely defensible claim to an examiner. Data sourced via web search
+against each fund's Yahoo Finance performance-history page, Aug 2026 —
+search-engine-summarized, not a downloaded raw CSV; treat as real and
+citable but not audit-grade precision (see `prisma/seed.ts` header for the
+per-fund figures and this caveat repeated at the source).
+
+**Algorithm:** each period looks up its calendar year's real annual return
+and derives a periodic rate geometrically — `(1 + annualReturn)^(1/periodsPerYear)
+- 1` — so a full year's compounding reproduces that year's real return
+exactly, rather than approximating it via linear division (the original
+model's `expectedReturn / periodsPerYear`, which is only meaningful for an
+abstract "expected return", not a contract for reproducing one specific
+real figure). The series wraps (`% history.length`) once exhausted for
+plans longer than the real data available — still deterministic (NFR-04
+intact: static seed data, not live-fetched or randomly resampled) — and a
+`historyWrapped` flag surfaces this in the API response and the mobile UI,
+mirroring how UC-05 already surfaces which peer-group fallback tier was
+used. A template with no `HistoricalReturn` rows falls back to the
+original constant-rate model unchanged, so this degrades gracefully
+rather than being a hard requirement for every template.
+
+**Not changed:** `PortfolioTemplate.expectedReturn` and `volatility` stay
+in the schema — `expectedReturn` is now a display fallback / summary
+figure only, `volatility` remains retained-but-unused as before.
+
+Implements: FR05, FR06, FR07 (amended). Owner:
+`backend/src/services/simulation.service.ts`, `backend/prisma/seed.ts`
+(schema: `HistoricalReturn`, migration `add_historical_returns`).
+
+**SRS amended.** `Phase2_SRS_v1.3.docx` (repo root, alongside — not
+replacing — `Phase2_SRS_v1.2.docx`) bumps the version header and revision
+history, adds a `[v1.3]` note to §1.1, appends the amendment text above to
+§2.5, and marks TBD-01 "REOPENED in v1.3" in Appendix C — all appended
+below the original `[v1.1]`/`[v1.2]` text in the same colour-coded
+per-version style the document already uses, not overwritten, so the
+closure history stays visible. Edited directly by unzip/edit `word/
+document.xml`/rezip, XSD-validated against the original.
+
 ## 2. Peer-grouping fallback hierarchy (SRS TBD-02 — resolved v1.1, Phase 1;
 detailed v1.0, Phase 2)
 
@@ -35,8 +109,9 @@ detailed v1.0, Phase 2)
 > — Design Model v1.0 §5.2
 
 Implements: FR09 (UC-05). Owner: `backend/src/services/peerGrouping.service.ts` (Phase 5).
-This is the designated Lab #4 basis-path testing target (roadmap.md Phase 5)
-— the three fallback branches are written to be independently exercisable.
+This is the designated Lab #4 basis-path testing target (`FYP Roadmap.docx`
+Phase 5) — the three fallback branches are written to be independently
+exercisable, and are (`peerGrouping.service.test.ts` exercises all three).
 
 ## 3. ConsistencyScore formula (SRS TBD-04 — resolved v1.1, Phase 1)
 
@@ -86,15 +161,28 @@ escape hatch in the codebase (Design Model §3.1). Owner:
 
 ## Open items (Design Model §8, carried forward)
 
-- Synthetic peer data generation (decision #4) is documented here and in
-  `prisma/seed.ts` but not yet implemented — Phase 5.
-- **Budget band (B1–B4) thresholds are undefined in the SRS.** Checked
-  every saved version of the requirements docs (Phase0_SRS_UseCase_Model
-  v1.0, Phase1_SRS_v1.1, Phase1_Analysis_Model_v1.0, Phase2_Design_Model
-  v1.0) — all of them describe deriving a budget band from the raw
-  monthly-budget input (FR03, UC-02 step 4) but none ever locks the exact
-  dollar cutoffs. Unlike TBD-01/02/03/04 below, this was never assigned a
-  TBD number and never closed, so it's easy to miss that it's still open.
+- **FR13 / UC-07 Simulation History is not implemented.** `GET
+  /simulation/history` is still a `501` stub
+  (`backend/src/services/simulation.service.ts`); no mobile screen exists.
+  Per the SRS screen list (§7.1) this belongs on the Dashboard (S-04), not
+  a new screen — FR13 traces to `UC-07/S-04`. Owner: Phase 7 (`FYP
+  Roadmap.docx`).
+- **Synthetic peer data generation (decision #4) is documented but not
+  implemented.** `prisma/seed.ts` seeds portfolio templates but still only
+  prints a TODO for the ~30-synthetic-peers-per-group strategy — no
+  `isSynthetic` users are actually generated. Peer grouping/benchmarking
+  (decisions #2, #5) work correctly without it: the RISK_ONLY floor tier
+  and small-sample transparency messaging handle sparse real data by
+  design (UC-05 alt flow). Owner: Phase 5 (`FYP Roadmap.docx`).
+- **Budget band (B1–B4) thresholds are undefined in the SRS.** Confirmed
+  by direct inspection of every requirements document in the repo root
+  (`Phase0_SRS_UseCase_Model_v1.0.docx`, `Phase1_SRS_v1.1.docx`,
+  `Phase1_Analysis_Model_v1.0.docx`, `Phase2_Design_Model_v1.0.docx`, and
+  — now that it's actually available — `Phase2_SRS_v1.2.docx` itself,
+  §6 UC-02 step 4) — all of them describe deriving a budget band from the
+  raw monthly-budget input but none ever locks the exact dollar cutoffs.
+  Unlike TBD-01/02/03/04 below, this was never assigned a TBD number and
+  never closed, so it's easy to miss that it's still open.
   `backend/src/services/profile.service.ts` currently uses a placeholder
   round-number quartile split, flagged inline — since peer grouping keys
   off this band, a wrong threshold would silently misgroup users rather
@@ -103,9 +191,16 @@ escape hatch in the codebase (Design Model §3.1). Owner:
 
 ## Status
 
-All four numbered SRS TBDs (TBD-01 through TBD-04) are closed as of SRS
-v1.1/v1.2 / Design Model v1.0 (Phase 2). The budget-band gap above was
-never numbered as a TBD in the first place, so it isn't covered by that
-"all closed" statement — see Open items. This skeleton repo wires the
-structure these decisions imply; the implementations land per the phases
-noted above (see `roadmap.md`).
+All four numbered SRS TBDs (TBD-01 through TBD-04) were closed as of SRS
+v1.2 / Design Model v1.0 (Phase 2) — confirmed directly against
+`Phase2_SRS_v1.2.docx` Appendix C. **TBD-01 was then reopened in v1.3**
+(19 Aug 2026, decision #1's amendment above) — see `Phase2_SRS_v1.3.docx`
+Appendix C for the current status. The budget-band gap above was never
+numbered as a TBD in the first place, so it was never covered by the "all
+closed" statement to begin with — see Open items.
+
+FR01–FR12 (SRS v1.2 §3.2) are implemented end-to-end, backend and mobile,
+matching `FYP Roadmap.docx` Phases 3–6. FR13 and the synthetic-peer-data
+seed script (Phase 7 and Phase 5 respectively) are the two remaining
+functional gaps — see Open items above and the README Status table for
+the full phase-by-phase breakdown.

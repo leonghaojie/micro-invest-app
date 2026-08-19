@@ -1,6 +1,6 @@
 // Prisma schema — Design Model v1.0 §4 (Database Schema).
 // Derived directly from the SRS Data Dictionary (§4) and the Phase 1 locked
-// decisions (roadmap.md Phase 1 / DECISIONS.md).
+// decisions (`FYP Roadmap.docx` Phase 1 / DECISIONS.md).
 
 generator client {
   provider = "prisma-client-js"
@@ -80,14 +80,40 @@ model PortfolioTemplate {
   id             String    @id @default(uuid())
   name           String
   riskLevel      RiskLevel
+  // DECISIONS.md #1 amendment: no longer drives the simulation engine when
+  // historicalReturns exist for this template (falls back to this constant
+  // rate only if the table is empty) — kept as a display fallback / summary
+  // figure per the amendment.
   expectedReturn Decimal   @db.Decimal(6, 4)
   // Unused by the MVP simulation (locked Phase 1 decision, SRS §2.5).
   // Retained for a possible future extension only.
   volatility     Decimal   @db.Decimal(6, 4)
 
-  simulations Simulation[]
+  simulations       Simulation[]
+  historicalReturns HistoricalReturn[]
 
   @@map("portfolio_templates")
+}
+
+// DECISIONS.md #1 amendment: real, dated annual returns backing the
+// deterministic historical-replay engine (simulation.service.ts). One row
+// per calendar year actually traded by the real fund each template is
+// anchored to (A35/CFA/ES3) — series length varies by fund (e.g. CFA only
+// has 8 years, its real fund having launched March 2017), which is why
+// this is its own table keyed by year rather than a fixed-length array.
+model HistoricalReturn {
+  id         String  @id @default(uuid())
+  templateId String
+  year       Int
+  // Real annual total return for that calendar year (source: fund
+  // performance-history pages, see DECISIONS.md #1 amendment for the
+  // per-fund citation and precision caveat).
+  returnRate Decimal @db.Decimal(6, 4)
+
+  template PortfolioTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+
+  @@unique([templateId, year])
+  @@map("historical_returns")
 }
 
 model Simulation {
@@ -142,9 +168,8 @@ model PeerGroupStats {
   p25               Decimal  @db.Decimal(14, 2)
   p50               Decimal  @db.Decimal(14, 2)
   p75               Decimal  @db.Decimal(14, 2)
-  // Still blocked on the ConsistencyScore formula per the Design Model open
-  // items — SRS v1.1 §4 now defines the formula, this column stores it once
-  // the aggregation query (Design Model §5.3) is extended to compute it.
+  // Each member's own ConsistencyScore (SRS §4 formula), median-aggregated
+  // — computed and persisted by peerBenchmark.service.ts (DECISIONS.md #3).
   medianConsistency Decimal? @db.Decimal(5, 2)
   memberCount       Int
   lastComputedAt    DateTime @default(now())

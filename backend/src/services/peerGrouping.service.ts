@@ -8,9 +8,10 @@
  * still below threshold, since nothing broader is left to fall back to
  * (UC-05 exception, DECISIONS.md #2).
  *
- * This is the Lab #4 basis-path testing target (roadmap.md, Phase 5) — the
- * three branches below are written to be independently exercisable in a
- * test, so kept as separate `if` returns rather than collapsed.
+ * This is the Lab #4 basis-path testing target (`FYP Roadmap.docx`,
+ * Phase 5) — the three branches below are written to be independently
+ * exercisable in a test (and are — see peerGrouping.service.test.ts),
+ * so kept as separate `if` returns rather than collapsed.
  *
  * A "member" for both the threshold count here and PeerBenchmarkService's
  * percentile computation is a User with a matching UserProfile who has run
