@@ -27,19 +27,43 @@
  * rate — unlike the single-fund model this replaces, there's no longer
  * a natural "expected return" constant to fall back to once a Fund
  * exists specifically to hold real returns.
+ *
+ * DECISIONS.md #6 (contribution mechanism): contributionAmount can now
+ * come from one of two mechanisms — SCHEDULED (the original model: the
+ * user enters a fixed amount directly) or ROUND_UP (derived once from
+ * avgTransactionsPerWeek x avgRoundUpAmount, converted to a per-period
+ * count via the run's own frequency). Either way the result is a single
+ * constant per-period contribution figure applied uniformly across every
+ * period — computeBlendedContributions below doesn't know or care which
+ * mechanism produced it, and NFR-04 holds for the same reason it always
+ * has: no simulated transaction stream, no randomness anywhere.
  */
-import { ContributionFrequency } from "@prisma/client";
+import { ContributionFrequency, ContributionMechanism } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "../config/prisma";
 import { HttpError } from "../utils/httpError";
 
-const runSimulationSchema = z.object({
+const baseRunSimulationSchema = z.object({
   portfolioId: z.string().uuid(),
   frequency: z.nativeEnum(ContributionFrequency),
-  contributionAmount: z.number().positive(),
   // 600 months (50 years) is a sanity cap, not an SRS-defined limit.
   durationMonths: z.number().int().positive().max(600),
 });
+
+const runSimulationSchema = z.discriminatedUnion("mechanism", [
+  baseRunSimulationSchema.extend({
+    mechanism: z.literal(ContributionMechanism.SCHEDULED),
+    contributionAmount: z.number().positive(),
+  }),
+  baseRunSimulationSchema.extend({
+    mechanism: z.literal(ContributionMechanism.ROUND_UP),
+    // Sanity caps, not SRS-defined limits — generous enough to cover a
+    // heavy card user (~500/week) and a large round-up unit (nearest
+    // $50), without accepting nonsense input.
+    avgTransactionsPerWeek: z.number().int().positive().max(500),
+    avgRoundUpAmount: z.number().positive().max(50),
+  }),
+]);
 
 export type RunSimulationInput = z.infer<typeof runSimulationSchema>;
 
@@ -54,12 +78,18 @@ export interface RunSimulationResult {
   // which peer-group fallback tier was used — transparency about what
   // actually drove the number, not just the number itself).
   historyWrapped: boolean;
+  // The actual per-period amount used — echoed back so a ROUND_UP run can
+  // show the user what their spare-change inputs actually derived to,
+  // same transparency spirit as historyWrapped above.
+  contributionAmount: number;
+  mechanism: ContributionMechanism;
 }
 
 export interface SimulationHistoryItem {
   id: string;
   portfolioName: string;
   frequency: ContributionFrequency;
+  mechanism: ContributionMechanism;
   contributionAmount: number;
   durationMonths: number;
   finalValue: number | null;
@@ -79,6 +109,20 @@ export function computePeriods(frequency: ContributionFrequency, durationMonths:
 
 function periodsPerYear(frequency: ContributionFrequency): number {
   return frequency === ContributionFrequency.WEEKLY ? 52 : 12;
+}
+
+// DECISIONS.md #6: derives the ROUND_UP mechanism's per-period
+// contribution — average transactions/week times average round-up per
+// transaction, scaled to however many weeks are in one period of this
+// run's frequency (1 for WEEKLY, ~4.33 for MONTHLY). A single constant
+// figure, same as a SCHEDULED amount, applied uniformly to every period.
+function deriveRoundUpContribution(
+  avgTransactionsPerWeek: number,
+  avgRoundUpAmount: number,
+  frequency: ContributionFrequency
+): number {
+  const weeksPerPeriod = frequency === ContributionFrequency.WEEKLY ? 1 : 52 / 12;
+  return round2(avgTransactionsPerWeek * weeksPerPeriod * avgRoundUpAmount);
 }
 
 // DECISIONS.md #1 amendment: a single *real* annual return compounds
@@ -177,21 +221,29 @@ class SimulationService {
       history: a.fund.historicalReturns.map((h) => Number(h.returnRate)),
     }));
 
-    const result = computeBlendedContributions(parsed.contributionAmount, allocations, periodsInYear, periods);
+    const contributionAmount =
+      parsed.mechanism === ContributionMechanism.SCHEDULED
+        ? parsed.contributionAmount
+        : deriveRoundUpContribution(parsed.avgTransactionsPerWeek, parsed.avgRoundUpAmount, parsed.frequency);
+
+    const result = computeBlendedContributions(contributionAmount, allocations, periodsInYear, periods);
 
     const simulation = await prisma.simulation.create({
       data: {
         userId,
         portfolioId: parsed.portfolioId,
         frequency: parsed.frequency,
-        contributionAmount: parsed.contributionAmount,
+        mechanism: parsed.mechanism,
+        contributionAmount,
+        avgTransactionsPerWeek: parsed.mechanism === ContributionMechanism.ROUND_UP ? parsed.avgTransactionsPerWeek : null,
+        avgRoundUpAmount: parsed.mechanism === ContributionMechanism.ROUND_UP ? parsed.avgRoundUpAmount : null,
         durationMonths: parsed.durationMonths,
         finalValue: result.finalValue,
         contributions: { createMany: { data: result.contributions } },
       },
     });
 
-    const totalContributed = round2(parsed.contributionAmount * periods);
+    const totalContributed = round2(contributionAmount * periods);
 
     return {
       simulationId: simulation.id,
@@ -199,6 +251,8 @@ class SimulationService {
       totalContributed,
       growth: round2(result.finalValue - totalContributed),
       historyWrapped: result.historyWrapped,
+      contributionAmount,
+      mechanism: parsed.mechanism,
     };
   }
 

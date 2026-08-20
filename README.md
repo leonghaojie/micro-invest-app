@@ -34,6 +34,15 @@ fund-catalog/portfolio composition, §2.5 updated with the schema and
 blending algorithm, TBD-01 further amended in Appendix C — see
 `DECISIONS.md` #1 second amendment.
 
+A simulation's contribution amount now also comes from one of two
+mechanisms (`DECISIONS.md` #6): **Scheduled deposit** (the original
+fixed-amount-per-period input) or **Round-up** — spare-change parameters
+(average transactions/week, average round-up per transaction) derived
+once into a per-period figure via a plain deterministic formula, no
+simulated transaction stream. This is new scope beyond the original SRS
+UC-03 wording, not a reopened decision, and doesn't yet have SRS
+coverage — see the caveat in `DECISIONS.md` #6.
+
 ## Architecture
 
 Four-layer architecture, communicating strictly downward:
@@ -119,7 +128,7 @@ npm run dev                 # starts on http://localhost:4000
 
 Verify it booted: `curl http://localhost:4000/health` → `{"status":"ok"}`.
 
-Run the test suite (75 tests across every service):
+Run the test suite (83 tests across every service):
 
 ```bash
 npm test
@@ -179,7 +188,7 @@ matching `FYP Roadmap.docx` Phases 3–6:
 | Phase | Scope | FRs | Status |
 |---|---|---|---|
 | 3 | Auth, profile, fund catalog & portfolio composition | FR01–04 | ✅ Done — since amended to user-composed multi-fund portfolios, DECISIONS.md #1 second amendment |
-| 4 | Simulation engine, dashboard | FR05–08 | ✅ Done |
+| 4 | Simulation engine, dashboard | FR05–08 | ✅ Done — since extended with a contribution mechanism (scheduled deposit vs round-up), DECISIONS.md #6, new scope beyond FR05's original SRS wording |
 | 5 | Peer benchmarking engine | FR09–11 | ✅ Done — grouping algorithm and percentile computation both implemented; synthetic peer *data generation* still open, see below |
 | 6 | Insight generation | FR12 | ✅ Done |
 | 7 | History, polish, NFRs | FR13 | ⬜ Not started |

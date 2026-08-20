@@ -37,6 +37,18 @@ enum ContributionFrequency {
   MONTHLY
 }
 
+// DECISIONS.md #6: how a period's contributionAmount is arrived at.
+// SCHEDULED — the user enters a fixed amount directly (the original
+// model). ROUND_UP — derived from spare-change parameters (average
+// transactions/week x average round-up per transaction), computed once
+// and applied uniformly to every period, same as SCHEDULED — still a
+// single deterministic per-period figure, no simulated transaction
+// stream, so NFR-04 holds the same way it always has.
+enum ContributionMechanism {
+  SCHEDULED
+  ROUND_UP
+}
+
 enum PeerGroupTier {
   FULL
   RISK_BUDGET
@@ -171,15 +183,25 @@ model PortfolioAllocation {
 }
 
 model Simulation {
-  id                 String                @id @default(uuid())
-  userId             String
-  portfolioId        String
-  frequency          ContributionFrequency
-  contributionAmount Decimal               @db.Decimal(12, 2)
-  durationMonths     Int
+  id          String                @id @default(uuid())
+  userId      String
+  portfolioId String
+  frequency   ContributionFrequency
+  mechanism   ContributionMechanism @default(SCHEDULED)
+  // Always the actual per-period amount used, regardless of mechanism:
+  // user-entered directly for SCHEDULED, derived (and stored back here)
+  // for ROUND_UP — every downstream reader (dashboard.service.ts's
+  // totalContributed reconstruction, simulation history) can stay
+  // mechanism-agnostic and just read this one field.
+  contributionAmount Decimal @db.Decimal(12, 2)
+  // ROUND_UP inputs only — kept as an audit trail of what produced
+  // contributionAmount above; null for SCHEDULED runs.
+  avgTransactionsPerWeek Int?
+  avgRoundUpAmount       Decimal? @db.Decimal(6, 2)
+  durationMonths         Int
   // Populated once the run completes (FR06).
-  finalValue         Decimal?              @db.Decimal(14, 2)
-  createdAt          DateTime              @default(now())
+  finalValue             Decimal? @db.Decimal(14, 2)
+  createdAt              DateTime @default(now())
 
   user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
   portfolio     Portfolio      @relation(fields: [portfolioId], references: [id])

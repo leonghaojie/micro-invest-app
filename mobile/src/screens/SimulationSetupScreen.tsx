@@ -9,6 +9,13 @@
  * portfolio templates. User selects a template.") with a three-step flow:
  * choose an existing portfolio (presets or the user's own) → optionally
  * build a new one from the fund catalog → configure & run.
+ *
+ * DECISIONS.md #6: contribution amount now comes from one of two
+ * mechanisms — Scheduled deposit (the original fixed-amount input) or
+ * Round-up (spare-change parameters, derived to a per-period amount
+ * server-side). This screen mirrors that derivation client-side purely
+ * for an immediate live preview; simulation.service.ts is the source of
+ * truth for what actually gets simulated.
  */
 import { useCallback, useEffect, useState } from "react";
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
@@ -19,6 +26,7 @@ import type { RootStackParamList } from "../navigation/AppNavigator";
 type Props = NativeStackScreenProps<RootStackParamList, "SimulationSetup">;
 
 type Frequency = "WEEKLY" | "MONTHLY";
+type Mechanism = "SCHEDULED" | "ROUND_UP";
 type Step = "choose" | "build" | "configure";
 
 interface FundSummary {
@@ -57,6 +65,10 @@ interface RunSimulationResult {
   // that fund's history was replayed from its start to fill the
   // remaining periods.
   historyWrapped: boolean;
+  // DECISIONS.md #6: the actual per-period amount used — for a Round-up
+  // run this is what the spare-change inputs derived to.
+  contributionAmount: number;
+  mechanism: Mechanism;
 }
 
 const FREQUENCY_OPTIONS: { value: Frequency; label: string }[] = [
@@ -64,7 +76,19 @@ const FREQUENCY_OPTIONS: { value: Frequency; label: string }[] = [
   { value: "MONTHLY", label: "Monthly" },
 ];
 
+const MECHANISM_OPTIONS: { value: Mechanism; label: string }[] = [
+  { value: "SCHEDULED", label: "Scheduled deposit" },
+  { value: "ROUND_UP", label: "Round-up" },
+];
+
 const WEIGHT_SUM_TOLERANCE = 0.01;
+
+// Mirrors deriveRoundUpContribution in simulation.service.ts — client-side
+// only, for a live preview; the backend recomputes this itself.
+function deriveRoundUpPreview(avgTransactionsPerWeek: number, avgRoundUpAmount: number, frequency: Frequency): number {
+  const weeksPerPeriod = frequency === "WEEKLY" ? 1 : 52 / 12;
+  return round2(avgTransactionsPerWeek * weeksPerPeriod * avgRoundUpAmount);
+}
 
 export function SimulationSetupScreen({ navigation }: Props) {
   const [step, setStep] = useState<Step>("choose");
@@ -81,7 +105,10 @@ export function SimulationSetupScreen({ navigation }: Props) {
   const [buildSubmitting, setBuildSubmitting] = useState(false);
 
   const [frequency, setFrequency] = useState<Frequency>("MONTHLY");
+  const [mechanism, setMechanism] = useState<Mechanism>("SCHEDULED");
   const [contributionAmount, setContributionAmount] = useState("");
+  const [avgTransactionsPerWeek, setAvgTransactionsPerWeek] = useState("");
+  const [avgRoundUpAmount, setAvgRoundUpAmount] = useState("");
   const [durationMonths, setDurationMonths] = useState("");
 
   const [submitting, setSubmitting] = useState(false);
@@ -172,9 +199,20 @@ export function SimulationSetupScreen({ navigation }: Props) {
 
   function validateRun(): string | null {
     if (!selectedPortfolioId) return "Select a portfolio.";
-    const amount = Number(contributionAmount);
-    if (!contributionAmount.trim() || !Number.isFinite(amount) || amount <= 0) {
-      return "Enter a contribution amount greater than 0.";
+    if (mechanism === "SCHEDULED") {
+      const amount = Number(contributionAmount);
+      if (!contributionAmount.trim() || !Number.isFinite(amount) || amount <= 0) {
+        return "Enter a contribution amount greater than 0.";
+      }
+    } else {
+      const transactions = Number(avgTransactionsPerWeek);
+      if (!avgTransactionsPerWeek.trim() || !Number.isInteger(transactions) || transactions <= 0) {
+        return "Enter an average number of transactions per week, greater than 0.";
+      }
+      const roundUp = Number(avgRoundUpAmount);
+      if (!avgRoundUpAmount.trim() || !Number.isFinite(roundUp) || roundUp <= 0) {
+        return "Enter an average round-up amount greater than 0.";
+      }
     }
     const duration = Number(durationMonths);
     if (!durationMonths.trim() || !Number.isInteger(duration) || duration <= 0) {
@@ -193,15 +231,24 @@ export function SimulationSetupScreen({ navigation }: Props) {
     setError(null);
     setSubmitting(true);
     try {
-      const response = await apiFetch<RunSimulationResult>("/simulation/run", {
-        method: "POST",
-        body: {
-          portfolioId: selectedPortfolioId,
-          frequency,
-          contributionAmount: Number(contributionAmount),
-          durationMonths: Number(durationMonths),
-        },
-      });
+      const body =
+        mechanism === "SCHEDULED"
+          ? {
+              portfolioId: selectedPortfolioId,
+              frequency,
+              mechanism,
+              contributionAmount: Number(contributionAmount),
+              durationMonths: Number(durationMonths),
+            }
+          : {
+              portfolioId: selectedPortfolioId,
+              frequency,
+              mechanism,
+              avgTransactionsPerWeek: Number(avgTransactionsPerWeek),
+              avgRoundUpAmount: Number(avgRoundUpAmount),
+              durationMonths: Number(durationMonths),
+            };
+      const response = await apiFetch<RunSimulationResult>("/simulation/run", { method: "POST", body });
       setResult(response);
     } catch (err) {
       setError(describeError(err));
@@ -227,6 +274,11 @@ export function SimulationSetupScreen({ navigation }: Props) {
           <ResultRow label="Growth" value={formatCurrency(result.growth)} />
           <ResultRow label="Final value" value={formatCurrency(result.finalValue)} emphasized />
         </View>
+        {result.mechanism === "ROUND_UP" && (
+          <Text style={styles.historyNote}>
+            Your round-up inputs derived to {formatCurrency(result.contributionAmount)} per period.
+          </Text>
+        )}
         {result.historyWrapped && (
           <Text style={styles.historyNote}>
             This plan runs longer than the real historical data available for one or more funds in this portfolio, so
@@ -297,15 +349,66 @@ export function SimulationSetupScreen({ navigation }: Props) {
                 ))}
               </View>
 
-              <Text style={styles.label}>Contribution amount (per period)</Text>
-              <TextInput
-                style={styles.input}
-                placeholder="e.g. 20"
-                keyboardType="numeric"
-                value={contributionAmount}
-                onChangeText={setContributionAmount}
-                editable={!submitting}
-              />
+              <Text style={styles.label}>Contribution mechanism</Text>
+              <View style={styles.optionRow}>
+                {MECHANISM_OPTIONS.map((option) => (
+                  <Pressable
+                    key={option.value}
+                    style={[styles.optionButton, mechanism === option.value && styles.optionButtonSelected]}
+                    onPress={() => setMechanism(option.value)}
+                    disabled={submitting}
+                  >
+                    <Text style={[styles.optionButtonText, mechanism === option.value && styles.optionButtonTextSelected]}>
+                      {option.label}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+
+              {mechanism === "SCHEDULED" ? (
+                <>
+                  <Text style={styles.label}>Contribution amount (per period)</Text>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="e.g. 20"
+                    keyboardType="numeric"
+                    value={contributionAmount}
+                    onChangeText={setContributionAmount}
+                    editable={!submitting}
+                  />
+                </>
+              ) : (
+                <>
+                  <Text style={styles.label}>Average transactions per week</Text>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="e.g. 10"
+                    keyboardType="numeric"
+                    value={avgTransactionsPerWeek}
+                    onChangeText={setAvgTransactionsPerWeek}
+                    editable={!submitting}
+                  />
+
+                  <Text style={styles.label}>Average round-up per transaction ($)</Text>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="e.g. 0.60"
+                    keyboardType="numeric"
+                    value={avgRoundUpAmount}
+                    onChangeText={setAvgRoundUpAmount}
+                    editable={!submitting}
+                  />
+
+                  {avgTransactionsPerWeek.trim() !== "" && avgRoundUpAmount.trim() !== "" && (
+                    <Text style={styles.templateMeta}>
+                      ≈ {formatCurrency(
+                        deriveRoundUpPreview(Number(avgTransactionsPerWeek) || 0, Number(avgRoundUpAmount) || 0, frequency)
+                      )}{" "}
+                      per period
+                    </Text>
+                  )}
+                </>
+              )}
 
               <Text style={styles.label}>Duration (months)</Text>
               <TextInput
