@@ -3,7 +3,8 @@
  * run without a live Postgres connection and pin down the deterministic
  * compounding formula (DECISIONS.md #1, and its two amendments — real
  * historical returns, then multi-fund weighted blending) against
- * hand-computed values.
+ * hand-computed values, plus the contribution mechanism split
+ * (DECISIONS.md #6 — SCHEDULED vs ROUND_UP).
  */
 import { prisma } from "../config/prisma";
 import { simulationService } from "./simulation.service";
@@ -59,6 +60,7 @@ describe("SimulationService", () => {
         simulationService.run("user-1", {
           portfolioId: PORTFOLIO_ID,
           frequency: "MONTHLY",
+          mechanism: "SCHEDULED",
           contributionAmount: 100,
           durationMonths: 12,
         })
@@ -73,6 +75,7 @@ describe("SimulationService", () => {
         simulationService.run("user-1", {
           portfolioId: PORTFOLIO_ID,
           frequency: "MONTHLY",
+          mechanism: "SCHEDULED",
           contributionAmount: 100,
           durationMonths: 1,
         })
@@ -87,6 +90,7 @@ describe("SimulationService", () => {
         simulationService.run("user-1", {
           portfolioId: PORTFOLIO_ID,
           frequency: "MONTHLY",
+          mechanism: "SCHEDULED",
           contributionAmount: 100,
           durationMonths: 1,
         })
@@ -98,6 +102,7 @@ describe("SimulationService", () => {
         simulationService.run("user-1", {
           portfolioId: PORTFOLIO_ID,
           frequency: "MONTHLY",
+          mechanism: "SCHEDULED",
           contributionAmount: 0,
           durationMonths: 12,
         })
@@ -118,6 +123,7 @@ describe("SimulationService", () => {
         simulationService.run("user-1", {
           portfolioId: PORTFOLIO_ID,
           frequency: "MONTHLY",
+          mechanism: "SCHEDULED",
           contributionAmount: 100,
           durationMonths: 1,
         })
@@ -133,6 +139,7 @@ describe("SimulationService", () => {
         const result = await simulationService.run("user-1", {
           portfolioId: PORTFOLIO_ID,
           frequency: "MONTHLY",
+          mechanism: "SCHEDULED",
           contributionAmount: 50,
           durationMonths: 6,
         });
@@ -152,6 +159,7 @@ describe("SimulationService", () => {
         const result = await simulationService.run("user-1", {
           portfolioId: PORTFOLIO_ID,
           frequency: "MONTHLY",
+          mechanism: "SCHEDULED",
           contributionAmount: 100,
           durationMonths: 1,
         });
@@ -177,6 +185,7 @@ describe("SimulationService", () => {
         const result = await simulationService.run("user-1", {
           portfolioId: PORTFOLIO_ID,
           frequency: "MONTHLY",
+          mechanism: "SCHEDULED",
           contributionAmount: 100,
           durationMonths: 1,
         });
@@ -197,6 +206,7 @@ describe("SimulationService", () => {
         const result = await simulationService.run("user-1", {
           portfolioId: PORTFOLIO_ID,
           frequency: "MONTHLY",
+          mechanism: "SCHEDULED",
           contributionAmount: 100,
           durationMonths: 2,
         });
@@ -222,6 +232,7 @@ describe("SimulationService", () => {
         const result = await simulationService.run("user-1", {
           portfolioId: PORTFOLIO_ID,
           frequency: "MONTHLY",
+          mechanism: "SCHEDULED",
           contributionAmount: 100,
           durationMonths: 24,
         });
@@ -243,11 +254,169 @@ describe("SimulationService", () => {
         const result = await simulationService.run("user-1", {
           portfolioId: PORTFOLIO_ID,
           frequency: "MONTHLY",
+          mechanism: "SCHEDULED",
           contributionAmount: 100,
           durationMonths: 24,
         });
 
         expect(result.historyWrapped).toBe(false);
+      });
+    });
+
+    describe("ROUND_UP contribution mechanism (DECISIONS.md #6)", () => {
+      it("derives a MONTHLY period's contribution from avg transactions/week x avg round-up", async () => {
+        // 10 transactions/week * (52/12 weeks/period) * $0.60/transaction
+        // = 10 * 4.333... * 0.60 = 26.0 (rounded to cents)
+        mockPortfolio({ userId: "user-1", funds: [{ ticker: "ES3", weightPct: "100.00", returns: ["0.00"] }] });
+        mockCreate();
+
+        const result = await simulationService.run("user-1", {
+          portfolioId: PORTFOLIO_ID,
+          frequency: "MONTHLY",
+          mechanism: "ROUND_UP",
+          avgTransactionsPerWeek: 10,
+          avgRoundUpAmount: 0.6,
+          durationMonths: 1,
+        });
+
+        expect(result.contributionAmount).toBe(26);
+        expect(result.mechanism).toBe("ROUND_UP");
+        expect(result.finalValue).toBe(26);
+        expect(result.totalContributed).toBe(26);
+      });
+
+      it("derives a WEEKLY period's contribution directly from avg transactions/week x avg round-up", async () => {
+        // 1 week/period -> 10 * 1 * 0.60 = 6.00
+        mockPortfolio({ userId: "user-1", funds: [{ ticker: "ES3", weightPct: "100.00", returns: ["0.00"] }] });
+        mockCreate();
+
+        const result = await simulationService.run("user-1", {
+          portfolioId: PORTFOLIO_ID,
+          frequency: "WEEKLY",
+          mechanism: "ROUND_UP",
+          avgTransactionsPerWeek: 10,
+          avgRoundUpAmount: 0.6,
+          durationMonths: 1,
+        });
+
+        expect(result.contributionAmount).toBe(6);
+      });
+
+      it("feeds the derived contribution into the same blended-rate compounding as SCHEDULED", async () => {
+        // Same derived amount (26/period) and same single-fund 10% return as
+        // the SCHEDULED "derives the periodic rate geometrically" test above,
+        // just arriving at contributionAmount via ROUND_UP instead of a
+        // direct input — should compound identically once derived.
+        mockPortfolio({ userId: "user-1", funds: [{ ticker: "ES3", weightPct: "100.00", returns: ["0.10"] }] });
+        mockCreate();
+
+        const scheduled = await simulationService.run("user-1", {
+          portfolioId: PORTFOLIO_ID,
+          frequency: "MONTHLY",
+          mechanism: "SCHEDULED",
+          contributionAmount: 26,
+          durationMonths: 1,
+        });
+
+        mockPortfolio({ userId: "user-1", funds: [{ ticker: "ES3", weightPct: "100.00", returns: ["0.10"] }] });
+
+        const roundUp = await simulationService.run("user-1", {
+          portfolioId: PORTFOLIO_ID,
+          frequency: "MONTHLY",
+          mechanism: "ROUND_UP",
+          avgTransactionsPerWeek: 10,
+          avgRoundUpAmount: 0.6,
+          durationMonths: 1,
+        });
+
+        expect(roundUp.finalValue).toBe(scheduled.finalValue);
+      });
+
+      it("persists the round-up inputs alongside the derived contributionAmount", async () => {
+        mockPortfolio({ userId: "user-1", funds: [{ ticker: "ES3", weightPct: "100.00", returns: ["0.00"] }] });
+        mockCreate();
+
+        await simulationService.run("user-1", {
+          portfolioId: PORTFOLIO_ID,
+          frequency: "MONTHLY",
+          mechanism: "ROUND_UP",
+          avgTransactionsPerWeek: 10,
+          avgRoundUpAmount: 0.6,
+          durationMonths: 1,
+        });
+
+        const createArgs = mockedPrisma.simulation.create.mock.calls[0][0];
+        expect(createArgs.data.mechanism).toBe("ROUND_UP");
+        expect(createArgs.data.contributionAmount).toBe(26);
+        expect(createArgs.data.avgTransactionsPerWeek).toBe(10);
+        expect(createArgs.data.avgRoundUpAmount).toBe(0.6);
+      });
+
+      it("leaves the round-up inputs null for a SCHEDULED run", async () => {
+        mockPortfolio({ userId: "user-1", funds: [{ ticker: "ES3", weightPct: "100.00", returns: ["0.00"] }] });
+        mockCreate();
+
+        await simulationService.run("user-1", {
+          portfolioId: PORTFOLIO_ID,
+          frequency: "MONTHLY",
+          mechanism: "SCHEDULED",
+          contributionAmount: 25,
+          durationMonths: 1,
+        });
+
+        const createArgs = mockedPrisma.simulation.create.mock.calls[0][0];
+        expect(createArgs.data.avgTransactionsPerWeek).toBeNull();
+        expect(createArgs.data.avgRoundUpAmount).toBeNull();
+      });
+
+      it("rejects a non-positive avgTransactionsPerWeek", async () => {
+        await expect(
+          simulationService.run("user-1", {
+            portfolioId: PORTFOLIO_ID,
+            frequency: "MONTHLY",
+            mechanism: "ROUND_UP",
+            avgTransactionsPerWeek: 0,
+            avgRoundUpAmount: 0.6,
+            durationMonths: 1,
+          })
+        ).rejects.toThrow();
+        expect(mockedPrisma.portfolio.findUnique).not.toHaveBeenCalled();
+      });
+
+      it("rejects a non-positive avgRoundUpAmount", async () => {
+        await expect(
+          simulationService.run("user-1", {
+            portfolioId: PORTFOLIO_ID,
+            frequency: "MONTHLY",
+            mechanism: "ROUND_UP",
+            avgTransactionsPerWeek: 10,
+            avgRoundUpAmount: 0,
+            durationMonths: 1,
+          })
+        ).rejects.toThrow();
+      });
+
+      it("rejects a request missing the fields its own mechanism requires", async () => {
+        // SCHEDULED without contributionAmount, and ROUND_UP without its
+        // avg* fields, should both fail the discriminated union — not fall
+        // back to treating undefined as some default.
+        await expect(
+          simulationService.run("user-1", {
+            portfolioId: PORTFOLIO_ID,
+            frequency: "MONTHLY",
+            mechanism: "SCHEDULED",
+            durationMonths: 1,
+          })
+        ).rejects.toThrow();
+
+        await expect(
+          simulationService.run("user-1", {
+            portfolioId: PORTFOLIO_ID,
+            frequency: "MONTHLY",
+            mechanism: "ROUND_UP",
+            durationMonths: 1,
+          })
+        ).rejects.toThrow();
       });
     });
 
@@ -258,6 +427,7 @@ describe("SimulationService", () => {
       await simulationService.run("user-1", {
         portfolioId: PORTFOLIO_ID,
         frequency: "MONTHLY",
+        mechanism: "SCHEDULED",
         contributionAmount: 25,
         durationMonths: 3,
       });
@@ -277,6 +447,7 @@ describe("SimulationService", () => {
       await simulationService.run("user-1", {
         portfolioId: PORTFOLIO_ID,
         frequency: "WEEKLY",
+        mechanism: "SCHEDULED",
         contributionAmount: 10,
         durationMonths: 1,
       });

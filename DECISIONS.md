@@ -231,6 +231,71 @@ Uses `PERCENTILE_CONT` via Prisma's `$queryRaw` — the one intentional raw-SQL
 escape hatch in the codebase (Design Model §3.1). Owner:
 `backend/src/services/peerBenchmark.service.ts` (Phase 5).
 
+## 6. Contribution mechanism (round-up vs scheduled deposit)
+
+Not an SRS TBD — this is new scope beyond the original SRS UC-03 flow
+("User sets contribution amount, frequency, and duration"), not a locked
+decision being reopened. Raised in the same prior chat quoted under
+Decision #1's first amendment (shared transcript,
+`Micro-investing in Singapore.pdf`):
+
+> Round-up, RSP, and fractional shares are all just different ways money
+> *enters* the portfolio (timing/amount pattern)... Historical performance
+> would attach to your `PortfolioTemplate` (i.e., which asset class... not
+> to the contribution mechanism.
+> — prior chat transcript
+
+That design was deliberately deferred at the time the multi-fund
+portfolio work started (Decision #1 second amendment) — explicit user
+choice, "fund choice only for now" — and picked back up in this pass, now
+scoped down further via direct confirmation: implement round-up and
+scheduled deposit (fractional shares deferred again — it's a brokerage
+execution detail, how a contribution buys units, not a distinct way money
+enters the portfolio), and compute round-up contributions via a
+simplified deterministic formula rather than a simulated transaction
+stream.
+
+**What changed:** `Simulation` gains `mechanism` (`SCHEDULED` |
+`ROUND_UP`, default `SCHEDULED`) plus two nullable inputs,
+`avgTransactionsPerWeek` and `avgRoundUpAmount`, used only by `ROUND_UP`
+runs. `contributionAmount` keeps its existing meaning and type for both
+mechanisms — SCHEDULED still takes it directly from the user; ROUND_UP
+derives it once as `avgTransactionsPerWeek × weeksPerPeriod ×
+avgRoundUpAmount` (`weeksPerPeriod` = 1 for WEEKLY, 52/12 for MONTHLY)
+and stores the derived figure in the same field. Every existing
+consumer of `contributionAmount` — `dashboard.service.ts`'s
+`totalContributed` reconstruction, in particular — stays mechanism-
+agnostic and needed no changes at all.
+
+**Why not simulate an actual transaction stream:** a per-day synthetic
+purchase sequence (seeded RNG, summing real per-transaction round-ups)
+would be more realistic but adds a second source of "reproducible only
+because it's seeded" alongside the historical-return replay from
+Decision #1, for a number this app can't verify against anything real
+anyway (there's no real spending data, real or synthetic). The simplified
+formula produces a single constant per-period contribution — indistinguishable
+in shape from a SCHEDULED amount — so it composes with
+`computeBlendedContributions` (Decision #1's second amendment) completely
+unchanged; NFR-04 holds for exactly the reason it always has, not a new
+one.
+
+**Not changed:** `computeBlendedContributions`, the weighted historical-
+return blending, and `historyWrapped` are untouched — a `ROUND_UP` run
+and a `SCHEDULED` run with the same *effective* per-period amount compound
+identically.
+
+Implements: extends FR05/FR06 beyond SRS v1.2/v1.3's scope. Owner:
+`backend/src/services/simulation.service.ts` (schema: `Simulation.
+mechanism`/`avgTransactionsPerWeek`/`avgRoundUpAmount`, migration
+`contribution_mechanism`), mobile `SimulationSetupScreen.tsx` (mechanism
+selector + conditional round-up inputs with a live per-period preview).
+
+⚠️ **SRS not yet amended for this addition.** Genuinely new scope, not a
+reopened decision — UC-03's Flow of Events step 4 ("User sets
+contribution amount, frequency, and duration") would need a mechanism
+sub-step. Offered to the user as a separate step, same as the two
+UC-03-touching amendments to Decision #1 above.
+
 ## Open items (Design Model §8, carried forward)
 
 - **FR13 / UC-07 Simulation History is not implemented.** `GET
@@ -266,13 +331,17 @@ escape hatch in the codebase (Design Model §3.1). Owner:
 All four numbered SRS TBDs (TBD-01 through TBD-04) were closed as of SRS
 v1.2 / Design Model v1.0 (Phase 2) — confirmed directly against
 `Phase2_SRS_v1.2.docx` Appendix C. **TBD-01 was then reopened in v1.3**
-(19 Aug 2026, decision #1's amendment above) — see `Phase2_SRS_v1.3.docx`
-Appendix C for the current status. The budget-band gap above was never
-numbered as a TBD in the first place, so it was never covered by the "all
-closed" statement to begin with — see Open items.
+and **further amended in v1.4** (both 19 Aug 2026, decision #1's two
+amendments above) — see `Phase2_SRS_v1.4.docx` Appendix C for the current
+status. The budget-band gap above was never numbered as a TBD in the
+first place, so it was never covered by the "all closed" statement to
+begin with — see Open items. **Decision #6 (contribution mechanism) is
+new scope, not a TBD or a reopened decision, and has no SRS coverage
+yet** — see its own entry above.
 
 FR01–FR12 (SRS v1.2 §3.2) are implemented end-to-end, backend and mobile,
 matching `FYP Roadmap.docx` Phases 3–6. FR13 and the synthetic-peer-data
 seed script (Phase 7 and Phase 5 respectively) are the two remaining
 functional gaps — see Open items above and the README Status table for
-the full phase-by-phase breakdown.
+the full phase-by-phase breakdown. The contribution mechanism (decision
+#6) is implemented but sits outside the FR01–FR13 numbering entirely.
