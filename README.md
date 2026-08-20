@@ -15,14 +15,24 @@ gaps — see [Status](#status) below. See `FYP Roadmap.docx` for the full
 phase plan and `DECISIONS.md` for the algorithm decisions this structure
 encodes.
 
-The simulation engine's return model was amended (19 Aug 2026, see
-`DECISIONS.md` #1) from a constant expected-return rate to deterministic
-replay of real historical annual returns for the actual SGX-listed fund
-each portfolio template is anchored to (A35 / CFA / ES3) — still fully
-reproducible (NFR-04), just grounded in real market history instead of an
-arbitrary constant. `Phase2_SRS_v1.3.docx` (alongside — not replacing —
-`Phase2_SRS_v1.2.docx`) reflects this: §2.5 updated, TBD-01 reopened in
-Appendix C.
+The simulation engine's return model was amended twice (see `DECISIONS.md`
+#1 and its two dated amendments): first (19 Aug 2026) from a constant
+expected-return rate to deterministic replay of real historical annual
+returns for the actual SGX-listed fund each portfolio was anchored to (A35
+/ CFA / ES3); then (19 Aug 2026, second amendment) from three fixed
+single-fund templates to fully user-composed multi-fund portfolios —
+users choose any combination of real funds from a seven-fund catalog
+(SGX + US-listed, spanning bonds/equity/REITs/EM equity/gold) and set a
+weight for each, and the engine blends each fund's real historical return
+by weight every period. Both changes stay fully reproducible (NFR-04) —
+every fund's return series is static seed data, never live-fetched or
+randomly resampled. `Phase2_SRS_v1.3.docx` (alongside — not replacing —
+`Phase2_SRS_v1.2.docx`) reflects the first change: §2.5 updated, TBD-01
+reopened in Appendix C. `Phase2_SRS_v1.4.docx` (alongside, not replacing,
+`v1.3`) reflects the second: UC-03's Flow of Events amended for
+fund-catalog/portfolio composition, §2.5 updated with the schema and
+blending algorithm, TBD-01 further amended in Appendix C — see
+`DECISIONS.md` #1 second amendment.
 
 ## Architecture
 
@@ -50,9 +60,10 @@ Strategy pattern for peer-group fallback).
 ```
 micro-invest-app/
 ├─ backend/
-│  ├─ prisma/schema.prisma        Design Model §4 — DB schema (+ HistoricalReturn, DECISIONS.md #1 amendment)
-│  ├─ prisma/seed.ts              Portfolio templates + real historical returns (seeded); synthetic peer data (SRS §2.6) still a TODO
-│  ├─ src/routes/                 auth, profile, portfolio, simulation, dashboard, peers, insights
+│  ├─ prisma/schema.prisma        Design Model §4 — DB schema (Fund / Portfolio / PortfolioAllocation / HistoricalReturn, DECISIONS.md #1's two amendments)
+│  ├─ prisma/seed.ts              Fund catalog (7 funds) + real historical returns + preset portfolios (seeded, offline-safe); synthetic peer data (SRS §2.6) still a TODO
+│  ├─ prisma/ingest-funds.ts      Live EODHD ingestion tool (needs EODHD_API_KEY) — working, but this key's plan doesn't cover SGX and caps depth at 1 year, so the shipped catalog is web-search sourced instead; see DECISIONS.md #1 second amendment
+│  ├─ src/routes/                 auth, profile, portfolio (funds + portfolios), simulation, dashboard, peers, insights
 │  ├─ src/controllers/            thin — delegate to services
 │  ├─ src/services/               auth, profile, portfolio, simulation, dashboard, peerGrouping, peerBenchmark, insight
 │  ├─ src/middleware/             auth.middleware.ts (requireAuth), errorHandler.middleware.ts
@@ -102,13 +113,13 @@ cd backend
 npm install
 cp .env.example .env        # already matches the docker-compose credentials
 npx prisma migrate dev --name init
-npm run prisma:seed         # seeds portfolio templates (Conservative/Balanced/Growth)
+npm run prisma:seed         # seeds the fund catalog + preset portfolios (Conservative/Balanced/Growth)
 npm run dev                 # starts on http://localhost:4000
 ```
 
 Verify it booted: `curl http://localhost:4000/health` → `{"status":"ok"}`.
 
-Run the test suite (66 tests across every service):
+Run the test suite (75 tests across every service):
 
 ```bash
 npm test
@@ -145,6 +156,12 @@ original Word documents, each superseding the last within its phase:
   replaced with deterministic replay of real historical fund data
   (`DECISIONS.md` #1 amendment). Kept alongside v1.2, not replacing it, so
   the closure/reopen history stays visible.
+- `Phase2_SRS_v1.4.docx` — Phase 4 amendment (19 Aug 2026): **UC-03
+  further amended** — three fixed single-fund templates become a
+  user-composed multi-fund portfolio (fund catalog, weighted allocation,
+  blended historical-return simulation), TBD-01 further amended in
+  Appendix C (`DECISIONS.md` #1 second amendment). Kept alongside v1.3,
+  not replacing it.
 - `FYP Roadmap.docx` — the full Phase 0–9 plan mapped to the Lab #1–#5
   sequence and semester timeline.
 - `FYP_SRS_UseCase_UI_Lab1Style.docx` — an earlier Lab #1-formatted SRS
@@ -161,7 +178,7 @@ matching `FYP Roadmap.docx` Phases 3–6:
 
 | Phase | Scope | FRs | Status |
 |---|---|---|---|
-| 3 | Auth, profile, portfolio templates | FR01–04 | ✅ Done |
+| 3 | Auth, profile, fund catalog & portfolio composition | FR01–04 | ✅ Done — since amended to user-composed multi-fund portfolios, DECISIONS.md #1 second amendment |
 | 4 | Simulation engine, dashboard | FR05–08 | ✅ Done |
 | 5 | Peer benchmarking engine | FR09–11 | ✅ Done — grouping algorithm and percentile computation both implemented; synthetic peer *data generation* still open, see below |
 | 6 | Insight generation | FR12 | ✅ Done |
@@ -176,8 +193,9 @@ Remaining functional gaps against the SRS:
   screen list (§7.1) this belongs on the Dashboard (S-04), not a new
   screen — FR13 traces to `UC-07/S-04`.
 - **Synthetic peer data generation** (SRS §2.6, DECISIONS.md #4) —
-  `prisma/seed.ts` seeds portfolio templates but still only prints a TODO
-  for the ~30-synthetic-peers-per-group strategy; no `isSynthetic` users
+  `prisma/seed.ts` seeds the fund catalog and preset portfolios but still
+  only prints a TODO for the ~30-synthetic-peers-per-group strategy; no
+  `isSynthetic` users
   are actually generated yet. Peer grouping/benchmarking work correctly
   without it — the RISK_ONLY floor tier and small-sample transparency
   messaging handle sparse real data by design (UC-05 alt flow) — but peer

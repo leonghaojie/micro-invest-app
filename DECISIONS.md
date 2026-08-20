@@ -92,6 +92,78 @@ per-version style the document already uses, not overwritten, so the
 closure history stays visible. Edited directly by unzip/edit `word/
 document.xml`/rezip, XSD-validated against the original.
 
+### Second amendment (19 Aug 2026) — user-composed multi-fund portfolios
+
+Amends both the decision above and, more substantially, UC-03 itself
+("System displays portfolio templates. User selects a template." — SRS
+§6). Requested directly by the user: rather than picking one of three
+fixed single-fund templates, users now compose their own portfolio —
+choose one or more real funds and set a weight for each (summing to
+100%) — with presets (the old Conservative/Balanced/Growth) still
+available as quick-start options built the same way (a single-fund,
+100%-weight allocation).
+
+**Schema:** `PortfolioTemplate` is gone. `Fund` replaces it as the thing
+`HistoricalReturn` attaches to (ticker, exchange, assetClass, currency,
+dataSource). `Portfolio` (user-owned or `isPreset`) holds one or more
+`PortfolioAllocation` rows (`fundId`, `weightPct`), validated in
+`portfolio.service.ts` to sum to 100 (±0.01 float tolerance) — not a DB
+constraint, out of scope for the MVP. `Simulation.templateId` becomes
+`Simulation.portfolioId`.
+
+**Algorithm:** each period's rate is the weight-blended average of every
+allocated fund's own periodic rate for that period — i.e. the
+simplifying assumption that the portfolio rebalances to its target
+weights every period. Chosen specifically to keep the existing single
+`Contribution` row per period (portfolioValue), rather than tracking a
+per-fund sub-balance that drifts from target weight over time. Still
+fully deterministic (NFR-04 intact): every fund's series is static seed
+data. `historyWrapped` is now `true` if *any* allocated fund's own
+series wrapped, even if others in the same portfolio didn't (each fund
+wraps independently, based on its own real series length). A fund with
+zero `HistoricalReturn` rows fails simulation validation (422) rather
+than silently defaulting to some rate — unlike the single-fund model's
+`expectedReturn` fallback, there's no longer a natural constant to fall
+back to once a Fund exists specifically to hold real returns.
+
+**Data sourcing — two real API limitations found and worked around, not
+guessed at:** the plan was to use a live financial-data API (EODHD) for
+a wider fund catalog beyond the original 3 SGX funds. Confirmed via the
+actual API responses, not assumed: (1) this key's plan covers 70
+exchanges but not Singapore at all (`GET /api/exchanges-list/` — SGX is
+simply absent); (2) separately, every exchange it *does* cover is capped
+at 1 year of historical depth on this plan (`"warning": "Data is limited
+by one year as you have free subscription"` on the raw API response) —
+too short to derive even a single complete year-over-year annual return.
+`backend/prisma/ingest-funds.ts` is a real, working ingestion pipeline
+against EODHD (fetches monthly adjusted closes, derives annual returns,
+upserts `Fund`/`HistoricalReturn`) — it's correct and ready, it just has
+nothing to ingest under this specific key's plan. The catalog actually
+shipped (7 funds: A35, CFA, ES3, SPY, AGG, VWO, GLD) is entirely
+web-search sourced instead, same method and same "real and citable but
+not audit-grade precision" caveat as the original 3 — see
+`backend/prisma/seed.ts` header for the full citation trail and each
+fund's real (non-padded) series length.
+
+Implements: FR04 (browse funds), FR05 (amended — run against a
+multi-fund `Portfolio`). Owner: `backend/src/services/portfolio.service.ts`,
+`backend/src/services/simulation.service.ts`, `backend/prisma/seed.ts`,
+`backend/prisma/ingest-funds.ts` (schema: `Fund`, `Portfolio`,
+`PortfolioAllocation`, migration `multi_fund_portfolios`).
+
+**SRS amended.** `Phase2_SRS_v1.4.docx` (repo root, alongside — not
+replacing — `Phase2_SRS_v1.3.docx`) bumps the version header and revision
+history, adds a `[v1.4]` note to §1.1, appends the schema/algorithm/
+data-sourcing summary above to §2.5, amends UC-03's Flow of Events
+(§6 — fund catalog + portfolio composition replaces "System displays
+portfolio templates. User selects a template."), and marks TBD-01
+"further amended in v1.4" in Appendix C — all appended below the
+existing `[v1.1]`/`[v1.2]`/`[v1.3]` text in the same colour-coded
+per-version style (a new purple tag for v1.4), not overwritten. Edited
+directly by unzip/edit `word/document.xml`/rezip, XSD-validated against
+`Phase2_SRS_v1.3.docx` (paragraph count +8, matching the 4 new tagged
+paragraphs + 1 new 4-cell revision-history row).
+
 ## 2. Peer-grouping fallback hierarchy (SRS TBD-02 — resolved v1.1, Phase 1;
 detailed v1.0, Phase 2)
 

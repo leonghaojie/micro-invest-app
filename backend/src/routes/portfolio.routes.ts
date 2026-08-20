@@ -1,9 +1,12 @@
 /**
- * /portfolio/templates — FR04. Requires auth.
+ * /portfolio/* — FR04, plus the DECISIONS.md #1 second amendment
+ * (multi-fund portfolios). Requires auth.
  */
 import { Router } from "express";
-import { listTemplates } from "../controllers/portfolio.controller";
+import { createPortfolio, listFunds, listPortfolios } from "../controllers/portfolio.controller";
 
 export const portfolioRouter = Router();
 
-portfolioRouter.get("/templates", listTemplates);
+portfolioRouter.get("/funds", listFunds);
+portfolioRouter.get("/portfolios", listPortfolios);
+portfolioRouter.post("/portfolios", createPortfolio);

@@ -41,7 +41,7 @@ describe("DashboardService", () => {
         durationMonths: 6,
         finalValue: "320.50",
         createdAt: new Date("2024-06-01T00:00:00Z"),
-        template: { name: "Growth" },
+        portfolio: { name: "Growth" },
       });
 
       const result = await dashboardService.getSummary("user-1");
@@ -51,7 +51,7 @@ describe("DashboardService", () => {
         totalSimulations: 3,
         latestSimulation: {
           simulationId: "sim-1",
-          templateName: "Growth",
+          portfolioName: "Growth",
           finalValue: 320.5,
           totalContributed: 300, // 50 * 6 monthly periods
           growth: 20.5,
@@ -67,13 +67,13 @@ describe("DashboardService", () => {
 
       const result = await dashboardService.getGrowth("user-1");
 
-      expect(result).toEqual({ simulationId: null, templateName: null, points: [] });
+      expect(result).toEqual({ simulationId: null, portfolioName: null, points: [] });
     });
 
     it("maps the latest simulation's contributions to a points series", async () => {
       mockedPrisma.simulation.findFirst.mockResolvedValue({
         id: "sim-1",
-        template: { name: "Balanced" },
+        portfolio: { name: "Balanced" },
         contributions: [
           { periodIndex: 0, portfolioValue: "50.00" },
           { periodIndex: 1, portfolioValue: "101.00" },
@@ -84,7 +84,7 @@ describe("DashboardService", () => {
 
       expect(result).toEqual({
         simulationId: "sim-1",
-        templateName: "Balanced",
+        portfolioName: "Balanced",
         points: [
           { periodIndex: 0, portfolioValue: 50 },
           { periodIndex: 1, portfolioValue: 101 },
