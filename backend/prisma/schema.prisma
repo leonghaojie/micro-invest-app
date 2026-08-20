@@ -59,6 +59,7 @@ model User {
 
   profile     UserProfile?
   simulations Simulation[]
+  portfolios  Portfolio[]
 
   @@map("users")
 }
@@ -76,50 +77,103 @@ model UserProfile {
   @@map("user_profiles")
 }
 
-model PortfolioTemplate {
-  id             String    @id @default(uuid())
-  name           String
-  riskLevel      RiskLevel
-  // DECISIONS.md #1 amendment: no longer drives the simulation engine when
-  // historicalReturns exist for this template (falls back to this constant
-  // rate only if the table is empty) — kept as a display fallback / summary
-  // figure per the amendment.
-  expectedReturn Decimal   @db.Decimal(6, 4)
-  // Unused by the MVP simulation (locked Phase 1 decision, SRS §2.5).
-  // Retained for a possible future extension only.
-  volatility     Decimal   @db.Decimal(6, 4)
+// DECISIONS.md #1 second amendment (multi-fund portfolios): a Fund is a
+// single real, tradable instrument (ETF/fund) with its own historical
+// return series — the unit that HistoricalReturn and PortfolioAllocation
+// both key off. Replaces PortfolioTemplate's role as the thing returns
+// attach to; PortfolioTemplate itself is gone (see Portfolio below).
+model Fund {
+  id         String @id @default(uuid())
+  ticker     String
+  name       String
+  // Free-text classification (e.g. "BOND", "EQUITY", "REIT") — informs
+  // preset composition and the mobile fund browser's grouping, not an
+  // enum since the real fund universe isn't fixed to three risk tiers
+  // any more.
+  assetClass String
+  // Exchange code — EODHD's own code (e.g. "US", "LSE") for
+  // dataSource=EODHD funds, or "SGX" for web-search-sourced ones (EODHD's
+  // plan used here doesn't cover Singapore — see ingest-funds.ts).
+  exchange   String
+  currency   String
+  // "EODHD" | "WEB_SEARCH" — which pipeline populated historicalReturns,
+  // kept so it's always traceable which rows are audit-grade API data
+  // versus search-summarized (DECISIONS.md #1 amendment caveat).
+  dataSource String
 
-  simulations       Simulation[]
   historicalReturns HistoricalReturn[]
+  allocations       PortfolioAllocation[]
 
-  @@map("portfolio_templates")
+  @@unique([ticker, exchange])
+  @@map("funds")
 }
 
 // DECISIONS.md #1 amendment: real, dated annual returns backing the
 // deterministic historical-replay engine (simulation.service.ts). One row
-// per calendar year actually traded by the real fund each template is
-// anchored to (A35/CFA/ES3) — series length varies by fund (e.g. CFA only
-// has 8 years, its real fund having launched March 2017), which is why
-// this is its own table keyed by year rather than a fixed-length array.
+// per calendar year actually traded by the real fund — series length
+// varies by fund (e.g. CFA only has 8 years, its real fund having
+// launched March 2017), which is why this is its own table keyed by year
+// rather than a fixed-length array.
 model HistoricalReturn {
   id         String  @id @default(uuid())
-  templateId String
+  fundId     String
   year       Int
-  // Real annual total return for that calendar year (source: fund
-  // performance-history pages, see DECISIONS.md #1 amendment for the
-  // per-fund citation and precision caveat).
+  // Real annual total return for that calendar year (source: EODHD API or
+  // fund performance-history pages — see Fund.dataSource and
+  // DECISIONS.md #1 amendments for the per-fund citation and precision
+  // caveats).
   returnRate Decimal @db.Decimal(6, 4)
 
-  template PortfolioTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  fund Fund @relation(fields: [fundId], references: [id], onDelete: Cascade)
 
-  @@unique([templateId, year])
+  @@unique([fundId, year])
   @@map("historical_returns")
+}
+
+// DECISIONS.md #1 second amendment: replaces PortfolioTemplate. A
+// Portfolio is a named allocation across one or more Funds — either a
+// system preset (userId null, isPreset true — e.g. what used to be the
+// fixed Conservative/Balanced/Growth templates, now expressed as a
+// single-fund 100%-weight allocation each) or a user's own custom
+// multi-fund composition (userId set, isPreset false). riskLevel is a
+// display/classification tag only — peer grouping still keys off
+// UserProfile.riskLevel (DECISIONS.md #2), not which funds a user
+// actually invests in, so this stays nullable and non-authoritative.
+model Portfolio {
+  id        String     @id @default(uuid())
+  userId    String?
+  name      String
+  riskLevel RiskLevel?
+  isPreset  Boolean    @default(false)
+  createdAt DateTime   @default(now())
+
+  user        User?                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  allocations PortfolioAllocation[]
+  simulations Simulation[]
+
+  @@map("portfolios")
+}
+
+// Weights are validated in portfolio.service.ts to sum to 100.00 per
+// portfolio — not a DB constraint (Postgres can't cheaply enforce a
+// sum-across-rows check without a trigger, out of scope for the MVP).
+model PortfolioAllocation {
+  id          String  @id @default(uuid())
+  portfolioId String
+  fundId      String
+  weightPct   Decimal @db.Decimal(5, 2)
+
+  portfolio Portfolio @relation(fields: [portfolioId], references: [id], onDelete: Cascade)
+  fund      Fund      @relation(fields: [fundId], references: [id])
+
+  @@unique([portfolioId, fundId])
+  @@map("portfolio_allocations")
 }
 
 model Simulation {
   id                 String                @id @default(uuid())
   userId             String
-  templateId         String
+  portfolioId        String
   frequency          ContributionFrequency
   contributionAmount Decimal               @db.Decimal(12, 2)
   durationMonths     Int
@@ -127,8 +181,8 @@ model Simulation {
   finalValue         Decimal?              @db.Decimal(14, 2)
   createdAt          DateTime              @default(now())
 
-  user          User                @relation(fields: [userId], references: [id], onDelete: Cascade)
-  template      PortfolioTemplate   @relation(fields: [templateId], references: [id])
+  user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  portfolio     Portfolio      @relation(fields: [portfolioId], references: [id])
   contributions Contribution[]
 
   @@map("simulations")

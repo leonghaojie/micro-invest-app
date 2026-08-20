@@ -21,7 +21,7 @@ interface DashboardSummary {
   totalSimulations: number;
   latestSimulation: {
     simulationId: string;
-    templateName: string;
+    portfolioName: string;
     finalValue: number;
     totalContributed: number;
     growth: number;
@@ -36,7 +36,7 @@ interface GrowthPoint {
 
 interface DashboardGrowth {
   simulationId: string | null;
-  templateName: string | null;
+  portfolioName: string | null;
   points: GrowthPoint[];
 }
 
@@ -128,7 +128,7 @@ export function DashboardScreen({ navigation }: Props) {
       </Text>
 
       <View style={styles.card}>
-        <Text style={styles.cardHeading}>{latestSimulation.templateName}</Text>
+        <Text style={styles.cardHeading}>{latestSimulation.portfolioName}</Text>
         <SummaryRow label="Total contributed" value={formatCurrency(latestSimulation.totalContributed)} />
         <SummaryRow label="Growth" value={formatCurrency(latestSimulation.growth)} />
         <SummaryRow label="Final value" value={formatCurrency(latestSimulation.finalValue)} emphasized />

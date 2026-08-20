@@ -13,6 +13,7 @@
     "prisma:migrate": "prisma migrate dev",
     "prisma:studio": "prisma studio",
     "prisma:seed": "tsx prisma/seed.ts",
+    "prisma:ingest-funds": "tsx prisma/ingest-funds.ts",
     "db:up": "docker compose -f ../docker-compose.yml up -d",
     "db:down": "docker compose -f ../docker-compose.yml down",
     "db:logs": "docker compose -f ../docker-compose.yml logs -f db",

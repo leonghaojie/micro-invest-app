@@ -20,4 +20,6 @@ export const env = {
   bcryptSaltRounds: Number(process.env.BCRYPT_SALT_ROUNDS ?? 10),
   // SRS §2.5 / Design Model §5: locked Phase 1 decision.
   minGroupSize: Number(process.env.MIN_GROUP_SIZE ?? 10),
+  // Optional — only prisma/ingest-funds.ts needs this, not the server.
+  eodhdApiKey: process.env.EODHD_API_KEY,
 };

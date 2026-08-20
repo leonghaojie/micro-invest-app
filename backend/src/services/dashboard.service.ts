@@ -15,7 +15,7 @@ export interface DashboardSummary {
   totalSimulations: number;
   latestSimulation: {
     simulationId: string;
-    templateName: string;
+    portfolioName: string;
     finalValue: number;
     totalContributed: number;
     growth: number;
@@ -30,7 +30,7 @@ export interface GrowthPoint {
 
 export interface DashboardGrowth {
   simulationId: string | null;
-  templateName: string | null;
+  portfolioName: string | null;
   points: GrowthPoint[];
 }
 
@@ -77,7 +77,7 @@ class DashboardService {
       prisma.simulation.findFirst({
         where: { userId },
         orderBy: { createdAt: "desc" },
-        include: { template: true },
+        include: { portfolio: true },
       }),
     ]);
 
@@ -94,7 +94,7 @@ class DashboardService {
       totalSimulations,
       latestSimulation: {
         simulationId: latest.id,
-        templateName: latest.template.name,
+        portfolioName: latest.portfolio.name,
         finalValue,
         totalContributed,
         growth: round2(finalValue - totalContributed),
@@ -108,18 +108,18 @@ class DashboardService {
       where: { userId },
       orderBy: { createdAt: "desc" },
       include: {
-        template: true,
+        portfolio: true,
         contributions: { orderBy: { periodIndex: "asc" } },
       },
     });
 
     if (!latest) {
-      return { simulationId: null, templateName: null, points: [] };
+      return { simulationId: null, portfolioName: null, points: [] };
     }
 
     return {
       simulationId: latest.id,
-      templateName: latest.template.name,
+      portfolioName: latest.portfolio.name,
       points: latest.contributions.map((c) => ({
         periodIndex: c.periodIndex,
         portfolioValue: Number(c.portfolioValue),
