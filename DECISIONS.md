@@ -290,11 +290,19 @@ mechanism`/`avgTransactionsPerWeek`/`avgRoundUpAmount`, migration
 `contribution_mechanism`), mobile `SimulationSetupScreen.tsx` (mechanism
 selector + conditional round-up inputs with a live per-period preview).
 
-⚠️ **SRS not yet amended for this addition.** Genuinely new scope, not a
-reopened decision — UC-03's Flow of Events step 4 ("User sets
-contribution amount, frequency, and duration") would need a mechanism
-sub-step. Offered to the user as a separate step, same as the two
-UC-03-touching amendments to Decision #1 above.
+**SRS amended.** `Phase2_SRS_v1.5.docx` (repo root, alongside — not
+replacing — `Phase2_SRS_v1.4.docx`) bumps the version header and revision
+history (20 Aug 2026, a genuinely later date than the two 19 Aug 2026
+amendments above — this is new scope, not a same-day reopening), adds a
+`[v1.5]` note to §1.1, appends the mechanism/derivation summary above to
+§2.5, and extends UC-03's Flow of Events step 4 ("User sets contribution
+amount, frequency, and duration") with the mechanism sub-step — all in a
+new teal `[v1.5]` tag, appended below the existing amber/blue/green/
+purple text, not overwritten. Appendix C is untouched (correctly — this
+was never a TBD). Edited directly by unzip/edit `word/document.xml`/
+rezip, XSD-validated against `Phase2_SRS_v1.4.docx` (paragraph count +7,
+matching the 3 new tagged paragraphs + 1 new 4-cell revision-history
+row).
 
 ## Open items (Design Model §8, carried forward)
 
@@ -336,8 +344,9 @@ amendments above) — see `Phase2_SRS_v1.4.docx` Appendix C for the current
 status. The budget-band gap above was never numbered as a TBD in the
 first place, so it was never covered by the "all closed" statement to
 begin with — see Open items. **Decision #6 (contribution mechanism) is
-new scope, not a TBD or a reopened decision, and has no SRS coverage
-yet** — see its own entry above.
+new scope, not a TBD or a reopened decision** — it's covered by
+`Phase2_SRS_v1.5.docx` (20 Aug 2026), the first SRS revision in this
+chain that isn't dated the same day as another one.
 
 FR01–FR12 (SRS v1.2 §3.2) are implemented end-to-end, backend and mobile,
 matching `FYP Roadmap.docx` Phases 3–6. FR13 and the synthetic-peer-data

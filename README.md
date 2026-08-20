@@ -40,8 +40,9 @@ fixed-amount-per-period input) or **Round-up** — spare-change parameters
 (average transactions/week, average round-up per transaction) derived
 once into a per-period figure via a plain deterministic formula, no
 simulated transaction stream. This is new scope beyond the original SRS
-UC-03 wording, not a reopened decision, and doesn't yet have SRS
-coverage — see the caveat in `DECISIONS.md` #6.
+UC-03 wording, not a reopened decision. `Phase2_SRS_v1.5.docx` (alongside
+— not replacing — `v1.4`) reflects it: §2.5 updated, UC-03's Flow of
+Events step 4 extended with the mechanism sub-step.
 
 ## Architecture
 
@@ -171,6 +172,11 @@ original Word documents, each superseding the last within its phase:
   blended historical-return simulation), TBD-01 further amended in
   Appendix C (`DECISIONS.md` #1 second amendment). Kept alongside v1.3,
   not replacing it.
+- `Phase2_SRS_v1.5.docx` — Phase 4 addition (20 Aug 2026): **UC-03
+  extended** — Flow of Events step 4 gains a contribution mechanism
+  sub-step (scheduled deposit or round-up), §2.5 updated with the
+  derivation formula (`DECISIONS.md` #6). New scope, not a reopened TBD —
+  Appendix C is untouched. Kept alongside v1.4, not replacing it.
 - `FYP Roadmap.docx` — the full Phase 0–9 plan mapped to the Lab #1–#5
   sequence and semester timeline.
 - `FYP_SRS_UseCase_UI_Lab1Style.docx` — an earlier Lab #1-formatted SRS
@@ -188,7 +194,7 @@ matching `FYP Roadmap.docx` Phases 3–6:
 | Phase | Scope | FRs | Status |
 |---|---|---|---|
 | 3 | Auth, profile, fund catalog & portfolio composition | FR01–04 | ✅ Done — since amended to user-composed multi-fund portfolios, DECISIONS.md #1 second amendment |
-| 4 | Simulation engine, dashboard | FR05–08 | ✅ Done — since extended with a contribution mechanism (scheduled deposit vs round-up), DECISIONS.md #6, new scope beyond FR05's original SRS wording |
+| 4 | Simulation engine, dashboard | FR05–08 | ✅ Done — since extended with a contribution mechanism (scheduled deposit vs round-up), DECISIONS.md #6 / SRS v1.5, new scope beyond FR05's original wording |
 | 5 | Peer benchmarking engine | FR09–11 | ✅ Done — grouping algorithm and percentile computation both implemented; synthetic peer *data generation* still open, see below |
 | 6 | Insight generation | FR12 | ✅ Done |
 | 7 | History, polish, NFRs | FR13 | ⬜ Not started |
