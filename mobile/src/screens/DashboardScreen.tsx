@@ -7,14 +7,23 @@
  *
  * Simulation history (/simulation/history, FR13) is Phase 7 and still a
  * 501 stub server-side — not wired here.
+ *
+ * UI restructuring (20 Aug 2026): this is now the tab bar's home tab
+ * (AppNavigator.tsx) rather than a screen a simulation run pushes you
+ * onto. The old "Run another simulation" / "Compare with peers" /
+ * "View insights" buttons are gone — the tab bar itself is that
+ * navigation now. Data reloads on every focus (useFocusEffect, not just
+ * on mount) since switching tabs no longer remounts this screen the way
+ * a stack push/replace used to.
  */
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
-import type { NativeStackScreenProps } from "@react-navigation/native-stack";
-import { apiFetch, ApiError } from "../api/client";
-import type { RootStackParamList } from "../navigation/AppNavigator";
+import { useFocusEffect } from "@react-navigation/native";
+import { apiFetch, ApiError, clearStoredAuthToken } from "../api/client";
+import type { MainTabScreenProps, RootStackParamList } from "../navigation/AppNavigator";
+import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 
-type Props = NativeStackScreenProps<RootStackParamList, "Dashboard">;
+type Props = MainTabScreenProps<"Dashboard">;
 
 interface DashboardSummary {
   hasSimulations: boolean;
@@ -83,7 +92,15 @@ export function DashboardScreen({ navigation }: Props) {
     };
   }, []);
 
-  useEffect(() => load(), [load]);
+  useFocusEffect(load);
+
+  async function handleLogout() {
+    await clearStoredAuthToken();
+    navigation.getParent<NativeStackNavigationProp<RootStackParamList>>()?.reset({
+      index: 0,
+      routes: [{ name: "WelcomeLogin" }],
+    });
+  }
 
   if (loading) {
     return (
@@ -108,9 +125,12 @@ export function DashboardScreen({ navigation }: Props) {
     return (
       <View style={styles.container}>
         <Text style={styles.title}>No simulations yet</Text>
-        <Text style={styles.subtitle}>Run one to see your dashboard.</Text>
-        <Pressable style={styles.submitButton} onPress={() => navigation.navigate("SimulationSetup")}>
-          <Text style={styles.submitButtonText}>Run a simulation</Text>
+        <Text style={styles.subtitle}>Set up a contribution to see your dashboard.</Text>
+        <Pressable style={styles.submitButton} onPress={() => navigation.navigate("Contribution")}>
+          <Text style={styles.submitButtonText}>Set up your contribution</Text>
+        </Pressable>
+        <Pressable style={styles.secondaryButton} onPress={handleLogout}>
+          <Text style={styles.secondaryButtonText}>Log out</Text>
         </Pressable>
       </View>
     );
@@ -122,10 +142,17 @@ export function DashboardScreen({ navigation }: Props) {
 
   return (
     <ScrollView contentContainerStyle={styles.scrollContainer}>
-      <Text style={styles.title}>Dashboard</Text>
-      <Text style={styles.subtitle}>
-        {summary.totalSimulations} simulation{summary.totalSimulations === 1 ? "" : "s"} run
-      </Text>
+      <View style={styles.headerRow}>
+        <View>
+          <Text style={styles.title}>Dashboard</Text>
+          <Text style={styles.subtitle}>
+            {summary.totalSimulations} simulation{summary.totalSimulations === 1 ? "" : "s"} run
+          </Text>
+        </View>
+        <Pressable onPress={handleLogout}>
+          <Text style={styles.logoutText}>Log out</Text>
+        </Pressable>
+      </View>
 
       <View style={styles.card}>
         <Text style={styles.cardHeading}>{latestSimulation.portfolioName}</Text>
@@ -161,16 +188,6 @@ export function DashboardScreen({ navigation }: Props) {
           </Text>
         </View>
       )}
-
-      <Pressable style={styles.submitButton} onPress={() => navigation.navigate("SimulationSetup")}>
-        <Text style={styles.submitButtonText}>Run another simulation</Text>
-      </Pressable>
-      <Pressable style={styles.secondaryButton} onPress={() => navigation.navigate("PeerComparison")}>
-        <Text style={styles.secondaryButtonText}>Compare with peers</Text>
-      </Pressable>
-      <Pressable style={styles.secondaryButton} onPress={() => navigation.navigate("Insights")}>
-        <Text style={styles.secondaryButtonText}>View insights</Text>
-      </Pressable>
     </ScrollView>
   );
 }
@@ -212,8 +229,16 @@ function describeError(err: unknown): string {
 const styles = StyleSheet.create({
   container: { flex: 1, alignItems: "center", justifyContent: "center", padding: 24, gap: 12 },
   scrollContainer: { flexGrow: 1, alignItems: "center", padding: 24, gap: 12 },
+  headerRow: {
+    width: "100%",
+    maxWidth: 360,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+  },
   title: { fontSize: 24, fontWeight: "700" },
   subtitle: { fontSize: 14, color: "#555", marginBottom: 8, textAlign: "center" },
+  logoutText: { color: "#c0392b", fontSize: 13, marginTop: 4 },
   error: { color: "#c0392b", textAlign: "center" },
   card: {
     width: "100%",

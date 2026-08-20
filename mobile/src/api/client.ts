@@ -36,6 +36,12 @@ export async function setStoredAuthToken(token: string | null): Promise<void> {
   }
 }
 
+// Convenience alias for the log-out path (DashboardScreen) — reads better
+// than `setStoredAuthToken(null)` at the call site.
+export async function clearStoredAuthToken(): Promise<void> {
+  await setStoredAuthToken(null);
+}
+
 export interface ApiFetchOptions {
   method?: "GET" | "POST" | "PUT" | "DELETE";
   body?: unknown;

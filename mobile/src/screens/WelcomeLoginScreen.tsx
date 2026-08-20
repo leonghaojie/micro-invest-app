@@ -8,11 +8,10 @@
  */
 import { useState } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
-import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { apiFetch, ApiError, setStoredAuthToken } from "../api/client";
-import type { RootStackParamList } from "../navigation/AppNavigator";
+import type { RootStackScreenProps } from "../navigation/AppNavigator";
 
-type Props = NativeStackScreenProps<RootStackParamList, "WelcomeLogin">;
+type Props = RootStackScreenProps<"WelcomeLogin">;
 
 type Mode = "login" | "register";
 
@@ -62,10 +61,12 @@ export function WelcomeLoginScreen({ navigation }: Props) {
       await setStoredAuthToken(result.token);
 
       // Reset rather than navigate: a logged-in user shouldn't be able to
-      // swipe/back into the login form.
+      // swipe/back into the login form. Login assumes an already-onboarded
+      // user and goes straight to the tab bar; register still needs
+      // ProfileSetup first.
       navigation.reset({
         index: 0,
-        routes: [{ name: isLogin ? "Dashboard" : "ProfileSetup" }],
+        routes: [{ name: isLogin ? "Main" : "ProfileSetup" }],
       });
     } catch (err) {
       setError(describeError(err, isLogin));

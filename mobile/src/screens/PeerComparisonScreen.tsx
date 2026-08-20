@@ -11,13 +11,13 @@
  * /peers/distribution is still implemented and tested server-side for
  * whatever narrower consumer wants just the group shape.
  */
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
-import type { NativeStackScreenProps } from "@react-navigation/native-stack";
+import { useFocusEffect } from "@react-navigation/native";
 import { apiFetch, ApiError } from "../api/client";
-import type { RootStackParamList } from "../navigation/AppNavigator";
+import type { MainTabScreenProps } from "../navigation/AppNavigator";
 
-type Props = NativeStackScreenProps<RootStackParamList, "PeerComparison">;
+type Props = MainTabScreenProps<"PeerComparison">;
 
 interface PeerSummary {
   tier: "FULL" | "RISK_BUDGET" | "RISK_ONLY";
@@ -55,7 +55,7 @@ export function PeerComparisonScreen({ navigation }: Props) {
     };
   }, []);
 
-  useEffect(() => load(), [load]);
+  useFocusEffect(load);
 
   if (loading) {
     return (
@@ -122,7 +122,7 @@ export function PeerComparisonScreen({ navigation }: Props) {
       {summary.userValue === null && (
         <View style={styles.card}>
           <Text style={styles.body}>Run a simulation to see how you compare.</Text>
-          <Pressable style={styles.submitButton} onPress={() => navigation.navigate("SimulationSetup")}>
+          <Pressable style={styles.submitButton} onPress={() => navigation.navigate("Contribution")}>
             <Text style={styles.submitButtonText}>Run a simulation</Text>
           </Pressable>
         </View>
