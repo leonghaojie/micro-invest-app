@@ -4,13 +4,13 @@
  * meaningful gap is detected. Each card that suggests an action gets an
  * "Adjust Plan" link back to S-03, per this screen's original TODO text.
  */
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
-import type { NativeStackScreenProps } from "@react-navigation/native-stack";
+import { useFocusEffect } from "@react-navigation/native";
 import { apiFetch, ApiError } from "../api/client";
-import type { RootStackParamList } from "../navigation/AppNavigator";
+import type { MainTabScreenProps } from "../navigation/AppNavigator";
 
-type Props = NativeStackScreenProps<RootStackParamList, "Insights">;
+type Props = MainTabScreenProps<"Insights">;
 
 type Tone = "positive" | "neutral" | "suggestion";
 
@@ -54,7 +54,7 @@ export function InsightsScreen({ navigation }: Props) {
     };
   }, []);
 
-  useEffect(() => load(), [load]);
+  useFocusEffect(load);
 
   if (loading) {
     return (
@@ -84,7 +84,7 @@ export function InsightsScreen({ navigation }: Props) {
           <Text style={styles.cardTitle}>{card.title}</Text>
           <Text style={styles.cardBody}>{card.body}</Text>
           {card.showAdjustPlanAction && (
-            <Pressable style={styles.adjustButton} onPress={() => navigation.navigate("SimulationSetup")}>
+            <Pressable style={styles.adjustButton} onPress={() => navigation.navigate("Contribution")}>
               <Text style={styles.adjustButtonText}>Adjust Plan</Text>
             </Pressable>
           )}

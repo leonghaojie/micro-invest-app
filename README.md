@@ -80,10 +80,25 @@ micro-invest-app/
 │  ├─ src/config/                 prisma.ts (PrismaClient singleton), env.ts
 │  └─ src/app.ts, src/index.ts    AppServer
 └─ mobile/
-   ├─ src/screens/                S-01 – S-06
-   ├─ src/navigation/AppNavigator.tsx   dialog map
+   ├─ src/screens/                S-01 – S-06, plus FundBrowserScreen (new — see below)
+   ├─ src/navigation/AppNavigator.tsx      root stack — WelcomeLogin/ProfileSetup pre-login, Main (tab bar) after
+   ├─ src/navigation/MainTabNavigator.tsx  the tab bar itself: Dashboard, Funds, Contribution, Peers, Insights
    └─ src/api/client.ts           apiFetch wrapper
 ```
+
+**Navigation (restructured 20 Aug 2026).** The app used to be one long
+screen-by-screen flow (S-01 → S-02 → S-03 → S-04 → S-05/S-06), each step
+pushing/replacing the next. It's now a single tab bar after login/
+profile-setup — Dashboard (S-04, the default landing tab), Funds (new —
+browse the fund catalog and build/save a multi-fund portfolio, split out
+of what used to be S-03's inline "build" step), Contribution (S-03,
+trimmed to just choose-a-portfolio + configure-and-run), Peers (S-05),
+Insights (S-06) — five sibling screens a user jumps between directly. A
+stored JWT is checked once on boot; a returning user goes straight to the
+tab bar rather than re-entering credentials. Pure UI reorganisation, not
+new backend scope — no service, schema, or API changes — so there's no
+DECISIONS.md entry for it (that file is scoped to algorithm/backend
+decisions); see the doc comment at the top of `AppNavigator.tsx` instead.
 
 ## Tech stack
 

@@ -10,11 +10,10 @@
  */
 import { useEffect, useState } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
-import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { apiFetch, ApiError } from "../api/client";
-import type { RootStackParamList } from "../navigation/AppNavigator";
+import type { RootStackScreenProps } from "../navigation/AppNavigator";
 
-type Props = NativeStackScreenProps<RootStackParamList, "ProfileSetup">;
+type Props = RootStackScreenProps<"ProfileSetup">;
 
 type RiskLevel = "LOW" | "MEDIUM" | "HIGH";
 type GoalType = "LEARN" | "HABIT" | "GROWTH";
@@ -96,7 +95,9 @@ export function ProfileSetupScreen({ navigation }: Props) {
         method: "POST",
         body: { riskLevel, goalType, monthlyBudget: Number(monthlyBudget) },
       });
-      navigation.replace("SimulationSetup");
+      // Straight to the Contribution tab — having just set up their
+      // profile, setting up a first contribution is the natural next step.
+      navigation.replace("Main", { screen: "Contribution" });
     } catch (err) {
       setError(describeError(err));
     } finally {

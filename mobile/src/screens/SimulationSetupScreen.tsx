@@ -1,44 +1,37 @@
 /**
- * S-03 Simulation Setup — UC-03. Select a portfolio (a preset, or a
- * custom multi-fund mix the user builds) + plan parameters, run the
- * deterministic simulation (FR05/06/07, simulation.service.ts), then
- * continue to S-04 Dashboard.
+ * S-03 Configure & Run Simulation — UC-03. User-facing tab label:
+ * "Contribution" (AppNavigator.tsx) — pick a portfolio + a contribution
+ * plan, run the deterministic simulation (FR05/06/07,
+ * simulation.service.ts), see the result.
  *
- * DECISIONS.md #1 second amendment: this replaces the old fixed single-
- * fund "portfolio template" picker (SRS UC-03 step 2-3, "System displays
- * portfolio templates. User selects a template.") with a three-step flow:
- * choose an existing portfolio (presets or the user's own) → optionally
- * build a new one from the fund catalog → configure & run.
+ * DECISIONS.md #1 second amendment: replaced the old fixed single-fund
+ * "portfolio template" picker (SRS UC-03 step 2-3) with a portfolio
+ * picker over presets + the user's own multi-fund portfolios.
  *
- * DECISIONS.md #6: contribution amount now comes from one of two
- * mechanisms — Scheduled deposit (the original fixed-amount input) or
- * Round-up (spare-change parameters, derived to a per-period amount
- * server-side). This screen mirrors that derivation client-side purely
- * for an immediate live preview; simulation.service.ts is the source of
- * truth for what actually gets simulated.
+ * UI restructuring (20 Aug 2026, AppNavigator.tsx): this used to be a
+ * 3-step flow with an embedded "build a new portfolio" step. That step
+ * moved out to its own Funds tab (FundBrowserScreen) — this screen is
+ * now just choose-a-portfolio + configure-and-run, and links out to the
+ * Funds tab instead of building inline. Running a simulation switches to
+ * the Dashboard tab (sibling, not a stack push) rather than replacing
+ * this screen; the portfolio list also now refreshes on every tab focus
+ * so a portfolio just built in the Funds tab shows up here without a
+ * reload.
+ *
+ * DECISIONS.md #6: contribution amount comes from one of two mechanisms
+ * — Scheduled deposit (direct amount) or Round-up (spare-change inputs,
+ * derived server-side; previewed client-side here too).
  */
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
-import type { NativeStackScreenProps } from "@react-navigation/native-stack";
+import { useFocusEffect } from "@react-navigation/native";
 import { apiFetch, ApiError } from "../api/client";
-import type { RootStackParamList } from "../navigation/AppNavigator";
+import type { MainTabScreenProps } from "../navigation/AppNavigator";
 
-type Props = NativeStackScreenProps<RootStackParamList, "SimulationSetup">;
+type Props = MainTabScreenProps<"Contribution">;
 
 type Frequency = "WEEKLY" | "MONTHLY";
 type Mechanism = "SCHEDULED" | "ROUND_UP";
-type Step = "choose" | "build" | "configure";
-
-interface FundSummary {
-  id: string;
-  ticker: string;
-  name: string;
-  assetClass: string;
-  exchange: string;
-  currency: string;
-  yearsAvailable: number;
-  latestAnnualReturn: number | null;
-}
 
 interface PortfolioAllocationSummary {
   fundId: string;
@@ -81,8 +74,6 @@ const MECHANISM_OPTIONS: { value: Mechanism; label: string }[] = [
   { value: "ROUND_UP", label: "Round-up" },
 ];
 
-const WEIGHT_SUM_TOLERANCE = 0.01;
-
 // Mirrors deriveRoundUpContribution in simulation.service.ts — client-side
 // only, for a live preview; the backend recomputes this itself.
 function deriveRoundUpPreview(avgTransactionsPerWeek: number, avgRoundUpAmount: number, frequency: Frequency): number {
@@ -91,18 +82,11 @@ function deriveRoundUpPreview(avgTransactionsPerWeek: number, avgRoundUpAmount: 
 }
 
 export function SimulationSetupScreen({ navigation }: Props) {
-  const [step, setStep] = useState<Step>("choose");
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
 
   const [portfolios, setPortfolios] = useState<PortfolioSummary[]>([]);
   const [selectedPortfolioId, setSelectedPortfolioId] = useState<string | null>(null);
-
-  const [funds, setFunds] = useState<FundSummary[]>([]);
-  const [newPortfolioName, setNewPortfolioName] = useState("");
-  const [weightsByFundId, setWeightsByFundId] = useState<Record<string, string>>({});
-  const [buildError, setBuildError] = useState<string | null>(null);
-  const [buildSubmitting, setBuildSubmitting] = useState(false);
 
   const [frequency, setFrequency] = useState<Frequency>("MONTHLY");
   const [mechanism, setMechanism] = useState<Mechanism>("SCHEDULED");
@@ -120,12 +104,11 @@ export function SimulationSetupScreen({ navigation }: Props) {
     setLoading(true);
     setLoadError(null);
 
-    Promise.all([apiFetch<PortfolioSummary[]>("/portfolio/portfolios"), apiFetch<FundSummary[]>("/portfolio/funds")])
-      .then(([portfolioData, fundData]) => {
+    apiFetch<PortfolioSummary[]>("/portfolio/portfolios")
+      .then((data) => {
         if (cancelled) return;
-        setPortfolios(portfolioData);
-        setFunds(fundData);
-        if (portfolioData.length > 0 && !selectedPortfolioId) setSelectedPortfolioId(portfolioData[0].id);
+        setPortfolios(data);
+        setSelectedPortfolioId((prev) => prev ?? (data.length > 0 ? data[0].id : null));
       })
       .catch((err) => {
         if (!cancelled) setLoadError(describeError(err));
@@ -137,65 +120,9 @@ export function SimulationSetupScreen({ navigation }: Props) {
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  useEffect(() => loadPortfolios(), [loadPortfolios]);
-
-  function toggleFund(fundId: string) {
-    setWeightsByFundId((prev) => {
-      const next = { ...prev };
-      if (fundId in next) {
-        delete next[fundId];
-      } else {
-        next[fundId] = "";
-      }
-      return next;
-    });
-  }
-
-  function setWeight(fundId: string, value: string) {
-    setWeightsByFundId((prev) => ({ ...prev, [fundId]: value }));
-  }
-
-  const selectedFundIds = Object.keys(weightsByFundId);
-  const weightTotal = selectedFundIds.reduce((sum, id) => sum + (Number(weightsByFundId[id]) || 0), 0);
-
-  async function handleBuildPortfolio() {
-    if (!newPortfolioName.trim()) {
-      setBuildError("Give your portfolio a name.");
-      return;
-    }
-    if (selectedFundIds.length === 0) {
-      setBuildError("Select at least one fund.");
-      return;
-    }
-    if (Math.abs(weightTotal - 100) > WEIGHT_SUM_TOLERANCE) {
-      setBuildError(`Weights must add up to 100% (currently ${round2(weightTotal)}%).`);
-      return;
-    }
-
-    setBuildError(null);
-    setBuildSubmitting(true);
-    try {
-      const created = await apiFetch<PortfolioSummary>("/portfolio/portfolios", {
-        method: "POST",
-        body: {
-          name: newPortfolioName.trim(),
-          allocations: selectedFundIds.map((fundId) => ({ fundId, weightPct: Number(weightsByFundId[fundId]) })),
-        },
-      });
-      setPortfolios((prev) => [...prev, created]);
-      setSelectedPortfolioId(created.id);
-      setWeightsByFundId({});
-      setNewPortfolioName("");
-      setStep("choose");
-    } catch (err) {
-      setBuildError(describeError(err));
-    } finally {
-      setBuildSubmitting(false);
-    }
-  }
+  useFocusEffect(loadPortfolios);
 
   function validateRun(): string | null {
     if (!selectedPortfolioId) return "Select a portfolio.";
@@ -285,8 +212,11 @@ export function SimulationSetupScreen({ navigation }: Props) {
             that history was replayed from the start to fill the remaining years.
           </Text>
         )}
-        <Pressable style={styles.submitButton} onPress={() => navigation.replace("Dashboard")}>
-          <Text style={styles.submitButtonText}>Continue to Dashboard</Text>
+        <Pressable style={styles.submitButton} onPress={() => navigation.navigate("Dashboard")}>
+          <Text style={styles.submitButtonText}>View on Dashboard</Text>
+        </Pressable>
+        <Pressable style={styles.secondaryButton} onPress={() => setResult(null)}>
+          <Text style={styles.secondaryButtonText}>Edit contribution</Text>
         </Pressable>
       </View>
     );
@@ -296,14 +226,12 @@ export function SimulationSetupScreen({ navigation }: Props) {
 
   return (
     <ScrollView contentContainerStyle={styles.scrollContainer}>
-      <Text style={styles.title}>Set up your simulation</Text>
-      <Text style={styles.subtitle}>
-        {step === "build" ? "Build a custom portfolio from real funds." : "Pick a portfolio and a contribution plan."}
-      </Text>
+      <Text style={styles.title}>Your contribution</Text>
+      <Text style={styles.subtitle}>Pick a portfolio and a contribution plan.</Text>
 
       {loadError && <Text style={styles.error}>{loadError}</Text>}
 
-      {step === "choose" && !loadError && (
+      {!loadError && (
         <View style={styles.form}>
           <Text style={styles.label}>Portfolio</Text>
           {portfolios.length === 0 && <Text style={styles.error}>No portfolios available yet.</Text>}
@@ -327,8 +255,8 @@ export function SimulationSetupScreen({ navigation }: Props) {
             ))}
           </View>
 
-          <Pressable style={styles.secondaryButton} onPress={() => setStep("build")}>
-            <Text style={styles.secondaryButtonText}>+ Build your own portfolio</Text>
+          <Pressable style={styles.secondaryButton} onPress={() => navigation.navigate("Funds")}>
+            <Text style={styles.secondaryButtonText}>Don't see what you want? Build one in the Funds tab →</Text>
           </Pressable>
 
           {selectedPortfolio && (
@@ -433,71 +361,6 @@ export function SimulationSetupScreen({ navigation }: Props) {
           )}
         </View>
       )}
-
-      {step === "build" && (
-        <View style={styles.form}>
-          <Text style={styles.label}>Portfolio name</Text>
-          <TextInput
-            style={styles.input}
-            placeholder="e.g. My global mix"
-            value={newPortfolioName}
-            onChangeText={setNewPortfolioName}
-            editable={!buildSubmitting}
-          />
-
-          <Text style={styles.label}>Funds ({selectedFundIds.length} selected)</Text>
-          <View style={styles.optionColumn}>
-            {funds.map((fund) => {
-              const isSelected = fund.id in weightsByFundId;
-              return (
-                <View key={fund.id} style={[styles.templateCard, isSelected && styles.optionButtonSelected]}>
-                  <Pressable onPress={() => toggleFund(fund.id)} disabled={buildSubmitting}>
-                    <Text style={[styles.optionButtonText, isSelected && styles.optionButtonTextSelected]}>
-                      {fund.ticker} — {fund.name}
-                    </Text>
-                    <Text style={styles.templateMeta}>
-                      {fund.assetClass} · {fund.exchange} ·{" "}
-                      {fund.latestAnnualReturn !== null
-                        ? `${(fund.latestAnnualReturn * 100).toFixed(1)}% latest annual return`
-                        : "no data yet"}{" "}
-                      · {fund.yearsAvailable}y history
-                    </Text>
-                  </Pressable>
-                  {isSelected && (
-                    <TextInput
-                      style={styles.weightInput}
-                      placeholder="Weight %"
-                      keyboardType="numeric"
-                      value={weightsByFundId[fund.id]}
-                      onChangeText={(v) => setWeight(fund.id, v)}
-                      editable={!buildSubmitting}
-                    />
-                  )}
-                </View>
-              );
-            })}
-          </View>
-
-          {selectedFundIds.length > 0 && (
-            <Text style={[styles.templateMeta, Math.abs(weightTotal - 100) > WEIGHT_SUM_TOLERANCE && styles.error]}>
-              Total: {round2(weightTotal)}% {Math.abs(weightTotal - 100) > WEIGHT_SUM_TOLERANCE ? "(must equal 100%)" : "✓"}
-            </Text>
-          )}
-
-          {buildError && <Text style={styles.error}>{buildError}</Text>}
-
-          <Pressable
-            style={[styles.submitButton, buildSubmitting && styles.submitButtonDisabled]}
-            onPress={handleBuildPortfolio}
-            disabled={buildSubmitting}
-          >
-            {buildSubmitting ? <ActivityIndicator color="#fff" /> : <Text style={styles.submitButtonText}>Save portfolio</Text>}
-          </Pressable>
-          <Pressable style={styles.secondaryButton} onPress={() => setStep("choose")} disabled={buildSubmitting}>
-            <Text style={styles.secondaryButtonText}>Cancel</Text>
-          </Pressable>
-        </View>
-      )}
     </ScrollView>
   );
 }
@@ -564,15 +427,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 12,
     fontSize: 16,
-  },
-  weightInput: {
-    borderWidth: 1,
-    borderColor: "#ccc",
-    borderRadius: 6,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    fontSize: 14,
-    backgroundColor: "#fff",
   },
   error: { color: "#c0392b", textAlign: "center", marginTop: 8 },
   historyNote: {
