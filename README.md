@@ -7,42 +7,45 @@ user's simulated outcomes against an anonymised peer group using
 percentile-based statistics.
 
 This repo has grown from the Phase 2 (Design) skeleton into a working
-implementation of the full SRS v1.2 feature set: **FR01–FR12** (register/
-login through insights, SRS §3.2) are implemented end-to-end, backend and
-mobile, with unit test coverage per service. **FR13** (simulation history)
-and the synthetic-peer-data seed script are the two remaining functional
-gaps — see [Status](#status) below. See `FYP Roadmap.docx` for the full
-phase plan and `DECISIONS.md` for the algorithm decisions this structure
-encodes.
+implementation of the full SRS v1.6 feature set (**FR01–FR13**, register/
+login through simulation history, SRS §3.2), now carried through a 25 Aug
+2026 rewrite to a real-calendar monthly backtest, income-based peer
+grouping, and wallet/Savings-Rate/Emergency-Buffer metrics — see
+[Status](#status) below. See `FYP Roadmap.docx` for the full phase plan
+and `DECISIONS.md` for the algorithm decisions this structure encodes.
 
-The simulation engine's return model was amended twice (see `DECISIONS.md`
-#1 and its two dated amendments): first (19 Aug 2026) from a constant
-expected-return rate to deterministic replay of real historical annual
-returns for the actual SGX-listed fund each portfolio was anchored to (A35
-/ CFA / ES3); then (19 Aug 2026, second amendment) from three fixed
-single-fund templates to fully user-composed multi-fund portfolios —
-users choose any combination of real funds from a seven-fund catalog
-(SGX + US-listed, spanning bonds/equity/REITs/EM equity/gold) and set a
-weight for each, and the engine blends each fund's real historical return
-by weight every period. Both changes stay fully reproducible (NFR-04) —
-every fund's return series is static seed data, never live-fetched or
-randomly resampled. `Phase2_SRS_v1.3.docx` (alongside — not replacing —
-`Phase2_SRS_v1.2.docx`) reflects the first change: §2.5 updated, TBD-01
-reopened in Appendix C. `Phase2_SRS_v1.4.docx` (alongside, not replacing,
-`v1.3`) reflects the second: UC-03's Flow of Events amended for
-fund-catalog/portfolio composition, §2.5 updated with the schema and
-blending algorithm, TBD-01 further amended in Appendix C — see
-`DECISIONS.md` #1 second amendment.
+**Plan engine** (`plan.service.ts`, formerly "simulation engine" —
+`DECISIONS.md` #1 and its three dated amendments): a user picks a
+portfolio (any weighted combination of real funds from an eight-fund
+catalog — SGX + US-listed, spanning bonds/equity/REITs/EM equity/gold),
+a monthly contribution amount (capped by their profile's income), and a
+start month; the plan then runs from there through to the real current
+month using each fund's actual monthly return for that calendar month
+(`V_t = (V_{t-1} + C) × (1 + R_{p,t})`, `R_{p,t}` a weight-blended sum of
+real fund returns) — a genuine historical backtest, not an abstract
+duration or an annual-rate-derived one. Data is sourced from **yfinance**
+(`prisma/ingest-funds-yfinance.py`/`.ts`) — confirmed, live, in this
+project's development, to be the first source that actually covers the
+SGX-listed funds (A35/CFA/ES3/G3B) with real monthly prices and
+dividends; both EODHD and Alpha Vantage were tried first and have zero
+SGX coverage. Fully reproducible (NFR-04) — every fund's return series is
+static ingested data, never live-fetched or randomly resampled at
+simulation time. A user has one active plan at a time; starting a new one
+replaces the old. `Phase2_SRS_v1.3.docx`/`v1.4.docx`/`v1.6.docx`
+(alongside — not replacing — `v1.2.docx`) reflect the engine's three
+amendments in turn: real annual-return replay, then user-composed
+multi-fund portfolios, then this real-calendar monthly backtest.
 
-A simulation's contribution amount now also comes from one of two
-mechanisms (`DECISIONS.md` #6): **Scheduled deposit** (the original
-fixed-amount-per-period input) or **Round-up** — spare-change parameters
-(average transactions/week, average round-up per transaction) derived
-once into a per-period figure via a plain deterministic formula, no
-simulated transaction stream. This is new scope beyond the original SRS
-UC-03 wording, not a reopened decision. `Phase2_SRS_v1.5.docx` (alongside
-— not replacing — `v1.4`) reflects it: §2.5 updated, UC-03's Flow of
-Events step 4 extended with the mechanism sub-step.
+**Peer grouping** (`peerGrouping.service.ts` — `DECISIONS.md` #2,
+rewritten 25 Aug 2026): replaces the original risk-level/budget-band/
+goal-type three-tier fallback with a continuous income range — peers are
+users whose monthly income is within ±10% of the requesting user's,
+widening by 5 percentage points at a time until at least
+`MIN_GROUP_SIZE` (10) match, falling back to "everyone with a plan" as
+the floor tier. The old contribution-mechanism scope (`DECISIONS.md` #6:
+Scheduled deposit vs Round-up, `Phase2_SRS_v1.5.docx`) is superseded, not
+extended further — the rewritten engine is monthly-scheduled
+contributions only.
 
 ## Architecture
 
@@ -70,15 +73,16 @@ Strategy pattern for peer-group fallback).
 ```
 micro-invest-app/
 ├─ backend/
-│  ├─ prisma/schema.prisma        Design Model §4 — DB schema (Fund / Portfolio / PortfolioAllocation / HistoricalReturn, DECISIONS.md #1's two amendments)
-│  ├─ prisma/seed.ts              Fund catalog (7 funds) + real historical returns + preset portfolios (seeded, offline-safe); synthetic peer data (SRS §2.6) still a TODO
-│  ├─ prisma/ingest-funds.ts      Live EODHD ingestion tool (needs EODHD_API_KEY) — working, but this key's plan doesn't cover SGX and caps depth at 1 year, so the shipped catalog is web-search sourced instead; see DECISIONS.md #1 second amendment
-│  ├─ src/routes/                 auth, profile, portfolio (funds + portfolios), simulation, dashboard, peers, insights
-│  ├─ src/controllers/            thin — delegate to services
-│  ├─ src/services/               auth, profile, portfolio, simulation, dashboard, peerGrouping, peerBenchmark, insight
-│  ├─ src/middleware/             auth.middleware.ts (requireAuth), errorHandler.middleware.ts
-│  ├─ src/config/                 prisma.ts (PrismaClient singleton), env.ts
-│  └─ src/app.ts, src/index.ts    AppServer
+│  ├─ prisma/schema.prisma            Design Model §4 — DB schema (Fund / Portfolio / PortfolioAllocation / FundMonthlyReturn / Plan / PlanMonth, DECISIONS.md #1's three amendments)
+│  ├─ prisma/seed.ts                  Preset portfolios (Conservative/Balanced/Growth) + synthetic peer data (income spread + active plans) — requires ingest-funds-yfinance to have run first, no offline fallback catalog any more
+│  ├─ prisma/ingest-funds-yfinance.py Live yfinance ingestion, step 1/2 — fetches monthly OHLC+dividends (no API key needed); the first source confirmed to cover the SGX funds (A35/CFA/ES3/G3B) with real data — see DECISIONS.md #1 third amendment
+│  ├─ prisma/ingest-funds-yfinance.ts Live yfinance ingestion, step 2/2 — derives monthly returns from the .py output, upserts Fund + FundMonthlyReturn via Prisma
+│  ├─ src/routes/                     auth, profile, portfolio (funds + portfolios), plan, dashboard, peers, insights
+│  ├─ src/controllers/                thin — delegate to services
+│  ├─ src/services/                   auth, profile, portfolio, plan, dashboard, peerGrouping, peerBenchmark, insight
+│  ├─ src/middleware/                 auth.middleware.ts (requireAuth), errorHandler.middleware.ts
+│  ├─ src/config/                     prisma.ts (PrismaClient singleton), env.ts
+│  └─ src/app.ts, src/index.ts        AppServer
 └─ mobile/
    ├─ src/screens/                S-01 – S-06, plus FundBrowserScreen (new — see below)
    ├─ src/navigation/AppNavigator.tsx      root stack — WelcomeLogin/ProfileSetup pre-login, Main (tab bar) after
@@ -137,14 +141,15 @@ for the same commands are also available from `backend/` once you've run
 cd backend
 npm install
 cp .env.example .env        # already matches the docker-compose credentials
-npx prisma migrate dev --name init
-npm run prisma:seed         # seeds the fund catalog + preset portfolios (Conservative/Balanced/Growth)
+npx prisma migrate dev
+npm run prisma:ingest-funds # pulls real fund data via yfinance (Python + yfinance package required, no API key) — run once
+npm run prisma:seed         # seeds preset portfolios (Conservative/Balanced/Growth) + synthetic peer data
 npm run dev                 # starts on http://localhost:4000
 ```
 
 Verify it booted: `curl http://localhost:4000/health` → `{"status":"ok"}`.
 
-Run the test suite (83 tests across every service):
+Run the test suite (backend service tests):
 
 ```bash
 npm test
@@ -192,6 +197,17 @@ original Word documents, each superseding the last within its phase:
   sub-step (scheduled deposit or round-up), §2.5 updated with the
   derivation formula (`DECISIONS.md` #6). New scope, not a reopened TBD —
   Appendix C is untouched. Kept alongside v1.4, not replacing it.
+- `Phase2_SRS_v1.6.docx` — Phase 4 amendment (25 Aug 2026): **TBD-01
+  amended a third time** — real-calendar monthly backtest against real
+  fund data via yfinance, replacing the annual historical-replay engine
+  — and **TBD-02 rewritten** — income-range peer grouping (±10% widening)
+  replacing the risk/budget/goal tiers. Also: UC-02 amended for the new
+  income/expense/age profile fields, UC-03 amended again (contribution
+  mechanism removed, start month added), UC-05/UC-06 amended for the new
+  grouping and metrics, and TBD-04 marked removed in Appendix C — the
+  ConsistencyScore metric it resolved no longer exists, superseded by
+  Savings Rate and Emergency Buffer (`DECISIONS.md` #1 third amendment,
+  #2 rewrite, #3, #7). Kept alongside v1.5, not replacing it.
 - `FYP Roadmap.docx` — the full Phase 0–9 plan mapped to the Lab #1–#5
   sequence and semester timeline.
 - `FYP_SRS_UseCase_UI_Lab1Style.docx` — an earlier Lab #1-formatted SRS
@@ -204,36 +220,28 @@ against `Phase2_SRS_v1.2.docx`.
 ## Status
 
 FR01–FR12 (SRS v1.2 §3.2) are implemented end-to-end, backend and mobile,
-matching `FYP Roadmap.docx` Phases 3–6:
+matching `FYP Roadmap.docx` Phases 3–6 — now against the 25 Aug 2026
+income-based/monthly-backtest rewrite (`DECISIONS.md` #1 third amendment,
+#2 rewrite, #7) rather than the original model:
 
 | Phase | Scope | FRs | Status |
 |---|---|---|---|
-| 3 | Auth, profile, fund catalog & portfolio composition | FR01–04 | ✅ Done — since amended to user-composed multi-fund portfolios, DECISIONS.md #1 second amendment |
-| 4 | Simulation engine, dashboard | FR05–08 | ✅ Done — since extended with a contribution mechanism (scheduled deposit vs round-up), DECISIONS.md #6 / SRS v1.5, new scope beyond FR05's original wording |
-| 5 | Peer benchmarking engine | FR09–11 | ✅ Done — grouping algorithm and percentile computation both implemented; synthetic peer *data generation* still open, see below |
-| 6 | Insight generation | FR12 | ✅ Done |
-| 7 | History, polish, NFRs | FR13 | ⬜ Not started |
-| 8 | Testing (Lab #4) | — | 🟡 Unit tests exist per-service, including basis-path coverage of the peer-grouping fallback branches and equivalence-class/boundary coverage of the simulation engine — exactly what Phases 4–5 flagged as the Lab #4 targets — but not yet packaged as a formal Lab #4 deliverable (documented results, reflection report) |
+| 3 | Auth, profile, fund catalog & portfolio composition | FR01–04 | ✅ Done — profile now collects income/expense/age (DECISIONS.md #1 third amendment) instead of a monthly budget; fund catalog sourced from real yfinance monthly data |
+| 4 | Plan engine (formerly "simulation"), dashboard | FR05–08 | ✅ Done — real-calendar monthly backtest replacing the annual-replay engine and the contribution-mechanism scope (DECISIONS.md #1 third amendment; #6 superseded); dashboard adds Wallet and Savings Rate, drops Consistency (DECISIONS.md #3, #7) |
+| 5 | Peer benchmarking engine | FR09–11 | ✅ Done — income-range grouping (DECISIONS.md #2 rewrite) replacing the risk/budget/goal tiers; synthetic peer data generation now implemented (DECISIONS.md #4) |
+| 6 | Insight generation | FR12 | ✅ Done — value/Savings-Rate/Emergency-Buffer gap cards, ConsistencyScore card removed |
+| 7 | History, polish, NFRs | FR13 | ✅ Done — `GET /plan` returns the one active plan directly (trivial now that there's only ever one) |
+| 8 | Testing (Lab #4) | — | 🟡 Unit tests exist per-service, rewritten for the 25 Aug 2026 model — basis-path coverage of the peer-grouping widening/floor branches and equivalence-class/boundary coverage of the monthly engine — but not yet packaged as a formal Lab #4 deliverable (documented results, reflection report) |
 | 9 | Demo prep & submission | — | ⬜ Not started |
 
-Remaining functional gaps against the SRS:
+There is no remaining functional gap against the SRS as of this pass —
+`Phase2_SRS_v1.6.docx` lands in the same pass as the code, matching every
+prior amendment.
 
-- **FR13 / UC-07 Simulation History** — `GET /simulation/history` is still
-  a `501` stub (`simulation.service.ts`); no mobile screen. Per the SRS
-  screen list (§7.1) this belongs on the Dashboard (S-04), not a new
-  screen — FR13 traces to `UC-07/S-04`.
-- **Synthetic peer data generation** (SRS §2.6, DECISIONS.md #4) —
-  `prisma/seed.ts` seeds the fund catalog and preset portfolios but still
-  only prints a TODO for the ~30-synthetic-peers-per-group strategy; no
-  `isSynthetic` users
-  are actually generated yet. Peer grouping/benchmarking work correctly
-  without it — the RISK_ONLY floor tier and small-sample transparency
-  messaging handle sparse real data by design (UC-05 alt flow) — but peer
-  groups stay thin until either real users grow or this script is built.
-- **Budget band (B1–B4) thresholds** — genuinely undefined in every
-  version of the SRS, confirmed by direct inspection of all documents
-  listed above, not just an artifact of an earlier missing copy. See
-  `DECISIONS.md` Open Items.
+The old "Budget band (B1–B4) thresholds" gap is moot, not resolved:
+`budgetBand` and its source field are gone from the schema entirely, and
+peer grouping no longer uses a banded dimension (see `DECISIONS.md` Open
+Items).
 
 NFR verification (performance pass, usability testing, offline resilience
 — `FYP Roadmap.docx` Phase 7) hasn't been formally run yet.

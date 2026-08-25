@@ -1,146 +1,107 @@
 /**
- * PeerBenchmarkService unit tests — FR10/FR11. Prisma is mocked (including
- * $queryRaw as a plain jest.fn(), which tagged-template calls invoke like
- * any other function) so these run without a live Postgres connection.
- * computeConsistencyScore itself is NOT mocked — these tests exercise the
- * real formula via fake timers to pin "now", same as dashboard.service.
- * test.ts, so the two stay provably in sync.
+ * PeerBenchmarkService unit tests — FR10/FR11, rewritten for DECISIONS.md
+ * #2's income-range peer grouping (25 Aug 2026): no more PeerGroup/
+ * PeerGroupStats cache, one $queryRaw call returning all three metrics'
+ * percentiles at once. Prisma is mocked (including $queryRaw as a plain
+ * jest.fn(), which tagged-template calls invoke like any other function)
+ * so these run without a live Postgres connection.
  */
 import { prisma } from "../config/prisma";
 import { peerBenchmarkService } from "./peerBenchmark.service";
+import type { PeerGroupAssignment } from "./peerGrouping.service";
 
 jest.mock("../config/prisma", () => ({
   prisma: {
     $queryRaw: jest.fn(),
-    peerGroup: { findFirst: jest.fn(), create: jest.fn() },
-    peerGroupStats: { upsert: jest.fn() },
-    simulation: { findFirst: jest.fn() },
+    userProfile: { findUnique: jest.fn() },
+    planMonth: { findFirst: jest.fn() },
   },
 }));
 
 const mockedPrisma = prisma as unknown as {
   $queryRaw: jest.Mock;
-  peerGroup: { findFirst: jest.Mock; create: jest.Mock };
-  peerGroupStats: { upsert: jest.Mock };
-  simulation: { findFirst: jest.Mock };
+  userProfile: { findUnique: jest.Mock };
+  planMonth: { findFirst: jest.Mock };
 };
 
-const GROUP = { tier: "FULL" as const, riskLevel: "MEDIUM" as const, budgetBand: "B2" as const, goalType: "HABIT" as const };
+const BAND: PeerGroupAssignment = { bandPct: 10, lo: 3600, hi: 4400, memberCount: 12 };
+const FLOOR: PeerGroupAssignment = { bandPct: null, lo: 0, hi: Infinity, memberCount: 3 };
 
-// computePeerGroupStats fires two $queryRaw calls via Promise.all, in
-// source order: [0] value percentiles, [1] per-member activity rows.
-function mockQueries(valueRow: object, activityRows: object[]) {
-  mockedPrisma.$queryRaw.mockReset();
-  mockedPrisma.$queryRaw.mockResolvedValueOnce([valueRow]).mockResolvedValueOnce(activityRows);
-}
-
-beforeEach(() => {
-  mockedPrisma.peerGroup.findFirst.mockResolvedValue({ id: "pg-1" });
-  mockedPrisma.peerGroupStats.upsert.mockResolvedValue({});
-});
+const FULL_ROW = {
+  memberCount: 5,
+  valueP25: "100.00",
+  valueP50: "150.50",
+  valueP75: "220.00",
+  savingsP25: "10.00",
+  savingsP50: "20.00",
+  savingsP75: "35.00",
+  bufferP25: "0.50",
+  bufferP50: "1.20",
+  bufferP75: "2.00",
+};
 
 describe("PeerBenchmarkService", () => {
-  describe("computePeerGroupStats", () => {
-    it("converts Postgres numeric strings to numbers", async () => {
-      mockQueries({ p25: "100.00", p50: "150.50", p75: "220.00", memberCount: 12 }, []);
+  describe("computeStats", () => {
+    it("converts Postgres numeric strings to numbers across all three metrics", async () => {
+      mockedPrisma.$queryRaw.mockResolvedValue([FULL_ROW]);
 
-      const result = await peerBenchmarkService.computePeerGroupStats(GROUP);
+      const result = await peerBenchmarkService.computeStats("user-1", BAND);
 
-      expect(result.p25).toBe(100);
-      expect(result.p50).toBe(150.5);
-      expect(result.p75).toBe(220);
-      expect(result.memberCount).toBe(12);
+      expect(result).toEqual({
+        memberCount: 5,
+        value: { p25: 100, p50: 150.5, p75: 220 },
+        savingsRatePct: { p25: 10, p50: 20, p75: 35 },
+        emergencyBuffer: { p25: 0.5, p50: 1.2, p75: 2 },
+      });
     });
 
-    it("returns zeros when the group has no members yet (percentiles null)", async () => {
-      mockQueries({ p25: null, p50: null, p75: null, memberCount: 0 }, []);
+    it("returns zeros when the group has no members yet", async () => {
+      mockedPrisma.$queryRaw.mockResolvedValue([
+        { memberCount: 0, valueP25: null, valueP50: null, valueP75: null, savingsP25: null, savingsP50: null, savingsP75: null, bufferP25: null, bufferP50: null, bufferP75: null },
+      ]);
 
-      const result = await peerBenchmarkService.computePeerGroupStats(GROUP);
+      const result = await peerBenchmarkService.computeStats("user-1", BAND);
 
-      expect(result).toEqual({ p25: 0, p50: 0, p75: 0, memberCount: 0, medianConsistency: 0 });
+      expect(result.memberCount).toBe(0);
+      expect(result.value).toEqual({ p25: 0, p50: 0, p75: 0 });
     });
 
-    it("creates the PeerGroup row when none exists yet, then caches stats", async () => {
-      mockQueries({ p25: "1", p50: "2", p75: "3", memberCount: 5 }, []);
-      mockedPrisma.peerGroup.findFirst.mockResolvedValue(null);
-      mockedPrisma.peerGroup.create.mockResolvedValue({ id: "pg-new" });
+    it("queries without an income range for the floor tier", async () => {
+      mockedPrisma.$queryRaw.mockResolvedValue([FULL_ROW]);
 
-      await peerBenchmarkService.computePeerGroupStats(GROUP);
+      await peerBenchmarkService.computeStats("user-1", FLOOR);
 
-      expect(mockedPrisma.peerGroup.create).toHaveBeenCalledWith({
-        data: { riskLevel: "MEDIUM", budgetBand: "B2", goalType: "HABIT", tier: "FULL" },
-      });
-      expect(mockedPrisma.peerGroupStats.upsert).toHaveBeenCalledWith(
-        expect.objectContaining({ where: { peerGroupId: "pg-new" } })
-      );
-    });
-
-    it("reuses an existing PeerGroup row instead of creating a duplicate", async () => {
-      mockQueries({ p25: "1", p50: "2", p75: "3", memberCount: 5 }, []);
-      mockedPrisma.peerGroup.findFirst.mockResolvedValue({ id: "pg-existing" });
-
-      await peerBenchmarkService.computePeerGroupStats(GROUP);
-
-      expect(mockedPrisma.peerGroup.create).not.toHaveBeenCalled();
-    });
-
-    describe("medianConsistency", () => {
-      beforeEach(() => {
-        jest.useFakeTimers();
-        jest.setSystemTime(new Date("2024-03-31T00:00:00Z"));
-      });
-      afterEach(() => {
-        jest.useRealTimers();
-      });
-
-      it("computes the median of each member's own ConsistencyScore", async () => {
-        // A: active in March only -> 1/1 * 100 = 100
-        // B: active Jan + March (skips Feb) -> 2/3 * 100 = 66.67
-        // C: active in Jan only, 3 months elapsed -> 1/3 * 100 = 33.33
-        // median of [33.33, 66.67, 100] = 66.67
-        mockQueries({ p25: "1", p50: "2", p75: "3", memberCount: 3 }, [
-          { userId: "A", createdAt: new Date("2024-03-05T00:00:00Z") },
-          { userId: "B", createdAt: new Date("2024-01-10T00:00:00Z") },
-          { userId: "B", createdAt: new Date("2024-03-20T00:00:00Z") },
-          { userId: "C", createdAt: new Date("2024-01-15T00:00:00Z") },
-        ]);
-
-        const result = await peerBenchmarkService.computePeerGroupStats(GROUP);
-
-        expect(result.medianConsistency).toBe(66.67);
-      });
-
-      it("persists medianConsistency into the peer_group_stats cache", async () => {
-        mockQueries({ p25: "1", p50: "2", p75: "3", memberCount: 1 }, [
-          { userId: "A", createdAt: new Date("2024-03-05T00:00:00Z") },
-        ]);
-
-        await peerBenchmarkService.computePeerGroupStats(GROUP);
-
-        expect(mockedPrisma.peerGroupStats.upsert).toHaveBeenCalledWith(
-          expect.objectContaining({
-            create: expect.objectContaining({ medianConsistency: 100 }),
-          })
-        );
-      });
+      // The floor-tier SQL branch has no `BETWEEN` clause — a loose smoke
+      // check that it still ran (didn't throw) and returned the row.
+      expect(mockedPrisma.$queryRaw).toHaveBeenCalledTimes(1);
     });
   });
 
-  describe("getLatestFinalValue", () => {
-    it("returns null when the user hasn't run a simulation", async () => {
-      mockedPrisma.simulation.findFirst.mockResolvedValue(null);
+  describe("getMyMetrics", () => {
+    it("returns nulls when the user has no profile", async () => {
+      mockedPrisma.userProfile.findUnique.mockResolvedValue(null);
 
-      const result = await peerBenchmarkService.getLatestFinalValue("user-1");
+      const result = await peerBenchmarkService.getMyMetrics("user-1");
 
-      expect(result).toBeNull();
+      expect(result).toEqual({ finalValue: null, savingsRatePct: 0, emergencyBuffer: null });
     });
 
-    it("converts the latest simulation's finalValue to a number", async () => {
-      mockedPrisma.simulation.findFirst.mockResolvedValue({ finalValue: "1333.37" });
+    it("computes Savings Rate from the profile even with no plan yet", async () => {
+      mockedPrisma.userProfile.findUnique.mockResolvedValue({ monthlyIncome: "4000.00", monthlyExpense: "3000.00" });
+      mockedPrisma.planMonth.findFirst.mockResolvedValue(null);
 
-      const result = await peerBenchmarkService.getLatestFinalValue("user-1");
+      const result = await peerBenchmarkService.getMyMetrics("user-1");
 
-      expect(result).toBe(1333.37);
+      expect(result).toEqual({ finalValue: null, savingsRatePct: 25, emergencyBuffer: null });
+    });
+
+    it("derives finalValue and Emergency Buffer from the latest plan month", async () => {
+      mockedPrisma.userProfile.findUnique.mockResolvedValue({ monthlyIncome: "4000.00", monthlyExpense: "2000.00" });
+      mockedPrisma.planMonth.findFirst.mockResolvedValue({ endingBalance: "1333.37", walletBalance: "3000.00" });
+
+      const result = await peerBenchmarkService.getMyMetrics("user-1");
+
+      expect(result).toEqual({ finalValue: 1333.37, savingsRatePct: 50, emergencyBuffer: 1.5 });
     });
   });
 });

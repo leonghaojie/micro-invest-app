@@ -1,167 +1,124 @@
 /**
- * InsightService — FR12 (UC-06). Rule-based insight cards from user-vs-peer
- * gaps, with a positive-reinforcement fallback when no meaningful gap is
- * detected (UC-06 alt flow) instead of always nagging about a shortfall.
- *
- * UC-06 step 3 (SRS v1.1 §6): "System applies insight rules to detect
- * meaningful gaps (e.g., below peer median ConsistencyScore)." That's the
- * one gap type the SRS names explicitly, so buildConsistencyCard compares
- * the user's own ConsistencyScore against PeerGroupStats.medianConsistency
- * (peerBenchmark.service.ts), not just against their own history. The
- * value-gap card (below/near/above the peer p25/p50/p75) is a second,
- * complementary gap type the SRS doesn't rule out ("e.g." implies the
- * ConsistencyScore case is an example, not the only one) — and the Data
- * Dictionary's own PeerGroupStats fields (median_value, p25, p50, p75)
- * exist specifically to support exactly this kind of comparison, so it's
- * not an invented rule the way an arbitrary percentile cutoff would be.
- * The exact "meaningful" percentile boundary (p25 vs p50 as the behind/
- * in-line line) is still a placeholder judgement call, flagged below.
- *
- * What IS exact: the suggested contribution figures. Since the compounding
- * recurrence (simulation.service.ts, DECISIONS.md #1) has no additive term
- * besides contributionAmount each period, finalValue is exactly
- * proportional to contributionAmount for a fixed rate/period count — so
- *   newContribution = currentContribution * (targetValue / currentFinalValue)
- * reaches targetValue exactly, not an approximation.
+ * InsightService — FR12 (UC-06), rewritten for DECISIONS.md #2's
+ * income-range peer grouping and the new Savings Rate / Emergency Buffer
+ * metrics (25 Aug 2026). The old ConsistencyScore card is gone along with
+ * dashboard.service.ts's getBehaviour (see that file's header) — UC-06
+ * step 3's example gap ("e.g. below peer median ConsistencyScore") no
+ * longer has a metric to attach to, but the "e.g." always implied it
+ * wasn't the only gap type, and the Data Dictionary's percentile fields
+ * still support the same rule shape for the three metrics that do exist
+ * now: portfolio value, Savings Rate, Emergency Buffer.
  */
-import { ContributionFrequency } from "@prisma/client";
-import { prisma } from "../config/prisma";
-import { dashboardService, DashboardBehaviour } from "./dashboard.service";
-import { peerBenchmarkService, PeerGroupStats } from "./peerBenchmark.service";
+import { peerBenchmarkService, PercentileStats } from "./peerBenchmark.service";
 import { peerGroupingService } from "./peerGrouping.service";
-import { round2 } from "./simulation.service";
+import { planService, round2 } from "./plan.service";
 
 export interface InsightCard {
   id: string;
   tone: "positive" | "neutral" | "suggestion";
   title: string;
   body: string;
-  // UC-06's own placeholder text calls this the "Adjust Plan" link back to
-  // S-03 — true on cards where acting means running a new simulation.
   showAdjustPlanAction: boolean;
 }
 
-interface LatestSimulation {
-  finalValue: number;
-  contributionAmount: number;
-  frequency: ContributionFrequency;
-}
-
-async function getLatestSimulation(userId: string): Promise<LatestSimulation | null> {
-  const latest = await prisma.simulation.findFirst({
-    where: { userId, finalValue: { not: null } },
-    orderBy: { createdAt: "desc" },
-  });
-  if (!latest || latest.finalValue === null) return null;
-  return {
-    finalValue: Number(latest.finalValue),
-    contributionAmount: Number(latest.contributionAmount),
-    frequency: latest.frequency,
-  };
-}
-
-// ⚠️ p25/p50 as the behind/in-line boundary is a placeholder judgement
-// call — DECISIONS.md doesn't lock an exact "meaningful gap" percentile.
-function buildPeerCard(latest: LatestSimulation, stats: PeerGroupStats): InsightCard {
-  if (stats.memberCount === 0) {
+function buildValueCard(finalValue: number, contributionAmount: number, stats: PercentileStats, memberCount: number): InsightCard {
+  if (memberCount === 0) {
     return {
       id: "no-peer-data",
       tone: "neutral",
       title: "Not enough peer data yet",
-      body: "There aren't enough peers with a similar profile yet to compare against. Check back as more people join.",
+      body: "There aren't enough peers with a similar income yet to compare against. Check back as more people join.",
       showAdjustPlanAction: false,
     };
   }
 
-  const { finalValue, contributionAmount } = latest;
-
   if (finalValue < stats.p25) {
-    const suggested = round2(contributionAmount * (stats.p50 / finalValue));
+    const suggested = round2(contributionAmount * (stats.p50 / Math.max(finalValue, 0.01)));
     return {
-      id: "peer-gap",
+      id: "value-gap",
       tone: "suggestion",
       title: "You're behind similar peers",
-      body: `Your latest simulation reached $${finalValue.toFixed(2)}, below the peer median of $${stats.p50.toFixed(
-        2
-      )}. Raising your contribution to about $${suggested.toFixed(2)} per period would put you in line with peers like you.`,
+      body: `Your plan is worth $${finalValue.toFixed(2)}, below the peer median of $${stats.p50.toFixed(2)}. Raising your monthly contribution to about $${suggested.toFixed(2)} would put you in line with peers earning like you.`,
       showAdjustPlanAction: true,
     };
   }
 
   if (finalValue < stats.p50) {
-    const suggested = round2(contributionAmount * (stats.p75 / finalValue));
     return {
-      id: "peer-in-line",
+      id: "value-in-line",
       tone: "neutral",
       title: "Right around the peer average",
-      body: `Your latest simulation reached $${finalValue.toFixed(2)}, close to the peer median of $${stats.p50.toFixed(
-        2
-      )}. Raising your contribution to about $${suggested.toFixed(2)} per period could move you into the top quarter of peers like you.`,
+      body: `Your plan is worth $${finalValue.toFixed(2)}, close to the peer median of $${stats.p50.toFixed(2)}.`,
       showAdjustPlanAction: true,
     };
   }
 
   return {
-    id: "peer-ahead",
+    id: "value-ahead",
     tone: "positive",
     title: "Ahead of similar peers",
-    body: `Your latest simulation reached $${finalValue.toFixed(2)}, ahead of the peer median of $${stats.p50.toFixed(
-      2
-    )}. Keep it up!`,
+    body: `Your plan is worth $${finalValue.toFixed(2)}, ahead of the peer median of $${stats.p50.toFixed(2)}. Keep it up!`,
     showAdjustPlanAction: false,
   };
 }
 
-// UC-06's literal example gap: user's own ConsistencyScore vs the peer
-// group's median (PeerGroupStats.medianConsistency). Cold-start users
-// always score 100 (SRS v1.1 §4) and can therefore never trigger this —
-// no separate guard needed for that case.
-function buildConsistencyCard(behaviour: DashboardBehaviour, peerMedianConsistency: number): InsightCard {
+function buildSavingsRateCard(mine: number, stats: PercentileStats): InsightCard | null {
+  if (mine >= stats.p50) return null; // only surface this when it's a real gap, mirrors the old ConsistencyScore trigger
   return {
-    id: "consistency",
+    id: "savings-rate-gap",
     tone: "suggestion",
-    title: "Below peer consistency",
-    body: `Your ConsistencyScore is ${behaviour.consistencyScore.toFixed(
-      0
-    )}%, below the peer median of ${peerMedianConsistency.toFixed(0)}%. You've been active in ${
-      behaviour.monthsWithActivity
-    } of ${behaviour.monthsSinceFirstRun} month${
-      behaviour.monthsSinceFirstRun === 1 ? "" : "s"
-    } since your first simulation — running one every month builds a stronger track record.`,
-    showAdjustPlanAction: true,
+    title: "Below peer savings rate",
+    body: `Your Savings Rate is ${mine.toFixed(0)}%, below the peer median of ${stats.p50.toFixed(0)}%. Trimming monthly expenses (or raising income) would close the gap.`,
+    showAdjustPlanAction: false,
+  };
+}
+
+function buildEmergencyBufferCard(mine: number, stats: PercentileStats): InsightCard | null {
+  if (mine >= stats.p50) return null;
+  return {
+    id: "emergency-buffer-gap",
+    tone: "suggestion",
+    title: "Thin emergency buffer",
+    body: `Your wallet covers about ${mine.toFixed(1)}x your monthly expenses, below the peer median of ${stats.p50.toFixed(1)}x. Building this up protects you before you invest more.`,
+    showAdjustPlanAction: false,
   };
 }
 
 class InsightService {
   async generate(userId: string): Promise<InsightCard[]> {
-    const latest = await getLatestSimulation(userId);
+    const plan = await planService.getActivePlan(userId);
 
-    if (!latest) {
+    if (!plan) {
       return [
         {
-          id: "no-simulation",
+          id: "no-plan",
           tone: "neutral",
-          title: "Run your first simulation",
-          body: "Once you've run a simulation, you'll get personalized insights comparing you to peers with a similar plan.",
+          title: "Start your first plan",
+          body: "Once you've started a plan, you'll get personalized insights comparing you to peers with a similar income.",
           showAdjustPlanAction: true,
         },
       ];
     }
 
     const cards: InsightCard[] = [];
-    const behaviour = await dashboardService.getBehaviour(userId);
 
-    // A user profile is required for peer grouping (assignPeerGroup 404s
-    // without one), but by this point they've already gone through
-    // Profile Setup to run a simulation at all — this guards the
-    // theoretical gap rather than an expected path.
     try {
-      const group = await peerGroupingService.assignPeerGroup(userId);
-      const stats = await peerBenchmarkService.computePeerGroupStats(group);
-      cards.push(buildPeerCard(latest, stats));
+      const [group, myMetrics] = await Promise.all([
+        peerGroupingService.assignPeerGroup(userId),
+        peerBenchmarkService.getMyMetrics(userId),
+      ]);
+      const stats = await peerBenchmarkService.computeStats(userId, group);
 
-      if (stats.memberCount > 0 && behaviour.consistencyScore < stats.medianConsistency) {
-        cards.push(buildConsistencyCard(behaviour, stats.medianConsistency));
+      cards.push(buildValueCard(plan.finalValue, plan.contributionAmount, stats.value, stats.memberCount));
+
+      if (stats.memberCount > 0) {
+        const savingsCard = buildSavingsRateCard(myMetrics.savingsRatePct, stats.savingsRatePct);
+        if (savingsCard) cards.push(savingsCard);
+
+        if (myMetrics.emergencyBuffer !== null) {
+          const bufferCard = buildEmergencyBufferCard(myMetrics.emergencyBuffer, stats.emergencyBuffer);
+          if (bufferCard) cards.push(bufferCard);
+        }
       }
     } catch {
       // no profile — skip peer-relative cards rather than fail the whole screen

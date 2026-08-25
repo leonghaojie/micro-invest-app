@@ -1,61 +1,61 @@
 /**
- * DashboardService unit tests — FR08. Prisma is mocked so these run
- * without a live Postgres connection. getBehaviour pins "now" via fake
- * timers since ConsistencyScore (DECISIONS.md #3) is defined relative to
- * the current month.
+ * DashboardService unit tests — FR08, rewritten for DECISIONS.md #1 third
+ * amendment (25 Aug 2026): reads off plan.service.ts's one active plan
+ * instead of a Simulation history; getBehaviour/ConsistencyScore is gone
+ * (see dashboard.service.ts header). planService itself is mocked here —
+ * dashboard.service.ts only reshapes its output, doesn't compute anything
+ * new — with plan.service.test.ts owning the engine's own coverage.
  */
-import { prisma } from "../config/prisma";
+import { planService } from "./plan.service";
 import { dashboardService } from "./dashboard.service";
 
-jest.mock("../config/prisma", () => ({
-  prisma: {
-    simulation: {
-      count: jest.fn(),
-      findFirst: jest.fn(),
-      findMany: jest.fn(),
-    },
-  },
+jest.mock("./plan.service", () => ({
+  planService: { getActivePlan: jest.fn() },
 }));
 
-const mockedPrisma = prisma as unknown as {
-  simulation: { count: jest.Mock; findFirst: jest.Mock; findMany: jest.Mock };
+const mockedPlanService = planService as unknown as { getActivePlan: jest.Mock };
+
+const PLAN_SUMMARY = {
+  planId: "plan-1",
+  portfolioId: "pf-1",
+  portfolioName: "Growth",
+  contributionAmount: 100,
+  startMonth: "2026-01-01",
+  finalValue: 620.5,
+  totalContributed: 600,
+  growth: 20.5,
+  walletBalance: 300,
+  months: [
+    { monthDate: "2026-01-01", portfolioReturnPct: 0.01, contribution: 100, endingBalance: 101, totalInvested: 100, walletBalance: 50 },
+    { monthDate: "2026-02-01", portfolioReturnPct: 0.02, contribution: 100, endingBalance: 205.02, totalInvested: 200, walletBalance: 100 },
+  ],
 };
 
 describe("DashboardService", () => {
   describe("getSummary", () => {
-    it("reports no simulations for a brand-new user", async () => {
-      mockedPrisma.simulation.count.mockResolvedValue(0);
-      mockedPrisma.simulation.findFirst.mockResolvedValue(null);
+    it("reports no plan for a brand-new user", async () => {
+      mockedPlanService.getActivePlan.mockResolvedValue(null);
 
       const result = await dashboardService.getSummary("user-1");
 
-      expect(result).toEqual({ hasSimulations: false, totalSimulations: 0, latestSimulation: null });
+      expect(result).toEqual({ hasPlan: false, latestPlan: null });
     });
 
-    it("derives totalContributed/growth for the latest simulation", async () => {
-      mockedPrisma.simulation.count.mockResolvedValue(3);
-      mockedPrisma.simulation.findFirst.mockResolvedValue({
-        id: "sim-1",
-        frequency: "MONTHLY",
-        contributionAmount: "50",
-        durationMonths: 6,
-        finalValue: "320.50",
-        createdAt: new Date("2024-06-01T00:00:00Z"),
-        portfolio: { name: "Growth" },
-      });
+    it("reshapes the active plan summary", async () => {
+      mockedPlanService.getActivePlan.mockResolvedValue(PLAN_SUMMARY);
 
       const result = await dashboardService.getSummary("user-1");
 
       expect(result).toEqual({
-        hasSimulations: true,
-        totalSimulations: 3,
-        latestSimulation: {
-          simulationId: "sim-1",
+        hasPlan: true,
+        latestPlan: {
+          planId: "plan-1",
           portfolioName: "Growth",
-          finalValue: 320.5,
-          totalContributed: 300, // 50 * 6 monthly periods
+          startMonth: "2026-01-01",
+          finalValue: 620.5,
+          totalContributed: 600,
           growth: 20.5,
-          createdAt: "2024-06-01T00:00:00.000Z",
+          walletBalance: 300,
         },
       });
     });
@@ -63,73 +63,26 @@ describe("DashboardService", () => {
 
   describe("getGrowth", () => {
     it("returns an empty series for a brand-new user", async () => {
-      mockedPrisma.simulation.findFirst.mockResolvedValue(null);
+      mockedPlanService.getActivePlan.mockResolvedValue(null);
 
       const result = await dashboardService.getGrowth("user-1");
 
-      expect(result).toEqual({ simulationId: null, portfolioName: null, points: [] });
+      expect(result).toEqual({ planId: null, portfolioName: null, points: [] });
     });
 
-    it("maps the latest simulation's contributions to a points series", async () => {
-      mockedPrisma.simulation.findFirst.mockResolvedValue({
-        id: "sim-1",
-        portfolio: { name: "Balanced" },
-        contributions: [
-          { periodIndex: 0, portfolioValue: "50.00" },
-          { periodIndex: 1, portfolioValue: "101.00" },
-        ],
-      });
+    it("maps the active plan's months to a points series", async () => {
+      mockedPlanService.getActivePlan.mockResolvedValue(PLAN_SUMMARY);
 
       const result = await dashboardService.getGrowth("user-1");
 
       expect(result).toEqual({
-        simulationId: "sim-1",
-        portfolioName: "Balanced",
+        planId: "plan-1",
+        portfolioName: "Growth",
         points: [
-          { periodIndex: 0, portfolioValue: 50 },
-          { periodIndex: 1, portfolioValue: 101 },
+          { monthDate: "2026-01-01", portfolioValue: 101, walletBalance: 50 },
+          { monthDate: "2026-02-01", portfolioValue: 205.02, walletBalance: 100 },
         ],
       });
-    });
-  });
-
-  describe("getBehaviour", () => {
-    beforeEach(() => {
-      jest.useFakeTimers();
-    });
-
-    afterEach(() => {
-      jest.useRealTimers();
-    });
-
-    it("scores 0 for a user with no simulations", async () => {
-      mockedPrisma.simulation.findMany.mockResolvedValue([]);
-
-      const result = await dashboardService.getBehaviour("user-1");
-
-      expect(result).toEqual({ consistencyScore: 0, monthsWithActivity: 0, monthsSinceFirstRun: 0 });
-    });
-
-    it("cold-start: one simulation this month scores 100", async () => {
-      jest.setSystemTime(new Date("2024-03-20T00:00:00Z"));
-      mockedPrisma.simulation.findMany.mockResolvedValue([{ createdAt: new Date("2024-03-15T00:00:00Z") }]);
-
-      const result = await dashboardService.getBehaviour("user-1");
-
-      expect(result).toEqual({ consistencyScore: 100, monthsWithActivity: 1, monthsSinceFirstRun: 1 });
-    });
-
-    it("2 active months out of 3 elapsed scores 66.67", async () => {
-      jest.setSystemTime(new Date("2024-03-31T00:00:00Z"));
-      mockedPrisma.simulation.findMany.mockResolvedValue([
-        { createdAt: new Date("2024-01-10T00:00:00Z") },
-        { createdAt: new Date("2024-01-20T00:00:00Z") }, // same month as above — shouldn't double count
-        { createdAt: new Date("2024-03-05T00:00:00Z") },
-      ]);
-
-      const result = await dashboardService.getBehaviour("user-1");
-
-      expect(result).toEqual({ consistencyScore: 66.67, monthsWithActivity: 2, monthsSinceFirstRun: 3 });
     });
   });
 });

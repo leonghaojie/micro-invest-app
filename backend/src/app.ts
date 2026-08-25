@@ -11,9 +11,9 @@ import { authRouter } from "./routes/auth.routes";
 import { dashboardRouter } from "./routes/dashboard.routes";
 import { insightsRouter } from "./routes/insights.routes";
 import { peersRouter } from "./routes/peers.routes";
+import { planRouter } from "./routes/plan.routes";
 import { portfolioRouter } from "./routes/portfolio.routes";
 import { profileRouter } from "./routes/profile.routes";
-import { simulationRouter } from "./routes/simulation.routes";
 
 export function createApp(): Express {
   const app = express();
@@ -32,7 +32,7 @@ export function createApp(): Express {
   app.use(requireAuth);
   app.use("/user", profileRouter);
   app.use("/portfolio", portfolioRouter);
-  app.use("/simulation", simulationRouter);
+  app.use("/plan", planRouter);
   app.use("/dashboard", dashboardRouter);
   app.use("/peers", peersRouter);
   app.use("/insights", insightsRouter);

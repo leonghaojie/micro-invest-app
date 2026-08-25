@@ -20,18 +20,18 @@ const mockedPrisma = prisma as unknown as {
 
 describe("PortfolioService", () => {
   describe("listFunds", () => {
-    it("summarises each fund with years available and its latest annual return", async () => {
+    it("summarises each fund with months available and its latest monthly return", async () => {
       mockedPrisma.fund.findMany.mockResolvedValue([
         {
           id: "fund-1",
-          ticker: "ES3",
+          ticker: "ES3.SI",
           name: "SPDR Straits Times Index ETF",
           assetClass: "EQUITY",
           exchange: "SGX",
           currency: "SGD",
-          historicalReturns: [
-            { year: 2025, returnRate: "0.2814" },
-            { year: 2024, returnRate: "0.2211" },
+          monthlyReturns: [
+            { monthDate: new Date("2026-08-01T00:00:00Z"), returnPct: "0.0281" },
+            { monthDate: new Date("2026-07-01T00:00:00Z"), returnPct: "0.0221" },
           ],
         },
       ]);
@@ -41,18 +41,19 @@ describe("PortfolioService", () => {
       expect(result).toEqual([
         {
           id: "fund-1",
-          ticker: "ES3",
+          ticker: "ES3.SI",
           name: "SPDR Straits Times Index ETF",
           assetClass: "EQUITY",
           exchange: "SGX",
           currency: "SGD",
-          yearsAvailable: 2,
-          latestAnnualReturn: 0.2814,
+          monthsAvailable: 2,
+          earliestMonth: "2026-07",
+          latestMonthlyReturn: 0.0281,
         },
       ]);
     });
 
-    it("reports null latestAnnualReturn for a fund with no historical data yet", async () => {
+    it("reports null latestMonthlyReturn for a fund with no data yet", async () => {
       mockedPrisma.fund.findMany.mockResolvedValue([
         {
           id: "fund-2",
@@ -61,13 +62,13 @@ describe("PortfolioService", () => {
           assetClass: "EQUITY",
           exchange: "US",
           currency: "USD",
-          historicalReturns: [],
+          monthlyReturns: [],
         },
       ]);
 
       const result = await portfolioService.listFunds();
 
-      expect(result[0]).toEqual(expect.objectContaining({ yearsAvailable: 0, latestAnnualReturn: null }));
+      expect(result[0]).toEqual(expect.objectContaining({ monthsAvailable: 0, earliestMonth: null, latestMonthlyReturn: null }));
     });
   });
 

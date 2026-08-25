@@ -7,8 +7,9 @@
  * backend scope.
  *
  * Two things at once, same screen: browse the full fund catalog (ticker,
- * asset class, exchange, years of real historical data, latest annual
- * return), and optionally build+save a new custom multi-fund portfolio
+ * asset class, exchange, months of real historical data, latest monthly
+ * return — DECISIONS.md #1 third amendment, real monthly yfinance data),
+ * and optionally build+save a new custom multi-fund portfolio
  * from it by tapping funds and setting a weight per fund (must sum to
  * 100%, portfolio.service.ts). A saved portfolio then shows up back in
  * the Contribution tab's portfolio picker.
@@ -28,8 +29,9 @@ interface FundSummary {
   assetClass: string;
   exchange: string;
   currency: string;
-  yearsAvailable: number;
-  latestAnnualReturn: number | null;
+  monthsAvailable: number;
+  earliestMonth: string | null;
+  latestMonthlyReturn: number | null;
 }
 
 interface PortfolioSummary {
@@ -177,10 +179,10 @@ export function FundBrowserScreen({ navigation }: Props) {
                   </Text>
                   <Text style={styles.fundMeta}>
                     {fund.assetClass} · {fund.exchange} ·{" "}
-                    {fund.latestAnnualReturn !== null
-                      ? `${(fund.latestAnnualReturn * 100).toFixed(1)}% latest annual return`
+                    {fund.latestMonthlyReturn !== null
+                      ? `${(fund.latestMonthlyReturn * 100).toFixed(1)}% last month`
                       : "no data yet"}{" "}
-                    · {fund.yearsAvailable}y history
+                    · real data since {fund.earliestMonth ?? "—"} ({fund.monthsAvailable}mo)
                   </Text>
                 </Pressable>
                 {isSelected && (

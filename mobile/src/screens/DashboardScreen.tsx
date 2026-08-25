@@ -1,20 +1,16 @@
 /**
- * S-04 Dashboard — UC-04, UC-07. Performance summary, growth chart, and
- * consistency behaviour, sourced from the most recent simulation run
- * (dashboard.service.ts — there's no persistent portfolio beyond
- * individual simulation runs, so "summary"/"growth" both report on the
- * latest one rather than a cross-run aggregate). NFR-01: target <2s load.
+ * S-04 Dashboard — UC-04. Performance summary, growth chart, wallet, and
+ * Savings Rate, sourced from the user's one active Plan (plan.service.ts)
+ * and profile (DECISIONS.md #1 third amendment / new metrics entry, 25
+ * Aug 2026). NFR-01: target <2s load.
  *
- * Simulation history (/simulation/history, FR13) is Phase 7 and still a
- * 501 stub server-side — not wired here.
+ * The old Consistency card is gone — see dashboard.service.ts's header for
+ * why (ConsistencyScore measured user-initiated simulation runs, which no
+ * longer exist now that a plan is an automatic monthly backtest). Wallet
+ * (liquid cash left after contributing) and Savings Rate take its place.
  *
- * UI restructuring (20 Aug 2026): this is now the tab bar's home tab
- * (AppNavigator.tsx) rather than a screen a simulation run pushes you
- * onto. The old "Run another simulation" / "Compare with peers" /
- * "View insights" buttons are gone — the tab bar itself is that
- * navigation now. Data reloads on every focus (useFocusEffect, not just
- * on mount) since switching tabs no longer remounts this screen the way
- * a stack push/replace used to.
+ * UI restructuring (20 Aug 2026, unchanged by this amendment): this is the
+ * tab bar's home tab. Data reloads on every focus.
  */
 import { useCallback, useState } from "react";
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
@@ -26,33 +22,33 @@ import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 type Props = MainTabScreenProps<"Dashboard">;
 
 interface DashboardSummary {
-  hasSimulations: boolean;
-  totalSimulations: number;
-  latestSimulation: {
-    simulationId: string;
+  hasPlan: boolean;
+  latestPlan: {
+    planId: string;
     portfolioName: string;
+    startMonth: string;
     finalValue: number;
     totalContributed: number;
     growth: number;
-    createdAt: string;
+    walletBalance: number;
   } | null;
 }
 
 interface GrowthPoint {
-  periodIndex: number;
+  monthDate: string;
   portfolioValue: number;
+  walletBalance: number;
 }
 
 interface DashboardGrowth {
-  simulationId: string | null;
+  planId: string | null;
   portfolioName: string | null;
   points: GrowthPoint[];
 }
 
-interface DashboardBehaviour {
-  consistencyScore: number;
-  monthsWithActivity: number;
-  monthsSinceFirstRun: number;
+interface ProfileResponse {
+  monthlyExpense: number;
+  savingsRatePct: number;
 }
 
 const MAX_BARS = 16;
@@ -60,7 +56,7 @@ const MAX_BARS = 16;
 export function DashboardScreen({ navigation }: Props) {
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const [growth, setGrowth] = useState<DashboardGrowth | null>(null);
-  const [behaviour, setBehaviour] = useState<DashboardBehaviour | null>(null);
+  const [profile, setProfile] = useState<ProfileResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -72,13 +68,13 @@ export function DashboardScreen({ navigation }: Props) {
     Promise.all([
       apiFetch<DashboardSummary>("/dashboard/summary"),
       apiFetch<DashboardGrowth>("/dashboard/growth"),
-      apiFetch<DashboardBehaviour>("/dashboard/behaviour"),
+      apiFetch<ProfileResponse>("/user/profile").catch(() => null),
     ])
-      .then(([summaryRes, growthRes, behaviourRes]) => {
+      .then(([summaryRes, growthRes, profileRes]) => {
         if (cancelled) return;
         setSummary(summaryRes);
         setGrowth(growthRes);
-        setBehaviour(behaviourRes);
+        setProfile(profileRes);
       })
       .catch((err) => {
         if (!cancelled) setError(describeError(err));
@@ -121,13 +117,13 @@ export function DashboardScreen({ navigation }: Props) {
     );
   }
 
-  if (!summary?.hasSimulations || !summary.latestSimulation) {
+  if (!summary?.hasPlan || !summary.latestPlan) {
     return (
       <View style={styles.container}>
-        <Text style={styles.title}>No simulations yet</Text>
-        <Text style={styles.subtitle}>Set up a contribution to see your dashboard.</Text>
+        <Text style={styles.title}>No plan yet</Text>
+        <Text style={styles.subtitle}>Start a plan to see your dashboard.</Text>
         <Pressable style={styles.submitButton} onPress={() => navigation.navigate("Contribution")}>
-          <Text style={styles.submitButtonText}>Set up your contribution</Text>
+          <Text style={styles.submitButtonText}>Start your plan</Text>
         </Pressable>
         <Pressable style={styles.secondaryButton} onPress={handleLogout}>
           <Text style={styles.secondaryButtonText}>Log out</Text>
@@ -136,18 +132,17 @@ export function DashboardScreen({ navigation }: Props) {
     );
   }
 
-  const { latestSimulation } = summary;
+  const { latestPlan } = summary;
   const bars = downsample(growth?.points ?? [], MAX_BARS);
   const maxValue = Math.max(...bars.map((b) => b.portfolioValue), 1);
+  const emergencyBuffer = profile && profile.monthlyExpense > 0 ? latestPlan.walletBalance / profile.monthlyExpense : null;
 
   return (
     <ScrollView contentContainerStyle={styles.scrollContainer}>
       <View style={styles.headerRow}>
         <View>
           <Text style={styles.title}>Dashboard</Text>
-          <Text style={styles.subtitle}>
-            {summary.totalSimulations} simulation{summary.totalSimulations === 1 ? "" : "s"} run
-          </Text>
+          <Text style={styles.subtitle}>Since {latestPlan.startMonth.slice(0, 7)}</Text>
         </View>
         <Pressable onPress={handleLogout}>
           <Text style={styles.logoutText}>Log out</Text>
@@ -155,10 +150,10 @@ export function DashboardScreen({ navigation }: Props) {
       </View>
 
       <View style={styles.card}>
-        <Text style={styles.cardHeading}>{latestSimulation.portfolioName}</Text>
-        <SummaryRow label="Total contributed" value={formatCurrency(latestSimulation.totalContributed)} />
-        <SummaryRow label="Growth" value={formatCurrency(latestSimulation.growth)} />
-        <SummaryRow label="Final value" value={formatCurrency(latestSimulation.finalValue)} emphasized />
+        <Text style={styles.cardHeading}>{latestPlan.portfolioName}</Text>
+        <SummaryRow label="Total contributed" value={formatCurrency(latestPlan.totalContributed)} />
+        <SummaryRow label="Growth" value={formatCurrency(latestPlan.growth)} />
+        <SummaryRow label="Final value" value={formatCurrency(latestPlan.finalValue)} emphasized />
       </View>
 
       {bars.length > 0 && (
@@ -167,25 +162,32 @@ export function DashboardScreen({ navigation }: Props) {
           <View style={styles.chart}>
             {bars.map((point) => (
               <View
-                key={point.periodIndex}
+                key={point.monthDate}
                 style={[styles.bar, { height: Math.max(4, (point.portfolioValue / maxValue) * 100) }]}
               />
             ))}
           </View>
           <Text style={styles.chartCaption}>
-            Period 0 → {bars[bars.length - 1].periodIndex} · {formatCurrency(bars[bars.length - 1].portfolioValue)}
+            {bars[0].monthDate.slice(0, 7)} → {bars[bars.length - 1].monthDate.slice(0, 7)} ·{" "}
+            {formatCurrency(bars[bars.length - 1].portfolioValue)}
           </Text>
         </View>
       )}
 
-      {behaviour && (
+      <View style={styles.card}>
+        <Text style={styles.cardHeading}>Wallet</Text>
+        <Text style={styles.bigStat}>{formatCurrency(latestPlan.walletBalance)}</Text>
+        <Text style={styles.chartCaption}>
+          Liquid cash left over after contributing (income − expense − contribution, accumulated monthly).
+          {emergencyBuffer !== null && ` Covers about ${emergencyBuffer.toFixed(1)}x your monthly expenses.`}
+        </Text>
+      </View>
+
+      {profile && (
         <View style={styles.card}>
-          <Text style={styles.cardHeading}>Consistency</Text>
-          <Text style={styles.consistencyScore}>{behaviour.consistencyScore.toFixed(0)}%</Text>
-          <Text style={styles.chartCaption}>
-            Active in {behaviour.monthsWithActivity} of {behaviour.monthsSinceFirstRun} month
-            {behaviour.monthsSinceFirstRun === 1 ? "" : "s"} since your first simulation
-          </Text>
+          <Text style={styles.cardHeading}>Savings Rate</Text>
+          <Text style={styles.bigStat}>{profile.savingsRatePct.toFixed(0)}%</Text>
+          <Text style={styles.chartCaption}>(income − expense) / income</Text>
         </View>
       )}
     </ScrollView>
@@ -262,7 +264,7 @@ const styles = StyleSheet.create({
   },
   bar: { flex: 1, backgroundColor: "#2e6fdb", borderRadius: 2, minWidth: 4 },
   chartCaption: { fontSize: 12, color: "#777", marginTop: 4 },
-  consistencyScore: { fontSize: 32, fontWeight: "700", color: "#2e6fdb" },
+  bigStat: { fontSize: 32, fontWeight: "700", color: "#2e6fdb" },
   submitButton: {
     backgroundColor: "#2e6fdb",
     borderRadius: 8,

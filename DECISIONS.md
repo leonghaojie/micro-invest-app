@@ -164,44 +164,187 @@ directly by unzip/edit `word/document.xml`/rezip, XSD-validated against
 `Phase2_SRS_v1.3.docx` (paragraph count +8, matching the 4 new tagged
 paragraphs + 1 new 4-cell revision-history row).
 
-## 2. Peer-grouping fallback hierarchy (SRS TBD-02 — resolved v1.1, Phase 1;
-detailed v1.0, Phase 2)
+### Third amendment (25 Aug 2026) — real-calendar monthly backtest, income
+profile, wallet
+
+This amends the decision above a third time — again a genuine change to
+code the app already shipped and tested, not a fresh Phase 1 choice.
+Requested directly by the user, working from a shared spec image
+(`Recursive Monthly Compounding Model`: `V_t = (V_{t-1} + C_t) × (1 +
+R_{p,t})`, `R_{p,t} = Σ w_i × (P_{i,t} + D_{i,t} - P_{i,t-1}) / P_{i,t-1}`)
+plus a live, worked-through data-sourcing investigation in the same
+session: Alpha Vantage (a "dedicated" key, confirmed via
+`TIME_SERIES_MONTHLY_ADJUSTED` and `SYMBOL_SEARCH`) has the same SGX gap as
+EODHD — zero coverage, not a ticker-suffix problem — but **yfinance**
+(unofficial Yahoo Finance wrapper, no key) returned real monthly
+prices+dividends for all of A35.SI/CFA.SI/ES3.SI back to 2008/2017, plus a
+fourth STI-tracker option (G3B.SI) — the first source in this project's
+history to actually solve the gap the second amendment above could only
+work around via web search.
+
+**What changed, schema:** `HistoricalReturn` (one row per calendar year)
+is replaced by `FundMonthlyReturn` (one row per real calendar month:
+`startPrice`, `endPrice`, `dividendAmount`, `returnPct`), sourced by a new
+two-step pipeline — `prisma/ingest-funds-yfinance.py` fetches raw monthly
+OHLC+dividends, `prisma/ingest-funds-yfinance.ts` derives `returnPct` and
+upserts via Prisma (the old EODHD `ingest-funds.ts` is deleted, fully
+superseded — yfinance covers everything it covered plus SGX).
+`Simulation`+`Contribution` are replaced by `Plan`+`PlanMonth`: a `Plan`
+is portfolio + a single monthly `contributionAmount` + a user-chosen
+`startMonth`, with `Plan.userId` `@unique` — **one active plan per user**,
+starting a new one deletes the old (cascading its months) rather than
+accumulating a run history. There is no stored end date or duration:
+`PlanMonth` rows run from `startMonth` through to the real current month,
+bounded by however far the allocated funds' own ingested data reaches.
+`UserProfile` gains `monthlyIncome`, `monthlyExpense`, `age` and drops
+`budgetBand` (its source field, an ad-hoc "monthly budget", has no home
+now that contribution amount lives on `Plan`, capped by income instead);
+`riskLevel`/`goalType` are kept on the profile, explicitly per the user,
+even though — like `Portfolio.riskLevel` already was — neither is
+authoritative for anything any more (peer grouping is decision #2's
+rewrite, below).
+
+**Algorithm:** `Rp,t` is a direct weighted sum of each allocated fund's
+own real `returnPct` for calendar month `t` — no annual-to-periodic rate
+derivation, no history-wrapping once a plan outlasts the series (a
+`startMonth` that would require wrapping is rejected at creation with a
+422 naming the fund and the earliest month it actually has data for,
+instead). `plan.service.ts`'s `computePlanMonths` is the pure, unit-tested
+core (`plan.service.test.ts`, replacing `simulation.service.test.ts`) —
+NFR-04 (reproducibility) holds for the same reason it always has: every
+input is static ingested/stored data, not live-fetched or randomly
+resampled at simulation time. **Recompute-on-read**: `PlanMonth` rows
+aren't maintained incrementally — every read of the active plan
+(dashboard, insights, peer benchmark) recomputes all months fresh from
+`startMonth` to "now" and upserts them, so newly-elapsed real months and
+newly-ingested fund data always show up without a cron job. (One bug
+found and fixed in this same pass, not just designed around: the initial
+implementation used a delete-then-recreate transaction per read, which
+raced — two endpoints reading the same plan concurrently, as the mobile
+dashboard's `/dashboard/summary` + `/dashboard/growth` genuinely do in
+parallel — and hit the `(planId, monthDate)` unique constraint. Since
+months only ever grow between reads (`startMonth` fixed, `endMonth` only
+moves forward), the fix is a per-row upsert instead of delete+recreate,
+which has no such race.)
+
+**Wallet**, new concept: `PlanMonth.walletBalance` accumulates
+`monthlyIncome - monthlyExpense - contributionAmount` every month,
+scoped to the active plan (resets if the user starts a new one) per
+explicit user direction — modelling liquid cash left over after
+contributing, independent of the invested balance.
+
+**Contribution mechanism (decision #6, below) is superseded, not merely
+unused:** the user explicitly asked to drop `ContributionFrequency`
+(WEEKLY/MONTHLY) and `ContributionMechanism` (SCHEDULED/ROUND_UP) —
+monthly-scheduled only, matching the shared spec exactly. Both enums and
+`Simulation`'s `avgTransactionsPerWeek`/`avgRoundUpAmount` fields are
+gone from the schema, not just unread.
+
+**Not changed:** `Fund`/`Portfolio`/`PortfolioAllocation` and the
+weight-sum-to-100 validation (`portfolio.service.ts`) are untouched — a
+`Plan`'s `Rp,t` blending is still the weighted-average-of-allocated-funds
+model the second amendment introduced, just against monthly instead of
+annual rates.
+
+**SRS amended.** `Phase2_SRS_v1.6.docx` (repo root, alongside — not
+replacing — `Phase2_SRS_v1.5.docx`) bumps the version header and revision
+history (25 Aug 2026), adds a `[v1.6]` note to §1.1, appends amendment
+paragraphs to §2.5 (engine, peer grouping) and §2.6 (synthetic data),
+extends §4 Data Dictionary with a superseded-terms note plus a new
+Plan/PlanMonth/FundMonthlyReturn/Wallet/SavingsRate/EmergencyBuffer term
+table, amends UC-02/UC-03/UC-05/UC-06's Flow of Events, and marks
+TBD-01 "further amended a third time", TBD-02 "REWRITTEN", and TBD-04
+"REMOVED" in Appendix C — all in a new rose `[v1.6]` tag, appended below
+the existing amber/blue/green/purple/teal text, not overwritten (Appendix
+A/B stay untouched, matching the established practice of leaving those
+"indicative only" and never edited). Edited directly by unzip/edit
+`word/document.xml`/rezip (16 anchored text-splice insertions against
+unique surrounding text, not a full XML tree round-trip), validated
+well-formed via `xml.etree.ElementTree` and opened cleanly via
+`python-docx` against `Phase2_SRS_v1.5.docx` (+14 paragraphs, +1 table —
+exactly the 14 tagged `[v1.6]` insertions and the 1 new Data Dictionary
+term table, confirmed by diffing paragraph/table counts).
+
+Implements: FR05, FR06, FR07 (amended again). Owner:
+`backend/src/services/plan.service.ts`, `backend/prisma/ingest-funds-yfinance.py`,
+`backend/prisma/ingest-funds-yfinance.ts`, `backend/prisma/seed.ts`
+(schema: `FundMonthlyReturn`, `Plan`, `PlanMonth`, migration
+`income_based_monthly_engine`), mobile `ProfileSetupScreen.tsx`,
+`PlanSetupScreen.tsx` (renamed from `SimulationSetupScreen.tsx`),
+`DashboardScreen.tsx`.
+
+## 2. Peer-grouping (SRS TBD-02 — resolved v1.1, Phase 1; detailed v1.0,
+Phase 2; **rewritten 25 Aug 2026**)
 
 > Peer grouping uses a minimum group size of 10 (`MIN_GROUP_SIZE = 10`) with
 > a three-tier fallback: FULL (risk level + budget band + goal type) →
 > RISK_BUDGET (risk level + budget band) → RISK_ONLY (risk level only,
 > floor tier). A group falls back to the next tier if its member count is
 > below 10.
-> — SRS v1.2 §2.5
+> — SRS v1.2 §2.5 (original, superseded below)
 
 > RISK_ONLY is deliberately not an error case: with nothing broader left to
 > fall back to, the design treats a below-threshold RISK_ONLY result as
 > "best available", and leaves it to PeerComparisonUI (S-05) to show the
 > tier-appropriate transparency text from UC-05 step 6.
-> — Design Model v1.0 §5.2
+> — Design Model v1.0 §5.2 (principle carried forward, mechanism replaced)
 
-Implements: FR09 (UC-05). Owner: `backend/src/services/peerGrouping.service.ts` (Phase 5).
-This is the designated Lab #4 basis-path testing target (`FYP Roadmap.docx`
-Phase 5) — the three fallback branches are written to be independently
-exercisable, and are (`peerGrouping.service.test.ts` exercises all three).
+### Rewrite (25 Aug 2026) — income-range grouping
 
-## 3. ConsistencyScore formula (SRS TBD-04 — resolved v1.1, Phase 1)
+Explicit user direction, given alongside decision #1's third amendment
+above (the new profile is income/expense/age — risk/budget/goal no longer
+describe anything peer-comparable). The three-tier
+risk+budget+goal/risk+budget/risk-only fallback is replaced entirely by a
+**continuous, widening income range**: a user's peers are every other
+user with an active plan whose `monthlyIncome` is within ±10% of theirs;
+if fewer than `MIN_GROUP_SIZE` (10) match, widen by 5 percentage points
+(±15%, ±20%, ±25%, ...) and recheck, up to ±100%. Beyond that, the floor
+tier is "everyone with a profile and an active plan" — returned even
+below threshold, exactly the same "best available, UI shows a small-sample
+note" principle `RISK_ONLY` used, just against a different dimension.
+`PeerGroup`/`PeerGroupStats` (the cache tables the old discrete tiers
+populated) are dropped — a continuous per-user range isn't a small
+enumerable/cacheable key, and decision #5 below already treats "always
+recomputed fresh" as the deliberate default, so this isn't a new
+precedent, just the old cache table no longer having anywhere to attach.
+
+**Not changed:** `MIN_GROUP_SIZE = 10` itself, the "widen until reached,
+floor tier if never reached" shape, and `describeTier`'s transparency-text
+role (UC-05 step 6) are all carried forward unchanged — only the dimension
+being widened (income range, not risk/budget/goal match) is new.
+
+Implements: FR09 (UC-05, amended). Owner:
+`backend/src/services/peerGrouping.service.ts`,
+`backend/src/services/peerBenchmark.service.ts` (schema: drops
+`PeerGroup`/`PeerGroupStats`/`BudgetBand`/`PeerGroupTier`, migration
+`income_based_monthly_engine`). This is still the Lab #4 basis-path
+testing target (`FYP Roadmap.docx` Phase 5) — `peerGrouping.service.test.ts`
+now exercises "reaches threshold at ±10%", "widens through several steps",
+and "falls through to the floor tier" as the three independently
+exercisable branches, in place of the old FULL/RISK_BUDGET/RISK_ONLY set.
+
+## 3. ConsistencyScore formula (SRS TBD-04 — resolved v1.1, Phase 1;
+**removed 25 Aug 2026**)
 
 > (months with ≥1 Simulation run) ÷ (months since first Simulation run) ×
 > 100. A user with only one simulation scores 100 (cold-start case).
 > — SRS v1.2 §4 Data Dictionary
 
-Implements: FR08, FR10 (`PeerGroupStats.medianConsistency`). Owner:
-`backend/src/services/dashboard.service.ts` (Phase 4, `computeConsistencyScore`
-— shared, not reimplemented, by peerBenchmark.service.ts below) and
-`backend/src/services/peerBenchmark.service.ts` (Phase 5 — `medianConsistency`
-is now computed: each peer group member's own ConsistencyScore, via the same
-shared function, median-aggregated in application code and persisted into
-`peer_group_stats`). `insight.service.ts` (Phase 6, FR12) uses this to
-implement UC-06 step 3's own example of a "meaningful gap": the user's
-ConsistencyScore falling below the peer group's median.
+This metric is **removed**, not merely reimplemented, as a direct
+consequence of decision #1's third amendment: it measured how many
+distinct months a user *chose* to run a simulation in, which stopped
+having meaning once a plan became an automatic real-calendar monthly
+backtest (`PlanMonth` rows exist for every elapsed month regardless of
+whether the user opened the app that month — there's no "did they run
+one this month" event left to count). `dashboard.service.ts`'s
+`getBehaviour`/`computeConsistencyScore` and the `/dashboard/behaviour`
+route are deleted; `peerBenchmark.service.ts`'s `medianConsistency`
+aggregate goes with it. Decision #7 below (Savings Rate, Emergency
+Buffer) takes its place as the metrics `insight.service.ts` compares
+against peer medians.
 
-## 4. Synthetic peer data generation strategy (SRS TBD-03 — resolved v1.2, Phase 2)
+## 4. Synthetic peer data generation strategy (SRS TBD-03 — resolved v1.2,
+Phase 2; **implemented and adapted 25 Aug 2026**)
 
 > Synthetic peer data (`isSynthetic = true` users) is generated by
 > `prisma/seed.ts` to seed peer groups up to `MIN_GROUP_SIZE = 10` ahead of
@@ -213,7 +356,20 @@ ConsistencyScore falling below the peer group's median.
 > in peer-group counts and percentile computation but are excluded from
 > every endpoint or view that lists individual real users, and cannot
 > authenticate.
-> — SRS v1.2 §4 Data Dictionary, Appendix C
+> — SRS v1.2 §4 Data Dictionary, Appendix C (grouping dimension superseded
+> by decision #2's rewrite; participation/exclusion rules unchanged)
+
+This was flagged as an open item (still just a `console.log` TODO) until
+this pass — `prisma/seed.ts` now actually generates synthetic users, since
+decision #2's income-range algorithm needs a real income *spread* to be
+exercisable/demoable at all (an even grid, unlike the old fixed tier
+combinations, wouldn't show the widening steps doing anything). A spread
+of 22 synthetic incomes (clustered with deliberate outliers), each with a
+profile (`monthlyIncome`/`monthlyExpense`/`age`, not the old
+riskLevel×budgetBand×goalType grid) and an active `Plan` against a preset
+portfolio (via `planService.startPlan`, so `peerBenchmark.service.ts`'s
+percentiles have real `PlanMonth` data to aggregate, not just profiles to
+count).
 
 Implements: seeding for FR09/FR10 testability. Owner:
 `backend/prisma/seed.ts` (Phase 5).
@@ -229,9 +385,24 @@ Implements: seeding for FR09/FR10 testability. Owner:
 
 Uses `PERCENTILE_CONT` via Prisma's `$queryRaw` — the one intentional raw-SQL
 escape hatch in the codebase (Design Model §3.1). Owner:
-`backend/src/services/peerBenchmark.service.ts` (Phase 5).
+`backend/src/services/peerBenchmark.service.ts` (Phase 5). Since 25 Aug
+2026 (decisions #2 rewrite, #7 below) one query computes percentiles for
+three metrics at once — portfolio value, Savings Rate, Emergency Buffer —
+against the same income-range peer population, rather than one query per
+metric; the technique itself (push into Postgres, not application memory)
+is unchanged.
 
-## 6. Contribution mechanism (round-up vs scheduled deposit)
+## 6. Contribution mechanism (round-up vs scheduled deposit) — **superseded
+25 Aug 2026**, kept for history
+
+> This whole mechanism (`SCHEDULED`/`ROUND_UP`, `ContributionFrequency`
+> WEEKLY/MONTHLY) was explicitly dropped by direct user request alongside
+> decision #1's third amendment — the new engine is monthly-scheduled
+> contributions only, matching the shared spec exactly. The schema fields
+> described below (`Simulation.mechanism`, `avgTransactionsPerWeek`,
+> `avgRoundUpAmount`, `ContributionFrequency`) no longer exist. Left below
+> unedited as a historical record of what shipped and why, per this file's
+> own stated purpose — not because any of it is still true of the code.
 
 Not an SRS TBD — this is new scope beyond the original SRS UC-03 flow
 ("User sets contribution amount, frequency, and duration"), not a locked
@@ -304,53 +475,104 @@ rezip, XSD-validated against `Phase2_SRS_v1.4.docx` (paragraph count +7,
 matching the 3 new tagged paragraphs + 1 new 4-cell revision-history
 row).
 
+## 7. Wallet, Savings Rate, and Emergency Buffer metrics (25 Aug 2026)
+
+Not an SRS TBD — new scope, requested directly alongside decisions #1's
+third amendment and #2's rewrite, from a shared "Core Metrics for Peer
+Comparison" spec image:
+
+> Savings Rate = (Net Income − Expenses) / Net Income... Emergency Buffer
+> = Liquid Cash Savings / Monthly Essential Expenses... Net Worth
+> Velocity = (Assets − Liabilities) YoY Change / Net Income.
+> — shared spec image, 24 Aug 2026
+
+Net Worth Velocity is **explicitly out of scope** — the user's own call,
+since the app doesn't model pre-existing assets or liabilities and never
+has (no UC covers entering them). Savings Rate and Emergency Buffer take
+the place `ConsistencyScore` (decision #3, removed) used to occupy as the
+non-portfolio-value metrics `insight.service.ts` compares against peer
+percentiles.
+
+**Savings Rate** = `(monthlyIncome - monthlyExpense) / monthlyIncome ×
+100`, a pure profile-level figure needing no `Plan` — computed in
+`profile.service.ts` and returned alongside every `GET/POST
+/user/profile` response.
+
+**Emergency Buffer** = `latest PlanMonth.walletBalance / monthlyExpense`
+— requires an active plan (the wallet is plan-scoped per decision #1's
+third amendment), null otherwise. `walletBalance` itself is `Plan`'s
+running `monthlyIncome - monthlyExpense - contributionAmount` total,
+accumulated month over month (not a live snapshot) — explicit user
+choice, modelling an actual accumulating cash balance rather than a
+recomputed-from-current-inputs ratio.
+
+Both are folded into `peerBenchmark.service.ts`'s existing
+`PERCENTILE_CONT` query (decision #5) as two more percentile sets over
+the same income-range peer population, and into `insight.service.ts` as
+two more gap-detection cards (`savings-rate-gap`, `emergency-buffer-gap`),
+using the same "below peer median = surface it" rule decision #3's
+`ConsistencyScore` card used.
+
+Implements: new scope beyond FR01–FR13. Owner:
+`backend/src/services/profile.service.ts`,
+`backend/src/services/peerBenchmark.service.ts`,
+`backend/src/services/insight.service.ts`, mobile `DashboardScreen.tsx`
+(Wallet + Savings Rate cards), `PeerComparisonScreen.tsx` (two additional
+percentile tracks).
+
 ## Open items (Design Model §8, carried forward)
 
-- **FR13 / UC-07 Simulation History is not implemented.** `GET
-  /simulation/history` is still a `501` stub
-  (`backend/src/services/simulation.service.ts`); no mobile screen exists.
-  Per the SRS screen list (§7.1) this belongs on the Dashboard (S-04), not
-  a new screen — FR13 traces to `UC-07/S-04`. Owner: Phase 7 (`FYP
-  Roadmap.docx`).
-- **Synthetic peer data generation (decision #4) is documented but not
-  implemented.** `prisma/seed.ts` seeds portfolio templates but still only
-  prints a TODO for the ~30-synthetic-peers-per-group strategy — no
-  `isSynthetic` users are actually generated. Peer grouping/benchmarking
-  (decisions #2, #5) work correctly without it: the RISK_ONLY floor tier
-  and small-sample transparency messaging handle sparse real data by
-  design (UC-05 alt flow). Owner: Phase 5 (`FYP Roadmap.docx`).
-- **Budget band (B1–B4) thresholds are undefined in the SRS.** Confirmed
-  by direct inspection of every requirements document in the repo root
-  (`Phase0_SRS_UseCase_Model_v1.0.docx`, `Phase1_SRS_v1.1.docx`,
-  `Phase1_Analysis_Model_v1.0.docx`, `Phase2_Design_Model_v1.0.docx`, and
-  — now that it's actually available — `Phase2_SRS_v1.2.docx` itself,
-  §6 UC-02 step 4) — all of them describe deriving a budget band from the
-  raw monthly-budget input but none ever locks the exact dollar cutoffs.
-  Unlike TBD-01/02/03/04 below, this was never assigned a TBD number and
-  never closed, so it's easy to miss that it's still open.
-  `backend/src/services/profile.service.ts` currently uses a placeholder
-  round-number quartile split, flagged inline — since peer grouping keys
-  off this band, a wrong threshold would silently misgroup users rather
-  than error. Needs an actual SRS decision (and probably a TBD-05 entry)
-  before it can be called locked.
+- **`Phase2_SRS_v1.6.docx` — done, no longer open.** Produced in the same
+  pass as the code (25 Aug 2026) — see decision #1's third amendment for
+  the exact edit summary. Left here as a note, not a gap: unlike v1.1
+  onward it wasn't landed in the *very first* pass this session touched
+  the code (a deliberate, disclosed gap for a few hours), so it's worth
+  recording that it was closed before this file's Status section could be
+  called final.
+- **Budget band (B1–B4) thresholds** — the placeholder-quartile gap this
+  item used to describe is now moot, not resolved: `budgetBand` and its
+  source `monthlyBudget` field are gone from the schema entirely (decision
+  #1's third amendment), and peer grouping no longer uses a banded
+  dimension at all (decision #2's rewrite uses a continuous ±widening
+  income range, which needs no fixed cutoffs to lock). Left here only so
+  a reader of this file's history isn't left wondering whether it was ever
+  closed — it wasn't, and the field it was about no longer exists to
+  close it for.
+- **FR13 / UC-07 Simulation History** — no longer an open gap: `GET /plan`
+  (replacing the old `501 /simulation/history` stub) returns the one
+  active plan directly, trivially, since decision #1's third amendment
+  means there's only ever one to return. Removed from this list as
+  resolved, not carried forward.
+- **Synthetic peer data generation (decision #4)** — no longer an open
+  gap: implemented in this pass (decision #4's own entry above has the
+  detail). Removed from this list as resolved, not carried forward.
 
 ## Status
 
 All four numbered SRS TBDs (TBD-01 through TBD-04) were closed as of SRS
 v1.2 / Design Model v1.0 (Phase 2) — confirmed directly against
-`Phase2_SRS_v1.2.docx` Appendix C. **TBD-01 was then reopened in v1.3**
-and **further amended in v1.4** (both 19 Aug 2026, decision #1's two
-amendments above) — see `Phase2_SRS_v1.4.docx` Appendix C for the current
-status. The budget-band gap above was never numbered as a TBD in the
-first place, so it was never covered by the "all closed" statement to
-begin with — see Open items. **Decision #6 (contribution mechanism) is
-new scope, not a TBD or a reopened decision** — it's covered by
-`Phase2_SRS_v1.5.docx` (20 Aug 2026), the first SRS revision in this
-chain that isn't dated the same day as another one.
+`Phase2_SRS_v1.2.docx` Appendix C. **TBD-01 was reopened in v1.3, amended
+in v1.4, and amended a third time on 25 Aug 2026** — decision #1's
+real-calendar monthly backtest, reflected in `Phase2_SRS_v1.6.docx`
+Appendix C ("further amended a third time in v1.6"). **TBD-02 was
+similarly rewritten** the same day, also reflected in `v1.6` Appendix C
+("REWRITTEN in v1.6") — decision #2's income-range peer grouping,
+replacing the risk/budget/goal tiers `Phase2_SRS_v1.2.docx` originally
+locked. **TBD-04 (ConsistencyScore) is marked "REMOVED in v1.6"** in the
+same Appendix C, per decision #3. The budget-band gap above was never
+numbered as a TBD in the first place and is now moot rather than
+resolved — see Open items. **Decision #6 (contribution mechanism) is
+superseded**, not merely extended further — the monthly-only engine
+(decision #1's third amendment) has no frequency or mechanism concept
+left to extend. **Decision #7 (wallet, Savings Rate, Emergency Buffer) is
+new scope**, like decision #6 was, not a TBD or a reopened decision.
 
 FR01–FR12 (SRS v1.2 §3.2) are implemented end-to-end, backend and mobile,
-matching `FYP Roadmap.docx` Phases 3–6. FR13 and the synthetic-peer-data
-seed script (Phase 7 and Phase 5 respectively) are the two remaining
-functional gaps — see Open items above and the README Status table for
-the full phase-by-phase breakdown. The contribution mechanism (decision
-#6) is implemented but sits outside the FR01–FR13 numbering entirely.
+matching `FYP Roadmap.docx` Phases 3–6, now against the decision #1/#2
+rewrite rather than the original model, and reflected in
+`Phase2_SRS_v1.6.docx`. FR13 (`GET /plan`) and the synthetic-peer-data
+seed script (decision #4) are both now implemented — see Open items above
+for why they're no longer listed as gaps. There is no remaining
+functional gap against the SRS as of this pass. The old
+contribution-mechanism scope (decision #6) is gone, not merely superseded
+in spirit — nothing in FR01–FR13 nor beyond it depends on it any more.

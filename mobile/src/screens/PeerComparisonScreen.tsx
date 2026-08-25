@@ -1,15 +1,11 @@
 /**
- * S-05 Peer Comparison — UC-05. Percentile + peer medians, incl. fallback
- * tier used (transparency text per UC-05 step 6, DECISIONS.md #2).
- * NFR-03: only ever renders aggregated stats (percentiles/counts), never
- * raw peer records — matches what GET /peers/summary itself returns.
- *
- * Only calls /peers/summary: its payload (tier, p25/p50/p75, memberCount,
- * plus the user's own value and the transparency message) is a strict
- * superset of what /peers/distribution returns, so a second fetch here
- * would just duplicate the same numbers for this screen's needs.
- * /peers/distribution is still implemented and tested server-side for
- * whatever narrower consumer wants just the group shape.
+ * S-05 Peer Comparison — UC-05, rewritten for DECISIONS.md #2's
+ * income-range peer grouping and the new Savings Rate / Emergency Buffer
+ * metrics (25 Aug 2026). Three percentile tracks now instead of one:
+ * portfolio value, Savings Rate, Emergency Buffer — same visual pattern
+ * (range bar + median marker + user marker) reused for all three.
+ * NFR-03: only ever renders aggregated stats, never raw peer records —
+ * matches what GET /peers/summary itself returns.
  */
 import { useCallback, useState } from "react";
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
@@ -19,14 +15,20 @@ import type { MainTabScreenProps } from "../navigation/AppNavigator";
 
 type Props = MainTabScreenProps<"PeerComparison">;
 
-interface PeerSummary {
-  tier: "FULL" | "RISK_BUDGET" | "RISK_ONLY";
-  memberCount: number;
+interface MetricStats {
   userValue: number | null;
   p25: number;
   p50: number;
   p75: number;
+}
+
+interface PeerSummary {
+  bandPct: number | null;
+  memberCount: number;
   message: string;
+  value: MetricStats;
+  savingsRatePct: MetricStats;
+  emergencyBuffer: MetricStats;
 }
 
 export function PeerComparisonScreen({ navigation }: Props) {
@@ -81,7 +83,6 @@ export function PeerComparisonScreen({ navigation }: Props) {
   }
 
   const hasPeers = summary.memberCount > 0;
-  const domainMax = Math.max(summary.p75, summary.userValue ?? 0, 1) * 1.15;
 
   return (
     <ScrollView contentContainerStyle={styles.scrollContainer}>
@@ -95,39 +96,54 @@ export function PeerComparisonScreen({ navigation }: Props) {
       )}
 
       {hasPeers && (
-        <View style={styles.card}>
-          <Text style={styles.cardHeading}>
-            {summary.memberCount} peer{summary.memberCount === 1 ? "" : "s"}
-          </Text>
-
-          <View style={styles.track}>
-            <View style={[styles.rangeBar, { left: `${pct(summary.p25, domainMax)}%`, width: `${pct(summary.p75, domainMax) - pct(summary.p25, domainMax)}%` }]} />
-            <Marker position={pct(summary.p50, domainMax)} color="#555" />
-            {summary.userValue !== null && <Marker position={pct(summary.userValue, domainMax)} color="#2e6fdb" filled />}
-          </View>
-
-          <View style={styles.legendRow}>
-            <LegendItem color="#555" label={`Median: ${formatCurrency(summary.p50)}`} />
-            {summary.userValue !== null && <LegendItem color="#2e6fdb" label={`You: ${formatCurrency(summary.userValue)}`} />}
-          </View>
-
-          <View style={styles.percentileRow}>
-            <PercentileStat label="25th pct" value={summary.p25} />
-            <PercentileStat label="Median" value={summary.p50} />
-            <PercentileStat label="75th pct" value={summary.p75} />
-          </View>
-        </View>
+        <>
+          <MetricCard title={`${summary.memberCount} peer${summary.memberCount === 1 ? "" : "s"} — Portfolio value`} stats={summary.value} format={formatCurrency} />
+          <MetricCard title="Savings Rate" stats={summary.savingsRatePct} format={(v) => `${v.toFixed(0)}%`} />
+          <MetricCard title="Emergency Buffer" stats={summary.emergencyBuffer} format={(v) => `${v.toFixed(1)}x`} />
+        </>
       )}
 
-      {summary.userValue === null && (
+      {summary.value.userValue === null && (
         <View style={styles.card}>
-          <Text style={styles.body}>Run a simulation to see how you compare.</Text>
+          <Text style={styles.body}>Start a plan to see how you compare.</Text>
           <Pressable style={styles.submitButton} onPress={() => navigation.navigate("Contribution")}>
-            <Text style={styles.submitButtonText}>Run a simulation</Text>
+            <Text style={styles.submitButtonText}>Start a plan</Text>
           </Pressable>
         </View>
       )}
     </ScrollView>
+  );
+}
+
+function MetricCard({ title, stats, format }: { title: string; stats: MetricStats; format: (v: number) => string }) {
+  const domainMax = Math.max(stats.p75, stats.userValue ?? 0, 0.01) * 1.15;
+
+  return (
+    <View style={styles.card}>
+      <Text style={styles.cardHeading}>{title}</Text>
+
+      <View style={styles.track}>
+        <View
+          style={[
+            styles.rangeBar,
+            { left: `${pct(stats.p25, domainMax)}%`, width: `${pct(stats.p75, domainMax) - pct(stats.p25, domainMax)}%` },
+          ]}
+        />
+        <Marker position={pct(stats.p50, domainMax)} color="#555" />
+        {stats.userValue !== null && <Marker position={pct(stats.userValue, domainMax)} color="#2e6fdb" filled />}
+      </View>
+
+      <View style={styles.legendRow}>
+        <LegendItem color="#555" label={`Median: ${format(stats.p50)}`} />
+        {stats.userValue !== null && <LegendItem color="#2e6fdb" label={`You: ${format(stats.userValue)}`} />}
+      </View>
+
+      <View style={styles.percentileRow}>
+        <PercentileStat label="25th pct" value={stats.p25} format={format} />
+        <PercentileStat label="Median" value={stats.p50} format={format} />
+        <PercentileStat label="75th pct" value={stats.p75} format={format} />
+      </View>
+    </View>
   );
 }
 
@@ -151,10 +167,10 @@ function LegendItem({ color, label }: { color: string; label: string }) {
   );
 }
 
-function PercentileStat({ label, value }: { label: string; value: number }) {
+function PercentileStat({ label, value, format }: { label: string; value: number; format: (v: number) => string }) {
   return (
     <View style={styles.percentileStat}>
-      <Text style={styles.percentileValue}>{formatCurrency(value)}</Text>
+      <Text style={styles.percentileValue}>{format(value)}</Text>
       <Text style={styles.percentileLabel}>{label}</Text>
     </View>
   );

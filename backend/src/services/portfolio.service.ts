@@ -16,8 +16,9 @@ export interface FundSummary {
   assetClass: string;
   exchange: string;
   currency: string;
-  yearsAvailable: number;
-  latestAnnualReturn: number | null;
+  monthsAvailable: number;
+  earliestMonth: string | null;
+  latestMonthlyReturn: number | null;
 }
 
 export interface PortfolioAllocationSummary {
@@ -52,7 +53,7 @@ const WEIGHT_SUM_TOLERANCE = 0.01;
 class PortfolioService {
   async listFunds(): Promise<FundSummary[]> {
     const funds = await prisma.fund.findMany({
-      include: { historicalReturns: { orderBy: { year: "desc" } } },
+      include: { monthlyReturns: { orderBy: { monthDate: "desc" } } },
       orderBy: [{ assetClass: "asc" }, { ticker: "asc" }],
     });
 
@@ -63,8 +64,9 @@ class PortfolioService {
       assetClass: fund.assetClass,
       exchange: fund.exchange,
       currency: fund.currency,
-      yearsAvailable: fund.historicalReturns.length,
-      latestAnnualReturn: fund.historicalReturns[0] ? Number(fund.historicalReturns[0].returnRate) : null,
+      monthsAvailable: fund.monthlyReturns.length,
+      earliestMonth: fund.monthlyReturns.length > 0 ? fund.monthlyReturns[fund.monthlyReturns.length - 1].monthDate.toISOString().slice(0, 7) : null,
+      latestMonthlyReturn: fund.monthlyReturns[0] ? Number(fund.monthlyReturns[0].returnPct) : null,
     }));
   }
 
