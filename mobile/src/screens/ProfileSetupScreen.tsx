@@ -1,12 +1,17 @@
 /**
- * S-02 Profile Setup — UC-02. Collect risk level, goal type, and monthly
- * budget; POST /user/profile (budgetBand is derived server-side from the
- * raw budget figure — profile.service.ts, Design Model §4.2).
+ * S-02 Profile Setup — UC-02. Collect risk level, goal type, monthly
+ * income, monthly expense, and age; POST /user/profile.
  *
- * On mount, GETs the existing profile to pre-select risk/goal for a
- * returning user editing their profile. The raw monthly budget number
- * itself isn't persisted (only the derived band is), so that field always
- * starts blank — existing users see their current band as a hint instead.
+ * DECISIONS.md #1 third amendment / #2 rewrite (25 Aug 2026): the old
+ * "monthly budget -> budgetBand" field is gone — contribution amount now
+ * lives on the plan (PlanSetupScreen), capped by monthlyIncome, not by a
+ * separate "budget" concept. monthlyIncome also drives peer grouping
+ * (±10%-widening income range) and, with monthlyExpense, the Savings Rate
+ * metric shown back here once saved. riskLevel/goalType are kept
+ * (unused for grouping now) per explicit user direction.
+ *
+ * On mount, GETs the existing profile to pre-fill for a returning user
+ * editing their profile.
  */
 import { useEffect, useState } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
@@ -21,7 +26,10 @@ type GoalType = "LEARN" | "HABIT" | "GROWTH";
 interface ProfileResponse {
   riskLevel: RiskLevel;
   goalType: GoalType;
-  budgetBand: "B1" | "B2" | "B3" | "B4";
+  monthlyIncome: number;
+  monthlyExpense: number;
+  age: number;
+  savingsRatePct: number;
 }
 
 const RISK_OPTIONS: { value: RiskLevel; label: string }[] = [
@@ -39,8 +47,10 @@ const GOAL_OPTIONS: { value: GoalType; label: string }[] = [
 export function ProfileSetupScreen({ navigation }: Props) {
   const [riskLevel, setRiskLevel] = useState<RiskLevel | null>(null);
   const [goalType, setGoalType] = useState<GoalType | null>(null);
-  const [monthlyBudget, setMonthlyBudget] = useState("");
-  const [currentBand, setCurrentBand] = useState<string | null>(null);
+  const [monthlyIncome, setMonthlyIncome] = useState("");
+  const [monthlyExpense, setMonthlyExpense] = useState("");
+  const [age, setAge] = useState("");
+  const [currentSavingsRate, setCurrentSavingsRate] = useState<number | null>(null);
   const [loadingExisting, setLoadingExisting] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -53,7 +63,10 @@ export function ProfileSetupScreen({ navigation }: Props) {
         if (cancelled) return;
         setRiskLevel(profile.riskLevel);
         setGoalType(profile.goalType);
-        setCurrentBand(profile.budgetBand);
+        setMonthlyIncome(String(profile.monthlyIncome));
+        setMonthlyExpense(String(profile.monthlyExpense));
+        setAge(String(profile.age));
+        setCurrentSavingsRate(profile.savingsRatePct);
       })
       .catch((err) => {
         // 404 just means "no profile yet" — the normal first-time state,
@@ -74,9 +87,17 @@ export function ProfileSetupScreen({ navigation }: Props) {
   function validate(): string | null {
     if (!riskLevel) return "Select a risk level.";
     if (!goalType) return "Select a goal.";
-    const budget = Number(monthlyBudget);
-    if (!monthlyBudget.trim() || !Number.isFinite(budget) || budget <= 0) {
-      return "Enter a monthly budget greater than 0.";
+    const income = Number(monthlyIncome);
+    if (!monthlyIncome.trim() || !Number.isFinite(income) || income <= 0) {
+      return "Enter a monthly income greater than 0.";
+    }
+    const expense = Number(monthlyExpense);
+    if (!monthlyExpense.trim() || !Number.isFinite(expense) || expense < 0) {
+      return "Enter a monthly expense of 0 or more.";
+    }
+    const ageNum = Number(age);
+    if (!age.trim() || !Number.isInteger(ageNum) || ageNum < 13 || ageNum > 120) {
+      return "Enter a realistic age.";
     }
     return null;
   }
@@ -93,10 +114,16 @@ export function ProfileSetupScreen({ navigation }: Props) {
     try {
       await apiFetch<ProfileResponse>("/user/profile", {
         method: "POST",
-        body: { riskLevel, goalType, monthlyBudget: Number(monthlyBudget) },
+        body: {
+          riskLevel,
+          goalType,
+          monthlyIncome: Number(monthlyIncome),
+          monthlyExpense: Number(monthlyExpense),
+          age: Number(age),
+        },
       });
       // Straight to the Contribution tab — having just set up their
-      // profile, setting up a first contribution is the natural next step.
+      // profile, setting up a plan is the natural next step.
       navigation.replace("Main", { screen: "Contribution" });
     } catch (err) {
       setError(describeError(err));
@@ -116,7 +143,7 @@ export function ProfileSetupScreen({ navigation }: Props) {
   return (
     <View style={styles.container}>
       <Text style={styles.title}>Set up your profile</Text>
-      <Text style={styles.subtitle}>This shapes your simulation and peer comparisons.</Text>
+      <Text style={styles.subtitle}>This shapes your plan and peer comparisons.</Text>
 
       <View style={styles.form}>
         <Text style={styles.label}>Risk level</Text>
@@ -146,16 +173,36 @@ export function ProfileSetupScreen({ navigation }: Props) {
           ))}
         </View>
 
-        <Text style={styles.label}>Monthly budget (SGD)</Text>
-        {currentBand && (
-          <Text style={styles.hint}>Currently in band {currentBand}. Enter a new figure to update it.</Text>
-        )}
+        <Text style={styles.label}>Monthly income (SGD)</Text>
         <TextInput
           style={styles.input}
-          placeholder="e.g. 100"
+          placeholder="e.g. 4000"
           keyboardType="numeric"
-          value={monthlyBudget}
-          onChangeText={setMonthlyBudget}
+          value={monthlyIncome}
+          onChangeText={setMonthlyIncome}
+          editable={!submitting}
+        />
+
+        <Text style={styles.label}>Monthly expense (SGD)</Text>
+        <TextInput
+          style={styles.input}
+          placeholder="e.g. 2500"
+          keyboardType="numeric"
+          value={monthlyExpense}
+          onChangeText={setMonthlyExpense}
+          editable={!submitting}
+        />
+        {currentSavingsRate !== null && (
+          <Text style={styles.hint}>Current Savings Rate: {currentSavingsRate.toFixed(0)}%</Text>
+        )}
+
+        <Text style={styles.label}>Age</Text>
+        <TextInput
+          style={styles.input}
+          placeholder="e.g. 28"
+          keyboardType="numeric"
+          value={age}
+          onChangeText={setAge}
           editable={!submitting}
         />
 

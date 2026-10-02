@@ -6,22 +6,18 @@ export async function getSummary(req: Request, res: Response, next: NextFunction
   try {
     const userId = req.userId!;
     const group = await peerGroupingService.assignPeerGroup(userId);
-    const [stats, userValue] = await Promise.all([
-      peerBenchmarkService.computePeerGroupStats(group),
-      peerBenchmarkService.getLatestFinalValue(userId),
+    const [stats, myMetrics] = await Promise.all([
+      peerBenchmarkService.computeStats(userId, group),
+      peerBenchmarkService.getMyMetrics(userId),
     ]);
 
     res.status(200).json({
-      tier: group.tier,
-      riskLevel: group.riskLevel,
-      budgetBand: group.budgetBand,
-      goalType: group.goalType,
+      bandPct: group.bandPct,
       memberCount: stats.memberCount,
-      userValue,
-      p25: stats.p25,
-      p50: stats.p50,
-      p75: stats.p75,
-      message: describeTier(group.tier, stats.memberCount),
+      message: describeTier(group),
+      value: { userValue: myMetrics.finalValue, ...stats.value },
+      savingsRatePct: { userValue: myMetrics.savingsRatePct, ...stats.savingsRatePct },
+      emergencyBuffer: { userValue: myMetrics.emergencyBuffer, ...stats.emergencyBuffer },
     });
   } catch (err) {
     next(err);
@@ -30,9 +26,10 @@ export async function getSummary(req: Request, res: Response, next: NextFunction
 
 export async function getDistribution(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    const group = await peerGroupingService.assignPeerGroup(req.userId!);
-    const stats = await peerBenchmarkService.computePeerGroupStats(group);
-    res.status(200).json({ tier: group.tier, ...stats });
+    const userId = req.userId!;
+    const group = await peerGroupingService.assignPeerGroup(userId);
+    const stats = await peerBenchmarkService.computeStats(userId, group);
+    res.status(200).json({ bandPct: group.bandPct, ...stats });
   } catch (err) {
     next(err);
   }

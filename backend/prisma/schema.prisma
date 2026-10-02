@@ -1,6 +1,6 @@
-// Prisma schema — Design Model v1.0 §4 (Database Schema).
-// Derived directly from the SRS Data Dictionary (§4) and the Phase 1 locked
-// decisions (`FYP Roadmap.docx` Phase 1 / DECISIONS.md).
+// Prisma schema — Design Model v1.0 §4 (Database Schema), amended per
+// DECISIONS.md #1 (third amendment, real-calendar monthly backtest) and #2
+// (income-range peer grouping), 25 Aug 2026.
 
 generator client {
   provider = "prisma-client-js"
@@ -11,7 +11,7 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-// ── §4.1 Enums ──────────────────────────────────────────────────────────
+// ── Enums ──────────────────────────────────────────────────────────
 
 enum RiskLevel {
   LOW
@@ -25,37 +25,7 @@ enum GoalType {
   GROWTH
 }
 
-enum BudgetBand {
-  B1
-  B2
-  B3
-  B4
-}
-
-enum ContributionFrequency {
-  WEEKLY
-  MONTHLY
-}
-
-// DECISIONS.md #6: how a period's contributionAmount is arrived at.
-// SCHEDULED — the user enters a fixed amount directly (the original
-// model). ROUND_UP — derived from spare-change parameters (average
-// transactions/week x average round-up per transaction), computed once
-// and applied uniformly to every period, same as SCHEDULED — still a
-// single deterministic per-period figure, no simulated transaction
-// stream, so NFR-04 holds the same way it always has.
-enum ContributionMechanism {
-  SCHEDULED
-  ROUND_UP
-}
-
-enum PeerGroupTier {
-  FULL
-  RISK_BUDGET
-  RISK_ONLY
-}
-
-// ── §4.2 Tables ─────────────────────────────────────────────────────────
+// ── Tables ─────────────────────────────────────────────────────────
 
 model User {
   id           String   @id @default(uuid())
@@ -69,20 +39,30 @@ model User {
   isSynthetic  Boolean  @default(false)
   createdAt    DateTime @default(now())
 
-  profile     UserProfile?
-  simulations Simulation[]
-  portfolios  Portfolio[]
+  profile    UserProfile?
+  plan       Plan?
+  portfolios Portfolio[]
 
   @@map("users")
 }
 
+// DECISIONS.md #1 third amendment / #2 rewrite (25 Aug 2026): riskLevel and
+// goalType stay (unused for peer grouping now — same "display tag, not
+// authoritative" status Portfolio.riskLevel already had) but budgetBand is
+// gone: its only source, an ad-hoc "monthly budget" figure, has no home
+// any more now that contribution amount lives on Plan (capped by income,
+// not by a separate "budget" concept). monthlyIncome/monthlyExpense/age
+// are the new fields — monthlyIncome drives peer grouping (±10% widening
+// range, peerGrouping.service.ts), monthlyIncome - monthlyExpense drives
+// the Savings Rate metric, both profile-level and requiring no Plan.
 model UserProfile {
-  id         String     @id @default(uuid())
-  userId     String     @unique
-  riskLevel  RiskLevel
-  goalType   GoalType
-  // Derived server-side from raw monthly budget input (UC-02 step 4).
-  budgetBand BudgetBand
+  id             String    @id @default(uuid())
+  userId         String    @unique
+  riskLevel      RiskLevel
+  goalType       GoalType
+  monthlyIncome  Decimal   @db.Decimal(10, 2)
+  monthlyExpense Decimal   @db.Decimal(10, 2)
+  age            Int
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -91,9 +71,8 @@ model UserProfile {
 
 // DECISIONS.md #1 second amendment (multi-fund portfolios): a Fund is a
 // single real, tradable instrument (ETF/fund) with its own historical
-// return series — the unit that HistoricalReturn and PortfolioAllocation
-// both key off. Replaces PortfolioTemplate's role as the thing returns
-// attach to; PortfolioTemplate itself is gone (see Portfolio below).
+// return series — the unit that FundMonthlyReturn and PortfolioAllocation
+// both key off.
 model Fund {
   id         String @id @default(uuid())
   ticker     String
@@ -103,54 +82,49 @@ model Fund {
   // enum since the real fund universe isn't fixed to three risk tiers
   // any more.
   assetClass String
-  // Exchange code — EODHD's own code (e.g. "US", "LSE") for
-  // dataSource=EODHD funds, or "SGX" for web-search-sourced ones (EODHD's
-  // plan used here doesn't cover Singapore — see ingest-funds.ts).
+  // Exchange code, e.g. "US" or "SGX".
   exchange   String
   currency   String
-  // "EODHD" | "WEB_SEARCH" — which pipeline populated historicalReturns,
-  // kept so it's always traceable which rows are audit-grade API data
-  // versus search-summarized (DECISIONS.md #1 amendment caveat).
+  // "YFINANCE" — see ingest-funds-yfinance.ts. ("EODHD"/"WEB_SEARCH" were
+  // the prior pipelines, both superseded — DECISIONS.md #1 third
+  // amendment: yfinance is the first source that actually covers the SGX
+  // funds with real prices+dividends, which neither of those could.)
   dataSource String
 
-  historicalReturns HistoricalReturn[]
-  allocations       PortfolioAllocation[]
+  monthlyReturns FundMonthlyReturn[]
+  allocations    PortfolioAllocation[]
 
   @@unique([ticker, exchange])
   @@map("funds")
 }
 
-// DECISIONS.md #1 amendment: real, dated annual returns backing the
-// deterministic historical-replay engine (simulation.service.ts). One row
-// per calendar year actually traded by the real fund — series length
-// varies by fund (e.g. CFA only has 8 years, its real fund having
-// launched March 2017), which is why this is its own table keyed by year
-// rather than a fixed-length array.
-model HistoricalReturn {
-  id         String  @id @default(uuid())
-  fundId     String
-  year       Int
-  // Real annual total return for that calendar year (source: EODHD API or
-  // fund performance-history pages — see Fund.dataSource and
-  // DECISIONS.md #1 amendments for the per-fund citation and precision
-  // caveats).
-  returnRate Decimal @db.Decimal(6, 4)
+// DECISIONS.md #1 third amendment (25 Aug 2026): replaces HistoricalReturn.
+// One row per real calendar month actually traded by the real fund, so the
+// engine (plan.service.ts) can replay a user-chosen start month through to
+// "now" using the fund's own real monthly return — no annual-rate
+// derivation, no wrap-around. Sourced via yfinance (ingest-funds-yfinance.ts),
+// which — confirmed live, this session — covers the SGX funds (A35/CFA/
+// ES3/G3B) that neither EODHD nor Alpha Vantage could.
+model FundMonthlyReturn {
+  id             String   @id @default(uuid())
+  fundId         String
+  monthDate      DateTime // first-of-month, e.g. 2026-01-01
+  startPrice     Decimal  @db.Decimal(12, 4)
+  endPrice       Decimal  @db.Decimal(12, 4)
+  dividendAmount Decimal  @default(0) @db.Decimal(10, 4)
+  // (endPrice + dividendAmount - startPrice) / startPrice
+  returnPct      Decimal  @db.Decimal(8, 6)
 
   fund Fund @relation(fields: [fundId], references: [id], onDelete: Cascade)
 
-  @@unique([fundId, year])
-  @@map("historical_returns")
+  @@unique([fundId, monthDate])
+  @@map("fund_monthly_returns")
 }
 
-// DECISIONS.md #1 second amendment: replaces PortfolioTemplate. A
-// Portfolio is a named allocation across one or more Funds — either a
-// system preset (userId null, isPreset true — e.g. what used to be the
-// fixed Conservative/Balanced/Growth templates, now expressed as a
-// single-fund 100%-weight allocation each) or a user's own custom
-// multi-fund composition (userId set, isPreset false). riskLevel is a
-// display/classification tag only — peer grouping still keys off
-// UserProfile.riskLevel (DECISIONS.md #2), not which funds a user
-// actually invests in, so this stays nullable and non-authoritative.
+// DECISIONS.md #1 second amendment: a Portfolio is a named allocation
+// across one or more Funds — either a system preset (userId null, isPreset
+// true) or a user's own custom multi-fund composition. riskLevel is a
+// display/classification tag only, not authoritative for anything.
 model Portfolio {
   id        String     @id @default(uuid())
   userId    String?
@@ -161,7 +135,7 @@ model Portfolio {
 
   user        User?                 @relation(fields: [userId], references: [id], onDelete: Cascade)
   allocations PortfolioAllocation[]
-  simulations Simulation[]
+  plans       Plan[]
 
   @@map("portfolios")
 }
@@ -182,75 +156,49 @@ model PortfolioAllocation {
   @@map("portfolio_allocations")
 }
 
-model Simulation {
-  id          String                @id @default(uuid())
-  userId      String
-  portfolioId String
-  frequency   ContributionFrequency
-  mechanism   ContributionMechanism @default(SCHEDULED)
-  // Always the actual per-period amount used, regardless of mechanism:
-  // user-entered directly for SCHEDULED, derived (and stored back here)
-  // for ROUND_UP — every downstream reader (dashboard.service.ts's
-  // totalContributed reconstruction, simulation history) can stay
-  // mechanism-agnostic and just read this one field.
-  contributionAmount Decimal @db.Decimal(12, 2)
-  // ROUND_UP inputs only — kept as an audit trail of what produced
-  // contributionAmount above; null for SCHEDULED runs.
-  avgTransactionsPerWeek Int?
-  avgRoundUpAmount       Decimal? @db.Decimal(6, 2)
-  durationMonths         Int
-  // Populated once the run completes (FR06).
-  finalValue             Decimal? @db.Decimal(14, 2)
-  createdAt              DateTime @default(now())
+// DECISIONS.md #1 third amendment: replaces Simulation. A user has at most
+// one active Plan (userId is @unique, not just indexed) — starting a new
+// plan.service.ts run deletes the old Plan (cascading its PlanMonths) and
+// creates a fresh one, per the user's explicit "one active plan at a time"
+// call. startMonth is user-chosen (e.g. 2026-01-01); the plan always runs
+// through to the real current month — there is no storable "end month" or
+// duration, months are (re)computed on every read (plan.service.ts).
+model Plan {
+  id                 String   @id @default(uuid())
+  userId             String   @unique
+  portfolioId        String
+  contributionAmount Decimal  @db.Decimal(10, 2)
+  startMonth         DateTime // first-of-month
+  createdAt          DateTime @default(now())
 
-  user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
-  portfolio     Portfolio      @relation(fields: [portfolioId], references: [id])
-  contributions Contribution[]
+  user      User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  portfolio Portfolio   @relation(fields: [portfolioId], references: [id])
+  months    PlanMonth[]
 
-  @@map("simulations")
+  @@map("plans")
 }
 
-model Contribution {
-  id             String  @id @default(uuid())
-  simulationId   String
-  // One row per period; ordered by periodIndex.
-  periodIndex    Int
-  amount         Decimal @db.Decimal(12, 2)
-  portfolioValue Decimal @db.Decimal(14, 2)
+// One row per real calendar month from Plan.startMonth to "now" —
+// recomputed and upserted fresh on every read (plan.service.ts), not
+// incrementally maintained, so new real months/newly-ingested fund data
+// are always reflected without a cron job.
+model PlanMonth {
+  id                 String   @id @default(uuid())
+  planId             String
+  monthDate          DateTime
+  // Rp,t — the weight-blended fund return for this month.
+  portfolioReturnPct Decimal  @db.Decimal(8, 6)
+  contribution       Decimal  @db.Decimal(10, 2)
+  // Vt
+  endingBalance      Decimal  @db.Decimal(14, 2)
+  // Cumulative contributions through this month.
+  totalInvested      Decimal  @db.Decimal(12, 2)
+  // Cumulative (monthlyIncome - monthlyExpense - contribution) through this
+  // month — feeds the Emergency Buffer metric (walletBalance / monthlyExpense).
+  walletBalance      Decimal  @db.Decimal(12, 2)
 
-  simulation Simulation @relation(fields: [simulationId], references: [id], onDelete: Cascade)
+  plan Plan @relation(fields: [planId], references: [id], onDelete: Cascade)
 
-  @@unique([simulationId, periodIndex])
-  @@map("contributions")
-}
-
-model PeerGroup {
-  id         String        @id @default(uuid())
-  riskLevel  RiskLevel
-  // Nullable — null once relaxed past FULL/RISK_BUDGET (Design Model §5.1).
-  budgetBand BudgetBand?
-  goalType   GoalType?
-  tier       PeerGroupTier
-
-  stats PeerGroupStats?
-
-  @@map("peer_groups")
-}
-
-model PeerGroupStats {
-  id                String   @id @default(uuid())
-  peerGroupId       String   @unique
-  medianValue       Decimal  @db.Decimal(14, 2)
-  p25               Decimal  @db.Decimal(14, 2)
-  p50               Decimal  @db.Decimal(14, 2)
-  p75               Decimal  @db.Decimal(14, 2)
-  // Each member's own ConsistencyScore (SRS §4 formula), median-aggregated
-  // — computed and persisted by peerBenchmark.service.ts (DECISIONS.md #3).
-  medianConsistency Decimal? @db.Decimal(5, 2)
-  memberCount       Int
-  lastComputedAt    DateTime @default(now())
-
-  peerGroup PeerGroup @relation(fields: [peerGroupId], references: [id], onDelete: Cascade)
-
-  @@map("peer_group_stats")
+  @@unique([planId, monthDate])
+  @@map("plan_months")
 }
