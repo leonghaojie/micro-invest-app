@@ -61,6 +61,14 @@ synthetic peers, with income calibrated to SingStat's 2024 median
 (S$3,615 per household member) and the other patterns stated as
 assumptions; charts are hand-built on `react-native-svg`.
 
+**Password reset** (`auth.service.ts`, `mailer.service.ts` — `DECISIONS.md`
+#10, 3 Oct 2026): "Forgot password?" on the login screen emails a one-time
+6-digit code (15-minute expiry, 5 attempts, stored only as a keyed hash) and
+lets the user set a new password with it. Email goes out through Gmail SMTP —
+set `SMTP_USER` and `SMTP_PASS` (a Google App Password) in `backend/.env`;
+without them the code is printed to the server console in development. The
+endpoints never reveal whether an email has an account.
+
 **Friends comparison** (`friends.service.ts` — `DECISIONS.md` #8, 3 Oct
 2026): alongside the anonymous income-range comparison, the Peers tab has a
 **Friends** view that ranks you against people you add. Friendships are
@@ -105,7 +113,7 @@ micro-invest-app/
 │  ├─ prisma/ingest-funds-yfinance.ts Live yfinance ingestion, step 2/2 — derives monthly returns from the .py output, upserts Fund + FundMonthlyReturn via Prisma
 │  ├─ src/routes/                     auth, profile, portfolio (funds + portfolios), plan, dashboard, peers, friends, insights
 │  ├─ src/controllers/                thin — delegate to services
-│  ├─ src/services/                   auth, profile, portfolio, plan, dashboard, peerGrouping, peerBenchmark, friends, insight
+│  ├─ src/services/                   auth, mailer, profile, portfolio, plan, dashboard, peerGrouping, peerBenchmark, friends, insight
 │  ├─ src/middleware/                 auth.middleware.ts (requireAuth), errorHandler.middleware.ts
 │  ├─ src/config/                     prisma.ts (PrismaClient singleton), env.ts
 │  └─ src/app.ts, src/index.ts        AppServer
@@ -249,6 +257,10 @@ original Word documents, each superseding the last within its phase:
   Dictionary terms, S-05 amended, and the synthetic peer population
   described. New scope, not a reopened TBD (`DECISIONS.md` #9). Kept
   alongside v1.7, not replacing it.
+- `Phase2_SRS_v1.9.docx` — Phase 4 addition (3 Oct 2026): **password
+  reset** — new FR22–FR23 (request a reset code; reset with the code), UC-01
+  exceptions, S-01 amended, new Data Dictionary term. New scope, not a
+  reopened TBD (`DECISIONS.md` #10). Kept alongside v1.8, not replacing it.
 - `FYP Roadmap.docx` — the full Phase 0–9 plan mapped to the Lab #1–#5
   sequence and semester timeline.
 - `FYP_SRS_UseCase_UI_Lab1Style.docx` — an earlier Lab #1-formatted SRS
@@ -273,12 +285,13 @@ income-based/monthly-backtest rewrite (`DECISIONS.md` #1 third amendment,
 | 6 | Insight generation | FR12 | ✅ Done — value/Savings-Rate/Emergency-Buffer gap cards, ConsistencyScore card removed |
 | — | Friends comparison (new scope) | FR14–17 | ✅ Done — mutual friends, invite code/email only, per-metric opt-in sharing, ranked Friends view on the Peers tab (DECISIONS.md #8, SRS v1.7) |
 | — | Peer dashboard views (new scope) | FR18–21 | ✅ Done — segmentation, percentile + histogram, month-by-month trajectory, allocation panel; ~300 calibrated synthetic peers; privacy guards (min group 10, min cell 3) (DECISIONS.md #9, SRS v1.8) |
+| — | Password reset (new scope) | FR22–23 | ✅ Done — emailed 6-digit code via Gmail SMTP (console fallback in dev); attempt cap, expiry, no account enumeration (DECISIONS.md #10, SRS v1.9). Gmail delivery itself untested until SMTP credentials are set |
 | 7 | History, polish, NFRs | FR13 | ✅ Done — `GET /plan` returns the one active plan directly (trivial now that there's only ever one) |
 | 8 | Testing (Lab #4) | — | 🟡 Unit tests exist per-service, rewritten for the 25 Aug 2026 model — basis-path coverage of the peer-grouping widening/floor branches and equivalence-class/boundary coverage of the monthly engine — but not yet packaged as a formal Lab #4 deliverable (documented results, reflection report) |
 | 9 | Demo prep & submission | — | ⬜ Not started |
 
 There is no remaining functional gap against the SRS as of this pass —
-`Phase2_SRS_v1.6.docx`, `v1.7.docx` and `v1.8.docx` each land in the same
+`Phase2_SRS_v1.6.docx`, `v1.7.docx`, `v1.8.docx` and `v1.9.docx` each land in the same
 pass as the code, matching every prior amendment.
 
 The old "Budget band (B1–B4) thresholds" gap is moot, not resolved:

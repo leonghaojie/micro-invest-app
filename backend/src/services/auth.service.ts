@@ -2,11 +2,13 @@
  * AuthService — FR01 (register), FR02 (login), NFR-06 (bcrypt salted hash).
  */
 import bcrypt from "bcrypt";
+import { createHmac, randomInt, timingSafeEqual } from "crypto";
 import jwt from "jsonwebtoken";
 import { z } from "zod";
 import { env } from "../config/env";
 import { prisma } from "../config/prisma";
 import { HttpError } from "../utils/httpError";
+import { mailerService } from "./mailer.service";
 
 const credentialsSchema = z.object({
   email: z.string().trim().toLowerCase().email(),
@@ -18,6 +20,21 @@ const credentialsSchema = z.object({
 export type RegisterInput = z.infer<typeof credentialsSchema>;
 export type LoginInput = z.infer<typeof credentialsSchema>;
 
+const forgotPasswordSchema = z.object({
+  email: z.string().trim().toLowerCase().email(),
+});
+
+const resetPasswordSchema = z.object({
+  email: z.string().trim().toLowerCase().email(),
+  code: z.string().trim().regex(/^\d{6}$/, "Enter the 6-digit code from your email"),
+  password: z.string().min(8, "Password must be at least 8 characters"),
+});
+
+// DECISIONS.md #10 — password reset limits.
+export const RESET_CODE_TTL_MS = 15 * 60 * 1000;
+export const RESET_MAX_ATTEMPTS = 5;
+export const RESET_RESEND_COOLDOWN_MS = 60 * 1000;
+
 export interface AuthResult {
   token: string;
   user: { id: string; email: string };
@@ -26,6 +43,15 @@ export interface AuthResult {
 // Generic on purpose (SRS NFR-04 "meaningful errors" is not the same as
 // "leak which half of the credential pair was wrong").
 const INVALID_CREDENTIALS = "Invalid email or password";
+
+// One message for every way a reset can fail (no such account, no code
+// outstanding, expired, too many attempts, wrong code) so a caller can't tell
+// them apart.
+const INVALID_RESET_CODE = "Invalid or expired reset code";
+
+function hashResetCode(userId: string, code: string): string {
+  return createHmac("sha256", env.jwtSecret).update(`${userId}:${code}`).digest("hex");
+}
 
 function signToken(userId: string): string {
   return jwt.sign({ sub: userId }, env.jwtSecret, { expiresIn: env.jwtExpiresIn } as jwt.SignOptions);
@@ -74,6 +100,87 @@ class AuthService {
     }
 
     return { token: signToken(user.id), user: { id: user.id, email: user.email } };
+  }
+
+  /**
+   * Emails a one-time 6-digit code. Always resolves the same way whether or
+   * not the email belongs to an account (no account enumeration), and never
+   * waits on the mail provider, so response time doesn't give it away either.
+   */
+  async requestPasswordReset(input: { email: string }): Promise<void> {
+    const { email } = forgotPasswordSchema.parse(input);
+
+    const user = await prisma.user.findUnique({ where: { email }, include: { passwordReset: true } });
+    if (!user || user.isSynthetic) return;
+
+    // Cooldown: stops the endpoint being used to spam someone's inbox.
+    const existing = user.passwordReset;
+    if (existing && Date.now() - existing.createdAt.getTime() < RESET_RESEND_COOLDOWN_MS) return;
+
+    const code = String(randomInt(0, 1_000_000)).padStart(6, "0");
+    const data = {
+      codeHash: hashResetCode(user.id, code),
+      expiresAt: new Date(Date.now() + RESET_CODE_TTL_MS),
+      attempts: 0,
+      createdAt: new Date(),
+    };
+    await prisma.passwordResetCode.upsert({
+      where: { userId: user.id },
+      create: { userId: user.id, ...data },
+      update: data,
+    });
+
+    void mailerService
+      .send({
+        to: user.email,
+        subject: "Your Micro-Invest password reset code",
+        text:
+          `Your password reset code is ${code}.\n\n` +
+          `It expires in ${RESET_CODE_TTL_MS / 60000} minutes. If you didn't ask to reset your password, ` +
+          `you can ignore this email — your password has not changed.`,
+      })
+      .catch((err) => console.error("[auth] failed to send password reset email:", err));
+  }
+
+  /** Verifies the code and sets a new password. Does not log the user in. */
+  async resetPassword(input: { email: string; code: string; password: string }): Promise<void> {
+    const { email, code, password } = resetPasswordSchema.parse(input);
+
+    const user = await prisma.user.findUnique({ where: { email }, include: { passwordReset: true } });
+    if (!user || user.isSynthetic || !user.passwordReset) {
+      throw new HttpError(400, INVALID_RESET_CODE);
+    }
+
+    if (user.passwordReset.expiresAt.getTime() < Date.now()) {
+      await prisma.passwordResetCode.deleteMany({ where: { userId: user.id } });
+      throw new HttpError(400, INVALID_RESET_CODE);
+    }
+
+    // Count the attempt *before* comparing, atomically, so concurrent guesses
+    // can't slip past the limit.
+    const { attempts, codeHash } = await prisma.passwordResetCode.update({
+      where: { userId: user.id },
+      data: { attempts: { increment: 1 } },
+    });
+    if (attempts > RESET_MAX_ATTEMPTS) {
+      await prisma.passwordResetCode.deleteMany({ where: { userId: user.id } });
+      throw new HttpError(400, INVALID_RESET_CODE);
+    }
+
+    const expected = Buffer.from(codeHash, "hex");
+    const actual = Buffer.from(hashResetCode(user.id, code), "hex");
+    if (expected.length !== actual.length || !timingSafeEqual(expected, actual)) {
+      if (attempts >= RESET_MAX_ATTEMPTS) {
+        await prisma.passwordResetCode.deleteMany({ where: { userId: user.id } });
+      }
+      throw new HttpError(400, INVALID_RESET_CODE);
+    }
+
+    const passwordHash = await bcrypt.hash(password, env.bcryptSaltRounds);
+    await prisma.$transaction([
+      prisma.user.update({ where: { id: user.id }, data: { passwordHash } }),
+      prisma.passwordResetCode.deleteMany({ where: { userId: user.id } }),
+    ]);
   }
 }
 

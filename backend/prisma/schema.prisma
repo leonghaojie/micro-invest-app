@@ -47,10 +47,11 @@ model User {
   // users need no backfill; there is deliberately no user search/directory.
   inviteCode   String?  @unique
 
-  profile    UserProfile?
-  plan       Plan?
-  portfolios Portfolio[]
-  sharing    FriendSharing?
+  profile       UserProfile?
+  plan          Plan?
+  portfolios    Portfolio[]
+  sharing       FriendSharing?
+  passwordReset PasswordResetCode?
 
   sentRequests     Friendship[] @relation("FriendshipRequester")
   receivedRequests Friendship[] @relation("FriendshipAddressee")
@@ -254,4 +255,21 @@ model PlanMonth {
 
   @@unique([planId, monthDate])
   @@map("plan_months")
+}
+
+// DECISIONS.md #10 (password reset): at most one outstanding reset code per
+// user — requesting a new code replaces the old one. Only an HMAC of the
+// 6-digit code is stored (never the code itself), it expires after 15
+// minutes, and it is deleted after 5 wrong guesses or on successful use.
+model PasswordResetCode {
+  id        String   @id @default(uuid())
+  userId    String   @unique
+  codeHash  String
+  expiresAt DateTime
+  attempts  Int      @default(0)
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("password_reset_codes")
 }
