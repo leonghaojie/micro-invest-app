@@ -6,14 +6,53 @@
  * (range bar + median marker + user marker) reused for all three.
  * NFR-03: only ever renders aggregated stats, never raw peer records —
  * matches what GET /peers/summary itself returns.
+ *
+ * DECISIONS.md #8 (3 Oct 2026): a segmented control at the top picks the
+ * comparison group — "Similar income" (everything above, unchanged,
+ * aggregate-only) or "Friends" (FriendsComparison: a consent-based ranking
+ * among people the user added; the one place named individuals appear).
  */
 import { useCallback, useState } from "react";
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { useFocusEffect } from "@react-navigation/native";
 import { apiFetch, ApiError } from "../api/client";
 import type { MainTabScreenProps } from "../navigation/AppNavigator";
+import { FriendsComparison } from "./FriendsComparison";
 
 type Props = MainTabScreenProps<"PeerComparison">;
+
+type Mode = "similar" | "friends";
+
+const MODES: { value: Mode; label: string }[] = [
+  { value: "similar", label: "Similar income" },
+  { value: "friends", label: "Friends" },
+];
+
+export function PeerComparisonScreen({ navigation }: Props) {
+  const [mode, setMode] = useState<Mode>("similar");
+
+  return (
+    <View style={styles.screen}>
+      <View style={styles.segmentRow}>
+        {MODES.map((m) => (
+          <Pressable
+            key={m.value}
+            style={[styles.segment, mode === m.value && styles.segmentSelected]}
+            onPress={() => setMode(m.value)}
+          >
+            <Text style={[styles.segmentText, mode === m.value && styles.segmentTextSelected]}>{m.label}</Text>
+          </Pressable>
+        ))}
+      </View>
+
+      {mode === "similar" ? (
+        <SimilarPeers navigation={navigation} />
+      ) : (
+        <FriendsComparison onManage={() => navigation.navigate("Friends")} />
+      )}
+    </View>
+  );
+}
 
 interface MetricStats {
   userValue: number | null;
@@ -31,7 +70,7 @@ interface PeerSummary {
   emergencyBuffer: MetricStats;
 }
 
-export function PeerComparisonScreen({ navigation }: Props) {
+function SimilarPeers({ navigation }: Pick<Props, "navigation">) {
   const [summary, setSummary] = useState<PeerSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -193,6 +232,23 @@ function describeError(err: unknown): string {
 }
 
 const styles = StyleSheet.create({
+  screen: { flex: 1 },
+  segmentRow: {
+    flexDirection: "row",
+    alignSelf: "center",
+    width: "100%",
+    maxWidth: 360,
+    marginTop: 16,
+    marginHorizontal: 24,
+    borderWidth: 1,
+    borderColor: "#2e6fdb",
+    borderRadius: 8,
+    overflow: "hidden",
+  },
+  segment: { flex: 1, paddingVertical: 10, alignItems: "center", backgroundColor: "#fff" },
+  segmentSelected: { backgroundColor: "#2e6fdb" },
+  segmentText: { color: "#2e6fdb", fontWeight: "600" },
+  segmentTextSelected: { color: "#fff" },
   container: { flex: 1, alignItems: "center", justifyContent: "center", padding: 24, gap: 12 },
   scrollContainer: { flexGrow: 1, alignItems: "center", padding: 24, gap: 12 },
   title: { fontSize: 24, fontWeight: "700" },

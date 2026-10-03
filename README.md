@@ -47,6 +47,18 @@ Scheduled deposit vs Round-up, `Phase2_SRS_v1.5.docx`) is superseded, not
 extended further — the rewritten engine is monthly-scheduled
 contributions only.
 
+**Friends comparison** (`friends.service.ts` — `DECISIONS.md` #8, 3 Oct
+2026): alongside the anonymous income-range comparison, the Peers tab has a
+**Friends** view that ranks you against people you add. Friendships are
+mutual (request and accept); you find someone only by invite code or exact
+email (no user search, and the add-friend reply is identical whether or not
+the account exists); and each user opts in, per metric, to what friends can
+see — everything is off by default. Friends see only a display name, never
+an email. Because it shows named individuals' figures, it is a deliberate,
+consent-based exception to the aggregate-only rule (NFR-03); the anonymous
+`/peers/*` endpoints are untouched. Seeded demo users can be added with the
+codes `DEMO0001`, `DEMO0002`, … (requests to them are auto-accepted).
+
 ## Architecture
 
 Four-layer architecture, communicating strictly downward:
@@ -77,14 +89,14 @@ micro-invest-app/
 │  ├─ prisma/seed.ts                  Preset portfolios (Conservative/Balanced/Growth) + synthetic peer data (income spread + active plans) — requires ingest-funds-yfinance to have run first, no offline fallback catalog any more
 │  ├─ prisma/ingest-funds-yfinance.py Live yfinance ingestion, step 1/2 — fetches monthly OHLC+dividends (no API key needed); the first source confirmed to cover the SGX funds (A35/CFA/ES3/G3B) with real data — see DECISIONS.md #1 third amendment
 │  ├─ prisma/ingest-funds-yfinance.ts Live yfinance ingestion, step 2/2 — derives monthly returns from the .py output, upserts Fund + FundMonthlyReturn via Prisma
-│  ├─ src/routes/                     auth, profile, portfolio (funds + portfolios), plan, dashboard, peers, insights
+│  ├─ src/routes/                     auth, profile, portfolio (funds + portfolios), plan, dashboard, peers, friends, insights
 │  ├─ src/controllers/                thin — delegate to services
-│  ├─ src/services/                   auth, profile, portfolio, plan, dashboard, peerGrouping, peerBenchmark, insight
+│  ├─ src/services/                   auth, profile, portfolio, plan, dashboard, peerGrouping, peerBenchmark, friends, insight
 │  ├─ src/middleware/                 auth.middleware.ts (requireAuth), errorHandler.middleware.ts
 │  ├─ src/config/                     prisma.ts (PrismaClient singleton), env.ts
 │  └─ src/app.ts, src/index.ts        AppServer
 └─ mobile/
-   ├─ src/screens/                S-01 – S-06, plus FundBrowserScreen (new — see below)
+   ├─ src/screens/                S-01 – S-07, plus FundBrowserScreen and FriendsComparison (the Peers tab's Friends view)
    ├─ src/navigation/AppNavigator.tsx      root stack — WelcomeLogin/ProfileSetup pre-login, Main (tab bar) after
    ├─ src/navigation/MainTabNavigator.tsx  the tab bar itself: Dashboard, Funds, Contribution, Peers, Insights
    └─ src/api/client.ts           apiFetch wrapper
@@ -208,6 +220,12 @@ original Word documents, each superseding the last within its phase:
   ConsistencyScore metric it resolved no longer exists, superseded by
   Savings Rate and Emergency Buffer (`DECISIONS.md` #1 third amendment,
   #2 rewrite, #3, #7). Kept alongside v1.5, not replacing it.
+- `Phase2_SRS_v1.7.docx` — Phase 4 addition (3 Oct 2026): **friends
+  comparison** — new UC-08, FR14–FR17 and screen S-07; NFR-03 clarified as
+  anonymous-by-default with a consent-based exception for friends; new
+  Data Dictionary terms (Friendship, FriendSharing, DisplayName,
+  InviteCode). New scope, not a reopened TBD (`DECISIONS.md` #8). Kept
+  alongside v1.6, not replacing it.
 - `FYP Roadmap.docx` — the full Phase 0–9 plan mapped to the Lab #1–#5
   sequence and semester timeline.
 - `FYP_SRS_UseCase_UI_Lab1Style.docx` — an earlier Lab #1-formatted SRS
@@ -230,13 +248,14 @@ income-based/monthly-backtest rewrite (`DECISIONS.md` #1 third amendment,
 | 4 | Plan engine (formerly "simulation"), dashboard | FR05–08 | ✅ Done — real-calendar monthly backtest replacing the annual-replay engine and the contribution-mechanism scope (DECISIONS.md #1 third amendment; #6 superseded); dashboard adds Wallet and Savings Rate, drops Consistency (DECISIONS.md #3, #7) |
 | 5 | Peer benchmarking engine | FR09–11 | ✅ Done — income-range grouping (DECISIONS.md #2 rewrite) replacing the risk/budget/goal tiers; synthetic peer data generation now implemented (DECISIONS.md #4) |
 | 6 | Insight generation | FR12 | ✅ Done — value/Savings-Rate/Emergency-Buffer gap cards, ConsistencyScore card removed |
+| — | Friends comparison (new scope) | FR14–17 | ✅ Done — mutual friends, invite code/email only, per-metric opt-in sharing, ranked Friends view on the Peers tab (DECISIONS.md #8, SRS v1.7) |
 | 7 | History, polish, NFRs | FR13 | ✅ Done — `GET /plan` returns the one active plan directly (trivial now that there's only ever one) |
 | 8 | Testing (Lab #4) | — | 🟡 Unit tests exist per-service, rewritten for the 25 Aug 2026 model — basis-path coverage of the peer-grouping widening/floor branches and equivalence-class/boundary coverage of the monthly engine — but not yet packaged as a formal Lab #4 deliverable (documented results, reflection report) |
 | 9 | Demo prep & submission | — | ⬜ Not started |
 
 There is no remaining functional gap against the SRS as of this pass —
-`Phase2_SRS_v1.6.docx` lands in the same pass as the code, matching every
-prior amendment.
+`Phase2_SRS_v1.6.docx` and `Phase2_SRS_v1.7.docx` each land in the same
+pass as the code, matching every prior amendment.
 
 The old "Budget band (B1–B4) thresholds" gap is moot, not resolved:
 `budgetBand` and its source field are gone from the schema entirely, and
