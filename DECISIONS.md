@@ -520,6 +520,93 @@ Implements: new scope beyond FR01–FR13. Owner:
 (Wallet + Savings Rate cards), `PeerComparisonScreen.tsx` (two additional
 percentile tracks).
 
+## 8. Friends comparison — a consent-based exception to NFR-03 (3 Oct 2026)
+
+Not an SRS TBD — new scope, requested directly by the user: add friends
+and, on the Peers tab, choose to see a ranking among them instead of (or
+alongside) the anonymous income-range peer group.
+
+> Peer comparisons must be privacy-preserving: only aggregated statistics
+> are shown, never raw peer records.
+> — SRS §2.5 / NFR-03
+
+Friends comparison necessarily shows *named individuals' figures*, so it is
+a deliberate, scoped exception to that rule, not a quiet violation of it.
+The exception is made safe by consent, and by keeping the two comparisons
+structurally separate: the anonymous `/peers/*` endpoints are untouched
+(the end-to-end run confirms `/peers/summary` still returns its original
+fields and contains no friend data), and friend data flows only through
+`/friends/*`, only for **accepted** friends, and only for metrics each
+friend has **opted in** to share.
+
+**Decisions, all confirmed with the user before building:**
+- **Mutual request/accept**, not a one-way follow — nobody's numbers are
+  visible to a person they haven't agreed to share with.
+- **Invite code or exact email only; no user search or directory.**
+  Strangers can't be discovered. Codes are 8 characters from a 32-character
+  alphabet with no look-alikes (~40 bits), generated lazily on first use so
+  existing users needed no backfill.
+- **Per-metric sharing toggles, all off by default** (value, return,
+  contribution rate, savings rate, emergency buffer). A user always sees
+  their own figures regardless of their toggles; a friend's metric that they
+  haven't shared never appears, and friends who hide a metric are counted
+  but never named.
+- **One friends list**, no named circles.
+- Friends are identified only by a user-chosen **display name** (required
+  before adding/accepting) — never the email, and no response contains
+  another user's id (only a friendship id, to act on the link).
+
+**Design details worth recording:**
+- **Non-enumerating add-friend.** `POST /friends/requests` returns the
+  identical `202` body whether the code/email exists, is already a friend,
+  or is a duplicate, so it can't be used to discover which accounts exist.
+  For the same reason **outgoing pending requests are never listed back to
+  the sender** (a visible "pending to Alice" row would reveal that the target
+  exists) — a deviation from the first draft of this plan, found while
+  designing the tests. The cost: a sender can't see or cancel their own
+  pending request; the recipient can accept or decline.
+- A request to someone who has already requested you completes the link
+  instead of leaving two crossed requests.
+- Ranking is standard competition ranking per metric (ties share a rank).
+  Each member's plan is recomputed on read (`planService.getActivePlan`)
+  so a stale `PlanMonth` is never ranked; friends are capped at 50, which
+  keeps that cheap.
+- **Demo behaviour, clearly labelled:** seeded (synthetic) users can't log
+  in to accept a request, so a request to one is **auto-accepted**, and the
+  seed gives each synthetic user a display name, a deterministic invite code
+  (`DEMO0001`…) and all sharing on. This lets one real account demo the
+  feature end to end.
+
+**Known limitations (not hidden):** no rate limiting on add-friend attempts
+(brute-forcing the ~40-bit code space is impractical but not actively
+blocked); no way to regenerate an invite code or block a user; the
+exception to NFR-03 means the interim report's privacy and "no named
+individual" arguments (§2.3, §2.5 and the design-response table) need
+re-scoping to "anonymous by default, named only by mutual consent".
+
+**SRS amended.** `Phase2_SRS_v1.7.docx` (repo root, alongside — not
+replacing — `Phase2_SRS_v1.6.docx`) bumps the version header and revision
+history (3 Oct 2026), adds a `[v1.7]` note to §1.1, an NFR-03 clarification
+to §2.5 (anonymous comparisons stay aggregate-only; friend comparisons
+reveal only what each friend consented to share), FR14–FR17 as a new table
+under §3.2, new Data Dictionary terms (Friendship, FriendSharing,
+DisplayName, InviteCode, Friends metrics) in §4, a full UC-08 in §6, and
+S-07 plus the Peers-tab selector in §7.1 — in a new sky-blue `[v1.7]` tag,
+appended below the existing amber/blue/green/violet/teal/rose text, not
+overwritten (Appendices A/B stay untouched, as before; Appendix C is
+untouched because this was never a TBD). Edited by anchored splice into
+`word/document.xml` (9 insertions against unique surrounding text),
+validated well-formed and opened via `python-docx` against v1.6: +15
+paragraphs and +2 tables, exactly the 15 tagged `[v1.7]` paragraphs and the
+two new tables.
+
+Implements: new scope beyond FR01–FR13 (SRS v1.7 adds FR14–FR17, UC-08,
+S-07). Owner: `backend/src/services/friends.service.ts`,
+`friends.controller.ts`, `friends.routes.ts` (schema: `Friendship`,
+`FriendSharing`, `User.displayName`/`inviteCode`, migration
+`friends_and_sharing`), `backend/prisma/seed.ts`, mobile
+`FriendsScreen.tsx`, `FriendsComparison.tsx`, `PeerComparisonScreen.tsx`.
+
 ## Open items (Design Model §8, carried forward)
 
 - **`Phase2_SRS_v1.6.docx` — done, no longer open.** Produced in the same

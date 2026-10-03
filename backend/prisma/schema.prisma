@@ -38,12 +38,65 @@ model User {
   // excluded from every endpoint/view that lists individual real users.
   isSynthetic  Boolean  @default(false)
   createdAt    DateTime @default(now())
+  // DECISIONS.md #8 (friends comparison): the only identity a friend ever
+  // sees — never the email or id. Must be set before sending/accepting a
+  // friend request.
+  displayName  String?
+  // Short random code another user can enter to send this user a friend
+  // request. Generated lazily on first use (friends.service.ts) so existing
+  // users need no backfill; there is deliberately no user search/directory.
+  inviteCode   String?  @unique
 
   profile    UserProfile?
   plan       Plan?
   portfolios Portfolio[]
+  sharing    FriendSharing?
+
+  sentRequests     Friendship[] @relation("FriendshipRequester")
+  receivedRequests Friendship[] @relation("FriendshipAddressee")
 
   @@map("users")
+}
+
+enum FriendshipStatus {
+  PENDING
+  ACCEPTED
+}
+
+// DECISIONS.md #8: a mutual, consent-based friend link. Declining and
+// unfriending both delete the row. Postgres can't cheaply enforce
+// symmetric uniqueness (A->B and B->A), so friends.service.ts rejects a
+// request when a row already exists in either direction.
+model Friendship {
+  id          String           @id @default(uuid())
+  requesterId String
+  addresseeId String
+  status      FriendshipStatus @default(PENDING)
+  createdAt   DateTime         @default(now())
+  respondedAt DateTime?
+
+  requester User @relation("FriendshipRequester", fields: [requesterId], references: [id], onDelete: Cascade)
+  addressee User @relation("FriendshipAddressee", fields: [addresseeId], references: [id], onDelete: Cascade)
+
+  @@unique([requesterId, addresseeId])
+  @@map("friendships")
+}
+
+// Per-metric opt-in: what accepted friends may see about this user. All
+// off by default (privacy by default). The user always sees their own
+// numbers regardless of these toggles.
+model FriendSharing {
+  id                    String  @id @default(uuid())
+  userId                String  @unique
+  shareValue            Boolean @default(false)
+  shareReturn           Boolean @default(false)
+  shareContributionRate Boolean @default(false)
+  shareSavingsRate      Boolean @default(false)
+  shareEmergencyBuffer  Boolean @default(false)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("friend_sharing")
 }
 
 // DECISIONS.md #1 third amendment / #2 rewrite (25 Aug 2026): riskLevel and

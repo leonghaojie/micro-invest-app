@@ -9,6 +9,7 @@ import { requireAuth } from "./middleware/auth.middleware";
 import { errorHandler, notFoundHandler } from "./middleware/errorHandler.middleware";
 import { authRouter } from "./routes/auth.routes";
 import { dashboardRouter } from "./routes/dashboard.routes";
+import { friendsRouter } from "./routes/friends.routes";
 import { insightsRouter } from "./routes/insights.routes";
 import { peersRouter } from "./routes/peers.routes";
 import { planRouter } from "./routes/plan.routes";
@@ -35,6 +36,7 @@ export function createApp(): Express {
   app.use("/plan", planRouter);
   app.use("/dashboard", dashboardRouter);
   app.use("/peers", peersRouter);
+  app.use("/friends", friendsRouter);
   app.use("/insights", insightsRouter);
 
   app.use(notFoundHandler);

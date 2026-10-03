@@ -28,6 +28,7 @@ import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import type { BottomTabScreenProps } from "@react-navigation/bottom-tabs";
 import { getStoredAuthToken } from "../api/client";
+import { FriendsScreen } from "../screens/FriendsScreen";
 import { ProfileSetupScreen } from "../screens/ProfileSetupScreen";
 import { WelcomeLoginScreen } from "../screens/WelcomeLoginScreen";
 import { MainTabNavigator } from "./MainTabNavigator";
@@ -44,6 +45,8 @@ export type RootStackParamList = {
   WelcomeLogin: undefined;
   ProfileSetup: undefined;
   Main: NavigatorScreenParams<MainTabParamList> | undefined;
+  // DECISIONS.md #8: friend management, opened from the Peers tab.
+  Friends: undefined;
 };
 
 // Props helper for the two pre-login stack screens.
@@ -88,6 +91,7 @@ export function AppNavigator() {
       <Stack.Screen name="WelcomeLogin" component={WelcomeLoginScreen} options={{ title: "Welcome" }} />
       <Stack.Screen name="ProfileSetup" component={ProfileSetupScreen} options={{ title: "Set Up Profile" }} />
       <Stack.Screen name="Main" component={MainTabNavigator} options={{ headerShown: false }} />
+      <Stack.Screen name="Friends" component={FriendsScreen} options={{ title: "Friends" }} />
     </Stack.Navigator>
   );
 }

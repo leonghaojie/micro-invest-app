@@ -135,9 +135,64 @@ async function seedSyntheticPeers(): Promise<void> {
   console.log(`[seed] synthetic peers: ${created}/${SYNTHETIC_INCOMES.length} created with a plan.`);
 }
 
+const DEMO_FRIEND_NAMES = [
+  "Alex T.", "Priya N.", "Marcus L.", "Sarah K.", "Wei Ming", "Aisha R.", "Daniel C.", "Mei Ling",
+  "Raj P.", "Chloe W.", "Hafiz M.", "Jia Hui", "Kevin O.", "Nur A.", "Brandon S.", "Yi Xuan",
+  "Arjun D.", "Grace H.", "Farhan Z.", "Li Na", "Tom B.", "Siti R.",
+];
+
+/**
+ * DECISIONS.md #8 (friends comparison): gives each synthetic user a display
+ * name, a deterministic invite code (DEMO0001, DEMO0002, ...) and all
+ * sharing switched on, so a single real account can demo the feature —
+ * sending a request to one of these codes is auto-accepted
+ * (friends.service.ts), since synthetic users can't log in to accept.
+ * Idempotent, and runs even when the synthetic users already existed from
+ * an earlier seed. The "DEMO" + digits form contains 0 and 1, which the
+ * random invite-code alphabet never uses, so these can't collide with a
+ * real user's generated code.
+ */
+async function seedFriendDemoIdentities(): Promise<void> {
+  const synthetic = await prisma.user.findMany({ where: { isSynthetic: true }, select: { id: true, email: true } });
+  const indexOf = (email: string) => Number(email.match(/synthetic\+(\d+)@/)?.[1] ?? NaN);
+  const ordered = synthetic.filter((u) => !Number.isNaN(indexOf(u.email))).sort((a, b) => indexOf(a.email) - indexOf(b.email));
+
+  let updated = 0;
+  for (const [i, user] of ordered.entries()) {
+    await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        displayName: DEMO_FRIEND_NAMES[i % DEMO_FRIEND_NAMES.length],
+        inviteCode: `DEMO${String(i + 1).padStart(4, "0")}`,
+      },
+    });
+    await prisma.friendSharing.upsert({
+      where: { userId: user.id },
+      create: {
+        userId: user.id,
+        shareValue: true,
+        shareReturn: true,
+        shareContributionRate: true,
+        shareSavingsRate: true,
+        shareEmergencyBuffer: true,
+      },
+      update: {
+        shareValue: true,
+        shareReturn: true,
+        shareContributionRate: true,
+        shareSavingsRate: true,
+        shareEmergencyBuffer: true,
+      },
+    });
+    updated += 1;
+  }
+  console.log(`[seed] friend demo identities: ${updated} synthetic users now have a display name, invite code (DEMO0001...) and sharing on.`);
+}
+
 async function main() {
   await seedPresetPortfolios();
   await seedSyntheticPeers();
+  await seedFriendDemoIdentities();
 }
 
 main()
