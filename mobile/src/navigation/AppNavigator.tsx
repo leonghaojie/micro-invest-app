@@ -28,6 +28,7 @@ import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import type { BottomTabScreenProps } from "@react-navigation/bottom-tabs";
 import { getStoredAuthToken } from "../api/client";
+import { ForgotPasswordScreen } from "../screens/ForgotPasswordScreen";
 import { FriendsScreen } from "../screens/FriendsScreen";
 import { ProfileSetupScreen } from "../screens/ProfileSetupScreen";
 import { WelcomeLoginScreen } from "../screens/WelcomeLoginScreen";
@@ -42,7 +43,10 @@ export type MainTabParamList = {
 };
 
 export type RootStackParamList = {
-  WelcomeLogin: undefined;
+  // passwordResetDone: set by ForgotPasswordScreen so the login screen can confirm the reset.
+  WelcomeLogin: { passwordResetDone?: boolean } | undefined;
+  // DECISIONS.md #10: emailed-code password reset, reached from the login screen.
+  ForgotPassword: { email?: string } | undefined;
   ProfileSetup: undefined;
   Main: NavigatorScreenParams<MainTabParamList> | undefined;
   // DECISIONS.md #8: friend management, opened from the Peers tab.
@@ -89,6 +93,7 @@ export function AppNavigator() {
   return (
     <Stack.Navigator initialRouteName={initialRoute}>
       <Stack.Screen name="WelcomeLogin" component={WelcomeLoginScreen} options={{ title: "Welcome" }} />
+      <Stack.Screen name="ForgotPassword" component={ForgotPasswordScreen} options={{ title: "Reset Password" }} />
       <Stack.Screen name="ProfileSetup" component={ProfileSetupScreen} options={{ title: "Set Up Profile" }} />
       <Stack.Screen name="Main" component={MainTabNavigator} options={{ headerShown: false }} />
       <Stack.Screen name="Friends" component={FriendsScreen} options={{ title: "Friends" }} />

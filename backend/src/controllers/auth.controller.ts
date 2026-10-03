@@ -24,3 +24,22 @@ export async function login(req: Request, res: Response, next: NextFunction): Pr
     next(err);
   }
 }
+
+// Same 200 + message for every email, registered or not (DECISIONS.md #10).
+export async function forgotPassword(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    await authService.requestPasswordReset(req.body);
+    res.status(200).json({ message: "If that email has an account, a reset code is on its way." });
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function resetPassword(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    await authService.resetPassword(req.body);
+    res.status(200).json({ message: "Password updated. You can now log in." });
+  } catch (err) {
+    next(err);
+  }
+}

@@ -731,6 +731,80 @@ Implements: new scope beyond FR01–FR17 (SRS v1.8 adds FR18–FR21). Owner:
 `PeerDashboard.tsx`, `PeerComparisonScreen.tsx`, and
 `src/components/charts/` (`Histogram`, `BandChart`, `MixBar`).
 
+## 10. Password reset by emailed code (3 Oct 2026)
+
+**Problem.** Registration and login existed (FR01/FR02) but a user who forgot
+their password had no way back into their account.
+
+**Considered and rejected: admin-assisted reset.** An admin account that
+resets other users' passwords was suggested first. Dropped in favour of
+self-service email reset: it needs an admin role, an admin UI, and puts the
+identity check on a human; the emailed code needs none of those.
+
+**Decision.** Self-service reset by a one-time 6-digit code, delivered by
+email through Gmail SMTP (nodemailer). Two public endpoints, both under
+`/auth/*` (no JWT):
+
+- `POST /auth/forgot-password {email}` — always answers 200 with the same
+  message, whether or not the email has an account (no account enumeration).
+  The mail is sent without being awaited, so response time doesn't leak it
+  either, and a send failure is logged, not surfaced.
+- `POST /auth/reset-password {email, code, password}` — verifies the code,
+  sets the new bcrypt-hashed password (NFR-06) and deletes the code. It does
+  **not** log the user in; they return to the login screen and sign in.
+
+**Code rules** (`PasswordResetCode`, one row per user):
+
+| Rule | Value |
+|---|---|
+| Code | 6 digits, `crypto.randomInt` |
+| Storage | HMAC-SHA256 (keyed with `JWT_SECRET`, over `userId:code`) — the code itself is never stored; compared with `timingSafeEqual` |
+| Expiry | 15 minutes |
+| Wrong guesses | 5, then the code is deleted. The attempt is counted atomically *before* comparing, so concurrent guesses can't exceed the limit — the correct code is rejected once the limit is passed |
+| Resend | a new request replaces the old code; requests within 60 s of the last one are silently ignored (stops inbox spamming) |
+| Failure message | one message for every failure: "Invalid or expired reset code" |
+| Synthetic users | treated as no such account |
+
+Why a code rather than a link: a link needs deep-link / universal-link setup
+in Expo, which is fragile in Expo Go and on web; a code typed into the app
+works everywhere.
+
+**Email delivery.** `mailer.service.ts` sends through Gmail SMTP when
+`SMTP_USER` and `SMTP_PASS` (a Google **App Password**, not the account
+password; needs 2-Step Verification) are set in `backend/.env`; settings are
+in `.env.example`. With them unset it prints the message, including the code,
+to the server console so the flow works in development and demos with no
+account — **only outside `NODE_ENV=production`**; in production the missing
+config is an error rather than a code in a log. The Gmail path itself has not
+been exercised in this session (no credentials were available); only the
+console path was run end to end.
+
+**Mobile.** "Forgot password?" on the login screen opens
+`ForgotPasswordScreen`: enter email (pre-filled from the login form) → enter
+code + new password + confirmation → back to login with a confirmation line.
+
+**Known limitations.**
+- Tokens are stateless JWTs (7 days): a reset does not invalidate sessions
+  already signed in on other devices. Fixing it means a `passwordChangedAt`
+  check in `requireAuth` (a DB read per request, which the middleware does not
+  do today).
+- No per-IP rate limiting on the two endpoints; the cooldown and attempt cap
+  are per account. Fine for the FYP, not for a public deployment.
+- Gmail caps SMTP sending for a personal account (a few hundred a day) — ample
+  for a demo.
+- Registration still answers 409 for a taken email, so account existence is
+  discoverable there even though reset is not (pre-existing, FR01).
+
+**SRS.** Amended in `Phase2_SRS_v1.9.docx` (new FR22–FR23, UC-01 exceptions,
+S-01), new scope rather than a reopened TBD.
+
+Implements: new scope beyond FR01–FR21 (SRS v1.9 adds FR22–FR23). Owner:
+`backend/src/services/auth.service.ts` (`requestPasswordReset`,
+`resetPassword`), `backend/src/services/mailer.service.ts`,
+`backend/src/controllers/auth.controller.ts`, `backend/src/routes/auth.routes.ts`,
+`backend/prisma/schema.prisma` (`PasswordResetCode`), mobile
+`ForgotPasswordScreen.tsx`, `WelcomeLoginScreen.tsx`.
+
 ## Open items (Design Model §8, carried forward)
 
 - **`Phase2_SRS_v1.6.docx` — done, no longer open.** Produced in the same

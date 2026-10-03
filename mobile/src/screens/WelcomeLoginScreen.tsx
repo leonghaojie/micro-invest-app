@@ -22,7 +22,7 @@ interface AuthResponse {
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-export function WelcomeLoginScreen({ navigation }: Props) {
+export function WelcomeLoginScreen({ navigation, route }: Props) {
   const [mode, setMode] = useState<Mode>("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -104,6 +104,9 @@ export function WelcomeLoginScreen({ navigation }: Props) {
           editable={!submitting}
         />
 
+        {route.params?.passwordResetDone && !error && (
+          <Text style={styles.success}>Password updated. Log in with your new password.</Text>
+        )}
         {error && <Text style={styles.error}>{error}</Text>}
 
         <Pressable
@@ -117,6 +120,15 @@ export function WelcomeLoginScreen({ navigation }: Props) {
             <Text style={styles.submitButtonText}>{isLogin ? "Log in" : "Register"}</Text>
           )}
         </Pressable>
+
+        {isLogin && (
+          <Pressable
+            onPress={() => navigation.navigate("ForgotPassword", { email: email.trim() || undefined })}
+            disabled={submitting}
+          >
+            <Text style={styles.toggleText}>Forgot password?</Text>
+          </Pressable>
+        )}
 
         <Pressable
           onPress={() => {
@@ -158,6 +170,7 @@ const styles = StyleSheet.create({
     fontSize: 16,
   },
   error: { color: "#c0392b", textAlign: "center" },
+  success: { color: "#1e8449", textAlign: "center" },
   submitButton: {
     backgroundColor: "#2e6fdb",
     borderRadius: 8,

@@ -20,6 +20,15 @@ export const env = {
   bcryptSaltRounds: Number(process.env.BCRYPT_SALT_ROUNDS ?? 10),
   // SRS §2.5 / Design Model §5: locked Phase 1 decision.
   minGroupSize: Number(process.env.MIN_GROUP_SIZE ?? 10),
+  nodeEnv: process.env.NODE_ENV ?? "development",
+  // DECISIONS.md #10: Gmail SMTP for password-reset emails. All optional —
+  // without SMTP_USER/SMTP_PASS the mailer logs the message to the server
+  // console instead (development only), so the flow works with no account.
+  smtpHost: process.env.SMTP_HOST ?? "smtp.gmail.com",
+  smtpPort: Number(process.env.SMTP_PORT ?? 465),
+  smtpUser: process.env.SMTP_USER,
+  smtpPass: process.env.SMTP_PASS,
+  mailFrom: process.env.MAIL_FROM,
   // Optional — only prisma/ingest-funds.ts needs this, not the server.
   eodhdApiKey: process.env.EODHD_API_KEY,
 };
