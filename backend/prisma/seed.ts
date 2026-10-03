@@ -14,32 +14,55 @@
  *    (DECISIONS.md #1 second amendment). Users can still build their own
  *    multi-fund Portfolio instead (portfolio.service.ts).
  *
- * 2. Synthetic peer data (SRS §2.6, DECISIONS.md #4) — populates a spread
- *    of incomes (not the old riskLevel x budgetBand x goalType grid, which
- *    no longer exists) so the income-range peer grouping
- *    (peerGrouping.service.ts, DECISIONS.md #2 rewrite) has something to
- *    find at every widening step, plus a Plan per synthetic user so
- *    peerBenchmark.service.ts's percentiles aren't empty either.
+ * 2. Synthetic peer data (SRS §2.6, DECISIONS.md #4, #9) — ~300 reproducible
+ *    peers from src/utils/syntheticPeers.ts, each with a profile, a custom
+ *    multi-fund portfolio and a Plan, so the peer dashboard's segmentation,
+ *    distribution, trajectory and allocation views have a population large
+ *    enough to mean something. Income is anchored to published SingStat
+ *    figures; expense ratio, contribution rate and portfolio mix are labelled
+ *    assumptions (see syntheticPeers.ts).
+ *
+ *    Usage:
+ *      npm run prisma:seed                           create peers if none exist,
+ *                                                    otherwise refresh their plans
+ *      npm run prisma:seed -- --reset-synthetic      delete ALL synthetic users
+ *                                                    (cascading their profiles,
+ *                                                    portfolios, plans and any
+ *                                                    friend links to them) and
+ *                                                    regenerate
+ *      npm run prisma:seed -- --reset-synthetic --peers=500
  */
-import { PrismaClient, RiskLevel, GoalType } from "@prisma/client";
+import { PrismaClient, RiskLevel } from "@prisma/client";
 import { planService } from "../src/services/plan.service";
+import { FundInfo, generatePeerSpecs, SyntheticPeerSpec } from "../src/utils/syntheticPeers";
 
 const prisma = new PrismaClient();
+
+const DEFAULT_PEER_COUNT = 300;
+// Fixed seed => the same population every time the seed is (re)generated.
+const POPULATION_SEED = 20261003;
+const CONCURRENCY = 8;
+
+function parseArgs(): { resetSynthetic: boolean; peerCount: number } {
+  const argv = process.argv.slice(2);
+  const peers = argv.find((a) => a.startsWith("--peers="))?.split("=")[1];
+  const peerCount = peers ? Number(peers) : DEFAULT_PEER_COUNT;
+  if (!Number.isInteger(peerCount) || peerCount < 1) {
+    throw new Error(`--peers must be a positive integer (got "${peers}")`);
+  }
+  return { resetSynthetic: argv.includes("--reset-synthetic"), peerCount };
+}
+
+async function inChunks<T>(items: T[], size: number, fn: (item: T) => Promise<void>): Promise<void> {
+  for (let i = 0; i < items.length; i += size) {
+    await Promise.all(items.slice(i, i + size).map(fn));
+  }
+}
 
 const PRESET_PORTFOLIOS: { name: string; riskLevel: RiskLevel; ticker: string; exchange: string }[] = [
   { name: "Conservative", riskLevel: RiskLevel.LOW, ticker: "A35.SI", exchange: "SGX" },
   { name: "Balanced", riskLevel: RiskLevel.MEDIUM, ticker: "CFA.SI", exchange: "SGX" },
   { name: "Growth", riskLevel: RiskLevel.HIGH, ticker: "ES3.SI", exchange: "SGX" },
-];
-
-// Spread of synthetic monthly incomes (SGD) — deliberately clustered with
-// some outliers, so the ±10%/±15%/.../widening algorithm has to actually
-// widen for some users and not others when exercised in a demo or test.
-const SYNTHETIC_INCOMES = [
-  2200, 2300, 2400, 2450, 2500, 2550, 2600, 2650, 2700, 2800,
-  3200, 3300, 3400, 3500, 3600, 3700, 3800,
-  5000, 5200, 5500,
-  9000, 12000,
 ];
 
 async function seedPresetPortfolios(): Promise<void> {
@@ -73,32 +96,18 @@ async function seedPresetPortfolios(): Promise<void> {
   console.log(`[seed] preset portfolios: ${created} created, ${PRESET_PORTFOLIOS.length - created} already present/skipped.`);
 }
 
-function pick<T>(arr: T[]): T {
-  return arr[Math.floor(Math.random() * arr.length)];
+/** The latest month every fund has data for — a plan can't run past the
+ * least-up-to-date fund, so synthetic start months are counted back from it. */
+async function latestCommonDataMonth(): Promise<Date | null> {
+  const perFund = await prisma.fundMonthlyReturn.groupBy({ by: ["fundId"], _max: { monthDate: true } });
+  const months = perFund.map((f) => f._max.monthDate).filter((d): d is Date => d !== null);
+  if (months.length === 0) return null;
+  return months.reduce((min, d) => (d < min ? d : min));
 }
 
-async function seedSyntheticPeers(): Promise<void> {
-  const existingCount = await prisma.user.count({ where: { isSynthetic: true } });
-  if (existingCount > 0) {
-    console.log(`[seed] synthetic peers: ${existingCount} already present, skipping.`);
-    return;
-  }
-
-  const presets = await prisma.portfolio.findMany({ where: { isPreset: true } });
-  if (presets.length === 0) {
-    console.warn("[seed] synthetic peers: no preset portfolios found, skipping.");
-    return;
-  }
-
-  // Earliest month every preset's own single fund has data for, so a
-  // synthetic startMonth is always valid (plan.service.ts validates this
-  // the same way for real users).
-  let created = 0;
-  for (let i = 0; i < SYNTHETIC_INCOMES.length; i++) {
-    const income = SYNTHETIC_INCOMES[i];
-    const expense = Math.round(income * (0.4 + Math.random() * 0.35)); // 40-75% of income
-    const email = `synthetic+${i}@seed.local`;
-
+async function createSyntheticPeer(spec: SyntheticPeerSpec, anchorMonth: Date): Promise<boolean> {
+  const email = `synthetic+${spec.index}@seed.local`;
+  try {
     const user = await prisma.user.create({
       data: {
         email,
@@ -106,33 +115,81 @@ async function seedSyntheticPeers(): Promise<void> {
         isSynthetic: true,
         profile: {
           create: {
-            riskLevel: pick([RiskLevel.LOW, RiskLevel.MEDIUM, RiskLevel.HIGH]),
-            goalType: pick([GoalType.LEARN, GoalType.HABIT, GoalType.GROWTH]),
-            monthlyIncome: income,
-            monthlyExpense: expense,
-            age: 21 + Math.floor(Math.random() * 40),
+            riskLevel: spec.riskLevel,
+            goalType: spec.goalType,
+            monthlyIncome: spec.income,
+            monthlyExpense: spec.expense,
+            age: spec.age,
           },
         },
       },
     });
 
-    const portfolio = pick(presets);
-    const contribution = Math.max(10, Math.round(income * 0.05));
-    // Start somewhere in the last ~18 months so there's a real, if short,
-    // history to compare against.
-    const now = new Date();
-    const monthsBack = 3 + Math.floor(Math.random() * 15);
-    const startMonth = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - monthsBack, 1));
+    const portfolio = await prisma.portfolio.create({
+      data: {
+        userId: user.id,
+        name: "Custom mix",
+        isPreset: false,
+        riskLevel: spec.riskLevel,
+        allocations: { create: spec.allocations.map((a) => ({ fundId: a.fundId, weightPct: a.weightPct })) },
+      },
+    });
 
-    try {
-      await planService.startPlan(user.id, { portfolioId: portfolio.id, contributionAmount: contribution, startMonth: startMonth.toISOString() });
-      created += 1;
-    } catch (err) {
-      console.warn(`[seed] synthetic peer ${email}: plan creation failed (${(err as Error).message}), left without a plan.`);
-    }
+    // monthsOfHistory months ending at the latest month all funds have.
+    const startMonth = new Date(Date.UTC(anchorMonth.getUTCFullYear(), anchorMonth.getUTCMonth() - (spec.monthsOfHistory - 1), 1));
+    await planService.startPlan(user.id, {
+      portfolioId: portfolio.id,
+      contributionAmount: spec.contribution,
+      startMonth: startMonth.toISOString(),
+    });
+    return true;
+  } catch (err) {
+    console.warn(`[seed] synthetic peer ${email}: failed (${(err as Error).message}).`);
+    return false;
+  }
+}
+
+/** Returns true if a fresh population was generated. */
+async function seedSyntheticPeers({ resetSynthetic, peerCount }: { resetSynthetic: boolean; peerCount: number }): Promise<boolean> {
+  const existing = await prisma.user.count({ where: { isSynthetic: true } });
+  if (existing > 0 && !resetSynthetic) {
+    console.log(`[seed] synthetic peers: ${existing} already present (use --reset-synthetic to regenerate).`);
+    return false;
+  }
+  if (existing > 0) {
+    // Cascades to profiles, custom portfolios, plans/months, sharing and any
+    // friend links to these users.
+    const { count } = await prisma.user.deleteMany({ where: { isSynthetic: true } });
+    console.log(`[seed] reset: deleted ${count} existing synthetic users (and everything cascading from them).`);
   }
 
-  console.log(`[seed] synthetic peers: ${created}/${SYNTHETIC_INCOMES.length} created with a plan.`);
+  const catalog: FundInfo[] = await prisma.fund.findMany({ select: { id: true, ticker: true, assetClass: true } });
+  const anchorMonth = await latestCommonDataMonth();
+  if (catalog.length === 0 || !anchorMonth) {
+    console.warn("[seed] synthetic peers: no funds/return data found, skipping. Run `npm run prisma:ingest-funds` first.");
+    return false;
+  }
+
+  const specs = generatePeerSpecs(peerCount, POPULATION_SEED, catalog);
+  let created = 0;
+  await inChunks(specs, CONCURRENCY, async (spec) => {
+    if (await createSyntheticPeer(spec, anchorMonth)) created += 1;
+    if (created % 50 === 0 && created > 0) console.log(`[seed]   ...${created}/${specs.length}`);
+  });
+
+  console.log(`[seed] synthetic peers: ${created}/${specs.length} created (seed ${POPULATION_SEED}, history ends ${anchorMonth.toISOString().slice(0, 7)}).`);
+  return true;
+}
+
+/** Re-runs plan.service's recompute-on-read for every synthetic plan, so a
+ * re-seed keeps their stored months in step with the latest fund data. */
+async function refreshSyntheticPlans(): Promise<void> {
+  const users = await prisma.user.findMany({ where: { isSynthetic: true, plan: { isNot: null } }, select: { id: true } });
+  let refreshed = 0;
+  await inChunks(users, CONCURRENCY, async (u) => {
+    if (await planService.getActivePlan(u.id).catch(() => null)) refreshed += 1;
+  });
+  console.log(`[seed] refreshed ${refreshed}/${users.length} synthetic plans.`);
 }
 
 const DEMO_FRIEND_NAMES = [
@@ -190,8 +247,10 @@ async function seedFriendDemoIdentities(): Promise<void> {
 }
 
 async function main() {
+  const args = parseArgs();
   await seedPresetPortfolios();
-  await seedSyntheticPeers();
+  const generated = await seedSyntheticPeers(args);
+  if (!generated) await refreshSyntheticPlans();
   await seedFriendDemoIdentities();
 }
 

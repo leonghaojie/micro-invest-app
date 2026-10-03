@@ -47,6 +47,20 @@ Scheduled deposit vs Round-up, `Phase2_SRS_v1.5.docx`) is superseded, not
 extended further — the rewritten engine is monthly-scheduled
 contributions only.
 
+**Peer dashboard** (`peerInsights.service.ts` — `DECISIONS.md` #9, 3 Oct
+2026): the anonymous comparison is now segment-aware and visual. You choose
+what "peers" means — income, age (±5 years), risk level, goal, same start
+month, in any combination — and see your exact percentile with a histogram
+of the group, a month-by-month trajectory against the peer median and
+middle-50% band (aligned by months since start), and what peers hold
+(asset-class mix, most-held funds). It stays aggregate-only: a selection
+matching fewer than 10 peers returns no statistics and no count, histogram
+bins and funds describing fewer than 3 people are merged or withheld, and
+all aggregation runs in PostgreSQL. The peer pool is ~300 reproducible
+synthetic peers, with income calibrated to SingStat's 2024 median
+(S$3,615 per household member) and the other patterns stated as
+assumptions; charts are hand-built on `react-native-svg`.
+
 **Friends comparison** (`friends.service.ts` — `DECISIONS.md` #8, 3 Oct
 2026): alongside the anonymous income-range comparison, the Peers tab has a
 **Friends** view that ranks you against people you add. Friendships are
@@ -86,7 +100,7 @@ Strategy pattern for peer-group fallback).
 micro-invest-app/
 ├─ backend/
 │  ├─ prisma/schema.prisma            Design Model §4 — DB schema (Fund / Portfolio / PortfolioAllocation / FundMonthlyReturn / Plan / PlanMonth, DECISIONS.md #1's three amendments)
-│  ├─ prisma/seed.ts                  Preset portfolios (Conservative/Balanced/Growth) + synthetic peer data (income spread + active plans) — requires ingest-funds-yfinance to have run first, no offline fallback catalog any more
+│  ├─ prisma/seed.ts                  Preset portfolios (Conservative/Balanced/Growth) + ~300 reproducible synthetic peers (src/utils/syntheticPeers.ts: income calibrated to SingStat, other patterns assumptions) — requires ingest-funds-yfinance to have run first, no offline fallback catalog any more
 │  ├─ prisma/ingest-funds-yfinance.py Live yfinance ingestion, step 1/2 — fetches monthly OHLC+dividends (no API key needed); the first source confirmed to cover the SGX funds (A35/CFA/ES3/G3B) with real data — see DECISIONS.md #1 third amendment
 │  ├─ prisma/ingest-funds-yfinance.ts Live yfinance ingestion, step 2/2 — derives monthly returns from the .py output, upserts Fund + FundMonthlyReturn via Prisma
 │  ├─ src/routes/                     auth, profile, portfolio (funds + portfolios), plan, dashboard, peers, friends, insights
@@ -96,7 +110,7 @@ micro-invest-app/
 │  ├─ src/config/                     prisma.ts (PrismaClient singleton), env.ts
 │  └─ src/app.ts, src/index.ts        AppServer
 └─ mobile/
-   ├─ src/screens/                S-01 – S-07, plus FundBrowserScreen and FriendsComparison (the Peers tab's Friends view)
+   ├─ src/screens/                S-01 – S-07, plus FundBrowserScreen, PeerDashboard (the Peers view) and FriendsComparison (the Friends view); src/components/charts/ holds the SVG charts
    ├─ src/navigation/AppNavigator.tsx      root stack — WelcomeLogin/ProfileSetup pre-login, Main (tab bar) after
    ├─ src/navigation/MainTabNavigator.tsx  the tab bar itself: Dashboard, Funds, Contribution, Peers, Insights
    └─ src/api/client.ts           apiFetch wrapper
@@ -155,7 +169,9 @@ npm install
 cp .env.example .env        # already matches the docker-compose credentials
 npx prisma migrate dev
 npm run prisma:ingest-funds # pulls real fund data via yfinance (Python + yfinance package required, no API key) — run once
-npm run prisma:seed         # seeds preset portfolios (Conservative/Balanced/Growth) + synthetic peer data
+npm run prisma:seed         # seeds preset portfolios (Conservative/Balanced/Growth) + ~300 synthetic peers
+                            # add `-- --reset-synthetic` to regenerate the peers (deletes all synthetic users and
+                            # anything cascading from them, incl. a real account's friend links to demo users)
 npm run dev                 # starts on http://localhost:4000
 ```
 
@@ -226,6 +242,13 @@ original Word documents, each superseding the last within its phase:
   Data Dictionary terms (Friendship, FriendSharing, DisplayName,
   InviteCode). New scope, not a reopened TBD (`DECISIONS.md` #8). Kept
   alongside v1.6, not replacing it.
+- `Phase2_SRS_v1.8.docx` — Phase 4 addition (3 Oct 2026): **enriched peer
+  comparison** — UC-05 amended for segmentation, new FR18–FR21 (peer
+  dimensions, distribution and percentile, trajectory, allocation), a
+  minimum cell size (MIN_CELL_COUNT = 3) beside MIN_GROUP_SIZE, new Data
+  Dictionary terms, S-05 amended, and the synthetic peer population
+  described. New scope, not a reopened TBD (`DECISIONS.md` #9). Kept
+  alongside v1.7, not replacing it.
 - `FYP Roadmap.docx` — the full Phase 0–9 plan mapped to the Lab #1–#5
   sequence and semester timeline.
 - `FYP_SRS_UseCase_UI_Lab1Style.docx` — an earlier Lab #1-formatted SRS
@@ -249,12 +272,13 @@ income-based/monthly-backtest rewrite (`DECISIONS.md` #1 third amendment,
 | 5 | Peer benchmarking engine | FR09–11 | ✅ Done — income-range grouping (DECISIONS.md #2 rewrite) replacing the risk/budget/goal tiers; synthetic peer data generation now implemented (DECISIONS.md #4) |
 | 6 | Insight generation | FR12 | ✅ Done — value/Savings-Rate/Emergency-Buffer gap cards, ConsistencyScore card removed |
 | — | Friends comparison (new scope) | FR14–17 | ✅ Done — mutual friends, invite code/email only, per-metric opt-in sharing, ranked Friends view on the Peers tab (DECISIONS.md #8, SRS v1.7) |
+| — | Peer dashboard views (new scope) | FR18–21 | ✅ Done — segmentation, percentile + histogram, month-by-month trajectory, allocation panel; ~300 calibrated synthetic peers; privacy guards (min group 10, min cell 3) (DECISIONS.md #9, SRS v1.8) |
 | 7 | History, polish, NFRs | FR13 | ✅ Done — `GET /plan` returns the one active plan directly (trivial now that there's only ever one) |
 | 8 | Testing (Lab #4) | — | 🟡 Unit tests exist per-service, rewritten for the 25 Aug 2026 model — basis-path coverage of the peer-grouping widening/floor branches and equivalence-class/boundary coverage of the monthly engine — but not yet packaged as a formal Lab #4 deliverable (documented results, reflection report) |
 | 9 | Demo prep & submission | — | ⬜ Not started |
 
 There is no remaining functional gap against the SRS as of this pass —
-`Phase2_SRS_v1.6.docx` and `Phase2_SRS_v1.7.docx` each land in the same
+`Phase2_SRS_v1.6.docx`, `v1.7.docx` and `v1.8.docx` each land in the same
 pass as the code, matching every prior amendment.
 
 The old "Budget band (B1–B4) thresholds" gap is moot, not resolved:
