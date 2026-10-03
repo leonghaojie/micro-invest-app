@@ -221,5 +221,84 @@ describe("PlanService", () => {
 
       expect(result).toBeNull();
     });
+
+    it("returns null when the plan's owner has no profile", async () => {
+      mockedPrisma.plan.findUnique.mockResolvedValue({ id: "plan-1" });
+      mockedPrisma.userProfile.findUnique.mockResolvedValue(null);
+
+      expect(await planService.getActivePlan("user-1")).toBeNull();
+      expect(mockedPrisma.planMonth.upsert).not.toHaveBeenCalled();
+    });
+
+    describe("recompute-on-read", () => {
+      const storedPlan = {
+        id: "plan-1",
+        portfolioId: "pf-1",
+        contributionAmount: "100.00",
+        startMonth: new Date("2026-01-01T00:00:00Z"),
+      };
+
+      function arrange(returns: [string, number][]) {
+        mockedPrisma.plan.findUnique.mockResolvedValue(storedPlan);
+        mockedPrisma.userProfile.findUnique.mockResolvedValue({ monthlyIncome: "1000.00", monthlyExpense: "500.00" });
+        mockedPrisma.portfolio.findUnique.mockResolvedValue({
+          id: "pf-1",
+          name: "Growth",
+          userId: null,
+          allocations: [{ weightPct: "100.00", fund: { ticker: "ES3.SI", monthlyReturns: fundReturns(returns) } }],
+        });
+        mockedPrisma.planMonth.upsert.mockResolvedValue({});
+      }
+
+      afterEach(() => jest.useRealTimers());
+
+      it("derives every month from the start month up to the current month and upserts each", async () => {
+        arrange([["2026-01", 0.01], ["2026-02", 0.02], ["2026-03", 0.03]]);
+        jest.useFakeTimers().setSystemTime(new Date("2026-03-10T00:00:00Z"));
+
+        const result = await planService.getActivePlan("user-1");
+
+        expect(result!.months).toHaveLength(3);
+        expect(mockedPrisma.planMonth.upsert).toHaveBeenCalledTimes(3);
+        // upsert (not delete + recreate) so concurrent reads can't race on the unique key
+        expect(mockedPrisma.planMonth.upsert.mock.calls[0][0].where).toEqual({
+          planId_monthDate: { planId: "plan-1", monthDate: new Date("2026-01-01T00:00:00.000Z") },
+        });
+        expect(result!.finalValue).toBe(result!.months[2].endingBalance);
+      });
+
+      it("picks up a newly elapsed month on the next read (reproducible, nothing stored incrementally)", async () => {
+        arrange([["2026-01", 0.01], ["2026-02", 0.02], ["2026-03", 0.03]]);
+
+        jest.useFakeTimers().setSystemTime(new Date("2026-02-10T00:00:00Z"));
+        const february = await planService.getActivePlan("user-1");
+        jest.setSystemTime(new Date("2026-03-10T00:00:00Z"));
+        const march = await planService.getActivePlan("user-1");
+
+        expect(february!.months).toHaveLength(2);
+        expect(march!.months).toHaveLength(3);
+        // earlier months are identical between reads
+        expect(march!.months.slice(0, 2)).toEqual(february!.months);
+      });
+
+      it("stops at the fund's latest real data month when the calendar has moved past it", async () => {
+        arrange([["2026-01", 0.01], ["2026-02", 0.02]]); // data ends Feb
+        jest.useFakeTimers().setSystemTime(new Date("2026-06-01T00:00:00Z"));
+
+        const result = await planService.getActivePlan("user-1");
+
+        expect(result!.months).toHaveLength(2);
+      });
+
+      it("returns no months (and writes nothing) when the plan has not started yet", async () => {
+        arrange([["2026-01", 0.01], ["2026-02", 0.02]]);
+        jest.useFakeTimers().setSystemTime(new Date("2025-12-15T00:00:00Z"));
+
+        const result = await planService.getActivePlan("user-1");
+
+        expect(result!.months).toEqual([]);
+        expect(mockedPrisma.planMonth.upsert).not.toHaveBeenCalled();
+      });
+    });
   });
 });
