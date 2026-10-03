@@ -18,6 +18,7 @@
  * not exposed as individual records (NFR-03), which this service never
  * does.
  */
+import type { GoalType, RiskLevel } from "@prisma/client";
 import { env } from "../config/env";
 import { prisma } from "../config/prisma";
 import { HttpError } from "../utils/httpError";
@@ -25,12 +26,45 @@ import { HttpError } from "../utils/httpError";
 const STEP_START_PCT = 10; // ±10%
 const STEP_INCREMENT_PCT = 5;
 const STEP_CAP_PCT = 100; // beyond this, fall to the floor tier
+const AGE_WINDOW_YEARS = 5; // "age" dimension: within ±5 years of the user
+
+/** What "peers" can be matched on (DECISIONS.md #9). Only income widens. */
+export type PeerDimension = "income" | "age" | "risk" | "goal" | "startMonth";
+export const PEER_DIMENSIONS: readonly PeerDimension[] = ["income", "age", "risk", "goal", "startMonth"];
+
+/** Parses the `dims` query value: absent = the default (income only); an
+ * explicit empty string = no dimension (everyone); otherwise a comma list,
+ * de-duplicated and validated against the known dimensions. */
+export function parsePeerDimensions(raw: string | undefined): PeerDimension[] {
+  if (raw === undefined) return ["income"];
+  const parts = [...new Set(raw.split(",").map((p) => p.trim()).filter((p) => p.length > 0))];
+  for (const p of parts) {
+    if (!(PEER_DIMENSIONS as readonly string[]).includes(p)) {
+      throw new HttpError(400, `Unknown peer dimension "${p}". Use any of: ${PEER_DIMENSIONS.join(", ")}.`);
+    }
+  }
+  return parts as PeerDimension[];
+}
+
+export interface PeerGroupFilters {
+  age?: { lo: number; hi: number };
+  riskLevel?: RiskLevel;
+  goalType?: GoalType;
+  startMonth?: Date;
+}
 
 export interface PeerGroupAssignment {
-  bandPct: number | null; // null = floor tier ("everyone")
+  bandPct: number | null; // null = no income restriction (floor tier / income not selected)
   lo: number;
   hi: number;
   memberCount: number;
+  /** The dimensions the segment was matched on (default: income only). */
+  dims?: PeerDimension[];
+  /** The non-income filters applied, resolved from the user's own values. */
+  filters?: PeerGroupFilters;
+  /** True when an explicit selection matched fewer than MIN_GROUP_SIZE peers:
+   * every statistic must then be withheld (memberCount is internal only). */
+  suppressed?: boolean;
 }
 
 function wideningStepsPct(): number[] {
@@ -41,50 +75,116 @@ function wideningStepsPct(): number[] {
   return steps;
 }
 
-async function countInRange(userId: string, lo: number, hi: number): Promise<number> {
+/** Counts peers — other users with a profile and an active plan — matching
+ * the filters, optionally restricted to an income range. A "member" here
+ * must agree with the population peerBenchmark/peerInsights aggregate over. */
+async function countPeers(userId: string, filters: PeerGroupFilters, income?: { lo: number; hi: number }): Promise<number> {
   return prisma.userProfile.count({
     where: {
       userId: { not: userId },
-      monthlyIncome: { gte: lo, lte: hi },
-      user: { plan: { months: { some: {} } } },
-    },
-  });
-}
-
-async function countAll(userId: string): Promise<number> {
-  return prisma.userProfile.count({
-    where: {
-      userId: { not: userId },
-      user: { plan: { months: { some: {} } } },
+      ...(income ? { monthlyIncome: { gte: income.lo, lte: income.hi } } : {}),
+      ...(filters.age ? { age: { gte: filters.age.lo, lte: filters.age.hi } } : {}),
+      ...(filters.riskLevel ? { riskLevel: filters.riskLevel } : {}),
+      ...(filters.goalType ? { goalType: filters.goalType } : {}),
+      user: { plan: { months: { some: {} }, ...(filters.startMonth ? { startMonth: filters.startMonth } : {}) } },
     },
   });
 }
 
 class PeerGroupingService {
+  /** The default comparison: peers by income range only. Unchanged behaviour
+   * — used by /peers/summary and the insight cards. */
   async assignPeerGroup(userId: string): Promise<PeerGroupAssignment> {
+    return this.resolveSegment(userId, ["income"]);
+  }
+
+  /**
+   * Resolves a user-chosen segment (DECISIONS.md #9). Each selected
+   * dimension restricts peers to those matching the user's OWN value:
+   * income within ±X% (the only dimension that widens, 10% → 100% in 5-point
+   * steps until MIN_GROUP_SIZE is reached), age within ±5 years, same risk
+   * level, same goal, same plan start month.
+   *
+   * Income-only is the default and keeps the original floor tier ("everyone",
+   * returned even if small). Any richer selection that still falls short of
+   * MIN_GROUP_SIZE is SUPPRESSED instead of silently widened — the user asked
+   * for a specific group, and showing statistics over a handful of people
+   * would break the minimum-group-size privacy rule.
+   */
+  async resolveSegment(userId: string, dims: PeerDimension[]): Promise<PeerGroupAssignment> {
     const profile = await prisma.userProfile.findUnique({ where: { userId } });
     if (!profile) {
       throw new HttpError(404, "Set up your profile before comparing with peers");
     }
-    const income = Number(profile.monthlyIncome);
 
-    for (const pct of wideningStepsPct()) {
-      const lo = income * (1 - pct / 100);
-      const hi = income * (1 + pct / 100);
-      const memberCount = await countInRange(userId, lo, hi);
-      if (memberCount >= env.minGroupSize) {
-        return { bandPct: pct, lo, hi, memberCount };
+    const filters: PeerGroupFilters = {};
+    if (dims.includes("age")) {
+      filters.age = { lo: profile.age - AGE_WINDOW_YEARS, hi: profile.age + AGE_WINDOW_YEARS };
+    }
+    if (dims.includes("risk")) filters.riskLevel = profile.riskLevel;
+    if (dims.includes("goal")) filters.goalType = profile.goalType;
+    if (dims.includes("startMonth")) {
+      const plan = await prisma.plan.findUnique({ where: { userId }, select: { startMonth: true } });
+      if (!plan) throw new HttpError(400, "Start a plan before comparing by start month");
+      filters.startMonth = plan.startMonth;
+    }
+
+    const incomeOnly = dims.length === 1 && dims[0] === "income";
+    const base = { dims, filters };
+
+    if (dims.includes("income")) {
+      const income = Number(profile.monthlyIncome);
+      for (const pct of wideningStepsPct()) {
+        const lo = income * (1 - pct / 100);
+        const hi = income * (1 + pct / 100);
+        const memberCount = await countPeers(userId, filters, { lo, hi });
+        if (memberCount >= env.minGroupSize) {
+          return { ...base, bandPct: pct, lo, hi, memberCount, suppressed: false };
+        }
       }
     }
 
-    // Floor tier — everyone with a profile and an active plan, returned
-    // even if still below threshold since nothing broader is left.
-    const memberCount = await countAll(userId);
-    return { bandPct: null, lo: 0, hi: Infinity, memberCount };
+    // No income restriction (income not selected, or widening was exhausted).
+    const memberCount = await countPeers(userId, filters);
+    const unrestricted = { ...base, bandPct: null, lo: 0, hi: Infinity, memberCount };
+
+    // Original floor tier: the default income-only view always shows
+    // *something*, flagged as a small sample if need be.
+    if (incomeOnly) return { ...unrestricted, suppressed: false };
+
+    return { ...unrestricted, suppressed: memberCount < env.minGroupSize };
   }
 }
 
 export const peerGroupingService = new PeerGroupingService();
+
+/** Transparency text for a chosen segment (DECISIONS.md #9): says exactly
+ * what "peers" meant, including any widening, so the numbers can be read
+ * correctly. Never states an exact count when the segment is suppressed. */
+export function describeSegment(group: PeerGroupAssignment): string {
+  if (group.suppressed) {
+    return `Fewer than ${env.minGroupSize} peers match this selection, so no statistics are shown. Try removing a filter.`;
+  }
+
+  const dims = group.dims ?? ["income"];
+  const parts: string[] = [];
+  if (dims.includes("income") && group.bandPct !== null) parts.push(`earning within ${group.bandPct}% of your monthly income`);
+  if (group.filters?.age) parts.push(`aged ${group.filters.age.lo}–${group.filters.age.hi}`);
+  if (group.filters?.riskLevel) parts.push("with your risk level");
+  if (group.filters?.goalType) parts.push("with your goal");
+  if (group.filters?.startMonth) parts.push("who started in the same month as you");
+
+  let text = parts.length > 0 ? `Compared against peers ${parts.join(", ")}.` : "Compared against all peers.";
+
+  if (dims.includes("income")) {
+    if (group.bandPct === null) {
+      text += " Too few peers had a similar income, so income wasn't used to narrow this group.";
+    } else if (group.bandPct > STEP_START_PCT) {
+      text += ` The income range was widened to ±${group.bandPct}% to reach enough peers.`;
+    }
+  }
+  return text;
+}
 
 // UC-05 step 6 transparency text — which band width the comparison
 // actually used, since a wider band silently narrows how "peer" is

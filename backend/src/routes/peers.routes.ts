@@ -3,9 +3,11 @@
  * NFR-03: responses must only ever contain aggregated stats, never raw peer records.
  */
 import { Router } from "express";
-import { getDistribution, getSummary } from "../controllers/peers.controller";
+import { getDashboard, getDistribution, getSummary } from "../controllers/peers.controller";
 
 export const peersRouter = Router();
 
 peersRouter.get("/summary", getSummary);
 peersRouter.get("/distribution", getDistribution);
+// DECISIONS.md #9: segment-aware distribution/trajectory/allocation.
+peersRouter.get("/dashboard", getDashboard);

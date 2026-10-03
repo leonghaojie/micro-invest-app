@@ -607,6 +607,130 @@ S-07). Owner: `backend/src/services/friends.service.ts`,
 `friends_and_sharing`), `backend/prisma/seed.ts`, mobile
 `FriendsScreen.tsx`, `FriendsComparison.tsx`, `PeerComparisonScreen.tsx`.
 
+## 9. Peer dashboard views: segmentation, distribution, trajectory, allocation (3 Oct 2026)
+
+Not an SRS TBD — new scope that enriches UC-05 (decision #2's income-range
+peers remain the default). Requested directly by the user, after an
+exploration of what would make the peer comparison dashboard more
+substantial: the dashboard should **reflect peer statistics back accurately
+and richly**, whether or not that changes anyone's behaviour. (The user ruled
+out a behaviour-change framing — no nudges, no demoting outcome metrics.)
+
+**What was built** (scope chosen by the user from a longer list):
+- **Segmentation.** The user picks what "peers" means: income, age (±5
+  years), risk level, goal, same plan start month — any combination. Each
+  selected dimension restricts peers to those matching the user's *own*
+  value; only income widens (±10% → ±100% in 5-point steps, decision #2).
+- **Distribution.** A histogram of the group on the chosen metric (value,
+  return, contribution rate, savings rate, emergency buffer) with the user's
+  position, p25/median/p75, and an exact mid-rank percentile.
+- **Trajectory.** The peer median and 25th–75th percentile by *months since
+  plan start*, with the user's own series, for the three metrics that change
+  month to month (value, return, emergency buffer).
+- **Peer allocation.** Mean asset-class mix (next to the user's own), the
+  most-held funds, and average number of holdings.
+- Served by one endpoint, `GET /peers/dashboard?dims=…&metric=…`
+  (`peerInsights.service.ts`); `/peers/summary`, `/peers/distribution` and
+  the insight cards are unchanged and still use the default group.
+
+**Privacy rules — still aggregate-only (NFR-03), and tightened:**
+- `MIN_GROUP_SIZE = 10` (decision #2) now also governs *explicit* selections:
+  a segment matching fewer than 10 peers returns **no statistics and no exact
+  count** (`memberCount` is null, the message says only "fewer than 10"). The
+  old floor tier ("show everyone, flagged as small") survives only for the
+  default income-only view, where the user didn't ask for a specific group.
+- New `MIN_CELL_COUNT = 3`: a histogram bin holding 1–2 peers is merged into
+  its smaller neighbour (repeatedly); a fund appears as "held by X% of peers"
+  only if ≥3 peers hold it. Because merged bins have unequal widths, bars are
+  drawn as *density*, not raw count.
+- A trajectory month is shown only while ≥10 peers have reached it.
+- All aggregation stays in PostgreSQL (decision #5: `percentile_cont`,
+  `width_bucket`, window functions) through one shared peer-population
+  fragment, so every panel describes exactly the same group; the metric
+  expression comes from a fixed whitelist, never from request text.
+
+**A fairness issue the views surface, and how it is handled.** The "value"
+percentile compares plans of different ages — a 5-month-old plan sits low
+simply because it is young. This is a validity caveat, not a behaviour
+framing, so it is addressed by *accuracy* features: the trajectory is aligned
+by months since start (like-for-like), "same start month" is a segmentation
+dimension, and the screen says so next to the value metric.
+
+**Calibrated synthetic peers (~300, seeded, reproducible).** The previous 22
+hand-picked peers were too few for any distribution or trajectory to mean
+much. `backend/src/utils/syntheticPeers.ts` generates them; what is
+calibrated versus assumed is stated in the code and the UI footnote:
+- *Calibrated:* the income median is anchored to SingStat's median monthly
+  household employment income per household member, **S$3,615 (2024)**; shape
+  (lognormal) and the mild rise with age are modelling choices. Caveat: that
+  statistic covers all ages, not this app's young-adult audience, so it is a
+  defensible scale rather than a measured cohort.
+- *Assumptions, not measurements:* expense ratio (~62% of income), contribution
+  rate (median ~8%, capped so the wallet stays non-negative), age (21–45),
+  risk level, goal, plan length (3–24 months), and portfolio mix (1–4 funds,
+  skewed by risk level). SingStat's expenditure/income ratio (S$5,931 /
+  S$15,473 ≈ 38%) was deliberately *not* used for the expense ratio: it is
+  spending over gross household income from all sources, so it is not
+  comparable to a take-home expense ratio.
+- A bug caught by testing the generator: the first version centred the
+  income-vs-age curve on age 28 while the sampled ages average 31, so the
+  whole cohort's median landed ~10% above the anchor. Fixed by centring on
+  the cohort's mean age; the test now checks the anchor across five seeds and
+  1,000 peers each (within 7%).
+- `prisma/seed.ts` gained `--reset-synthetic` (and `--peers=N`). **Side
+  effect:** resetting deletes all synthetic users and anything cascading from
+  them — including a real account's friend links to demo users (decision #8).
+  Re-running the seed without the flag instead refreshes the synthetic plans
+  so they stay current.
+
+**Charts.** Hand-built on `react-native-svg` (Expo SDK 57's bundled version),
+the only new dependency. A bug found by running it: sizing the charts from a
+layout callback left them blank on web (a zero-height wrapper never receives
+one). They now draw in a fixed `viewBox` that scales to the container, which
+renders immediately everywhere. Two visual defects were caught in a real
+screenshot and fixed: the "You" label clipped at the axis edge, and SVG text
+falling back to a serif font on web.
+
+**Verification:** 151 backend tests (55 new: histogram merging, percentile
+rank, suppression, segmentation, parser, generator determinism and
+calibration); 160 live requests across every dimension subset × metric, each
+asserting the invariants (bin counts sum to the group, no bin under 3 after
+merging, quartiles ordered, ranks in [0, 100], trajectory k contiguous,
+allocation sums to ~100%, no fund under 3 holders, suppressed responses carry
+no statistics or count, no email/id in any response) — all held; the
+trajectory month cut-off independently re-checked in SQL (13 peers reach
+month 19, 9 reach month 20, so month 19 is shown and 20 dropped); responses
+9–42 ms against the 2-second NFR-01 target; the UI walked in the Expo web app
+(chips, metrics, suppression state, Friends toggle) with no console errors.
+
+**Known limitations (not hidden):** "same start month" is suppressed whenever
+fewer than 10 other plans share the month (about 14 per month in the current
+population, so it fails in sparse months); the peer pool is synthetic, so
+every statistic is only as meaningful as the generator's assumptions; stored
+`PlanMonth` rows for *real* peers refresh only when that peer's own plan is
+read (synthetic ones refresh on re-seed); the age window is a fixed ±5 years;
+"same funds" segmentation and benchmark/risk-metric views were not built.
+
+**SRS amended.** `Phase2_SRS_v1.8.docx` (repo root, alongside — not replacing
+— `Phase2_SRS_v1.7.docx`) adds a `[v1.8]` revision row and §1.1 note, the
+MIN_CELL_COUNT/suppression rules in §2.5, FR18–FR21 under §3.2, new Data
+Dictionary terms (peer segment, MIN_CELL_COUNT, percentile rank, trajectory,
+synthetic peer population), UC-05's amended flow and exceptions, and S-05's
+amended description — in a new orange tag, appended below the existing text,
+not overwritten (Appendices untouched, as before). Edited by anchored splice
+into `word/document.xml` (9 insertions), validated well-formed and opened via
+`python-docx` against v1.7: +7 paragraphs (exactly the 7 tagged `[v1.8]`
+paragraphs) and +2 tables.
+
+Implements: new scope beyond FR01–FR17 (SRS v1.8 adds FR18–FR21). Owner:
+`backend/src/services/peerGrouping.service.ts` (`resolveSegment`,
+`describeSegment`, `parsePeerDimensions`),
+`backend/src/services/peerInsights.service.ts`,
+`backend/src/controllers/peers.controller.ts`,
+`backend/src/utils/syntheticPeers.ts`, `backend/prisma/seed.ts`, mobile
+`PeerDashboard.tsx`, `PeerComparisonScreen.tsx`, and
+`src/components/charts/` (`Histogram`, `BandChart`, `MixBar`).
+
 ## Open items (Design Model §8, carried forward)
 
 - **`Phase2_SRS_v1.6.docx` — done, no longer open.** Produced in the same
