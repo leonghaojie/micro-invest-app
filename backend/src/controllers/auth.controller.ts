@@ -43,3 +43,12 @@ export async function resetPassword(req: Request, res: Response, next: NextFunct
     next(err);
   }
 }
+
+// Session check: reached only through requireAuth (see auth.routes.ts).
+export async function me(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    res.status(200).json({ user: await authService.getCurrentUser(req.userId!) });
+  } catch (err) {
+    next(err);
+  }
+}

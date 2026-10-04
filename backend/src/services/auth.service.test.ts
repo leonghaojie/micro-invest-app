@@ -114,4 +114,24 @@ describe("AuthService", () => {
       });
     });
   });
+  describe("getCurrentUser (session check)", () => {
+    it("returns the id and email for a real account", async () => {
+      mockedPrisma.user.findUnique.mockResolvedValue({ id: "user-1", email: "u@example.com", isSynthetic: false });
+
+      expect(await authService.getCurrentUser("user-1")).toEqual({ id: "user-1", email: "u@example.com" });
+      expect(mockedPrisma.user.findUnique).toHaveBeenCalledWith({ where: { id: "user-1" } });
+    });
+
+    it("401s when the token's user no longer exists (e.g. after a database reset)", async () => {
+      mockedPrisma.user.findUnique.mockResolvedValue(null);
+
+      await expect(authService.getCurrentUser("gone")).rejects.toMatchObject({ statusCode: 401 });
+    });
+
+    it("401s for a synthetic user, which can never hold a session", async () => {
+      mockedPrisma.user.findUnique.mockResolvedValue({ id: "s", email: "s@example.com", isSynthetic: true });
+
+      await expect(authService.getCurrentUser("s")).rejects.toMatchObject({ statusCode: 401 });
+    });
+  });
 });

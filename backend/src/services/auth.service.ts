@@ -103,6 +103,20 @@ class AuthService {
   }
 
   /**
+   * Confirms a token still belongs to a real account. requireAuth only
+   * verifies the JWT's signature, so a token outlives its user (deleted
+   * account, reset database); the mobile app calls this on launch to decide
+   * whether to show the login screen.
+   */
+  async getCurrentUser(userId: string): Promise<{ id: string; email: string }> {
+    const user = await prisma.user.findUnique({ where: { id: userId } });
+    if (!user || user.isSynthetic) {
+      throw new HttpError(401, "Account no longer exists");
+    }
+    return { id: user.id, email: user.email };
+  }
+
+  /**
    * Emails a one-time 6-digit code. Always resolves the same way whether or
    * not the email belongs to an account (no account enumeration), and never
    * waits on the mail provider, so response time doesn't give it away either.

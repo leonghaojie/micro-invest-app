@@ -42,6 +42,15 @@ export async function clearStoredAuthToken(): Promise<void> {
   await setStoredAuthToken(null);
 }
 
+// Called when an authenticated request comes back 401 (token expired, or its
+// account is gone). The navigator registers a handler that sends the user to
+// the login screen, so no screen has to deal with it individually.
+let unauthorizedHandler: (() => void) | null = null;
+
+export function setUnauthorizedHandler(handler: (() => void) | null): void {
+  unauthorizedHandler = handler;
+}
+
 export interface ApiFetchOptions {
   method?: "GET" | "POST" | "PUT" | "DELETE";
   body?: unknown;
@@ -72,6 +81,10 @@ export async function apiFetch<T>(path: string, options: ApiFetchOptions = {}): 
   const payload = contentType.includes("application/json") ? await response.json() : await response.text();
 
   if (!response.ok) {
+    if (response.status === 401 && !options.skipAuth) {
+      await clearStoredAuthToken();
+      unauthorizedHandler?.();
+    }
     throw new ApiError(response.status, payload);
   }
 

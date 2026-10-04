@@ -4,8 +4,10 @@
  * alongside each service (`*.service.test.ts`), per `FYP Roadmap.docx`
  * Phases 3–6; this file stays scoped to app-level wiring only.
  */
+import jwt from "jsonwebtoken";
 import request from "supertest";
 import { createApp } from "./app";
+import { env } from "./config/env";
 
 describe("AppServer skeleton", () => {
   const app = createApp();
@@ -30,5 +32,15 @@ describe("AppServer skeleton", () => {
     const res = await request(app).post("/auth/login").send({ email: "not-an-email" });
     expect(res.status).toBe(400);
     expect(res.body.error).not.toBe("Missing or malformed Authorization header");
+  });
+
+  it("GET /auth/me needs a token (the session check cannot be called anonymously)", async () => {
+    const missing = await request(app).get("/auth/me");
+    expect(missing.status).toBe(401);
+
+    const forged = jwt.sign({ sub: "someone" }, "not-the-real-secret");
+    const bad = await request(app).get("/auth/me").set("Authorization", `Bearer ${forged}`);
+    expect(bad.status).toBe(401);
+    expect(bad.body.error).toBe("Invalid or expired token");
   });
 });
