@@ -7,6 +7,7 @@
  */
 import { z } from "zod";
 import { prisma } from "../config/prisma";
+import { buildFundHistory, FundHistory, RANGE_KEYS } from "../utils/fundStats";
 import { HttpError } from "../utils/httpError";
 
 export interface FundSummary {
@@ -19,6 +20,20 @@ export interface FundSummary {
   monthsAvailable: number;
   earliestMonth: string | null;
   latestMonthlyReturn: number | null;
+}
+
+/** One fund's identity plus its history and statistics (DECISIONS.md #14). */
+export interface FundDetail extends FundHistory {
+  fund: {
+    id: string;
+    ticker: string;
+    name: string;
+    assetClass: string;
+    exchange: string;
+    currency: string;
+    monthsAvailable: number;
+    earliestMonth: string;
+  };
 }
 
 export interface PortfolioAllocationSummary {
@@ -48,6 +63,11 @@ const createPortfolioSchema = z.object({
 
 export type CreatePortfolioInput = z.infer<typeof createPortfolioSchema>;
 
+const fundDetailSchema = z.object({
+  id: z.string().uuid(),
+  range: z.enum(RANGE_KEYS as [string, ...string[]]).default("5y"),
+});
+
 const WEIGHT_SUM_TOLERANCE = 0.01;
 
 class PortfolioService {
@@ -68,6 +88,40 @@ class PortfolioService {
       earliestMonth: fund.monthlyReturns.length > 0 ? fund.monthlyReturns[fund.monthlyReturns.length - 1].monthDate.toISOString().slice(0, 7) : null,
       latestMonthlyReturn: fund.monthlyReturns[0] ? Number(fund.monthlyReturns[0].returnPct) : null,
     }));
+  }
+
+  /** History and statistics for one fund over a range (default 5y). Funds
+   * are shared catalog data, not per-user, so this needs no ownership check. */
+  async getFundDetail(fundId: string, range?: unknown): Promise<FundDetail> {
+    const parsed = fundDetailSchema.parse({ id: fundId, range });
+
+    const fund = await prisma.fund.findUnique({
+      where: { id: parsed.id },
+      include: { monthlyReturns: { orderBy: { monthDate: "asc" } } },
+    });
+    if (!fund) throw new HttpError(404, "Fund not found");
+    if (fund.monthlyReturns.length === 0) throw new HttpError(404, "No history available for this fund yet");
+
+    const rows = fund.monthlyReturns.map((m) => ({
+      month: m.monthDate.toISOString().slice(0, 7),
+      endPrice: Number(m.endPrice),
+      dividend: Number(m.dividendAmount),
+      returnPct: Number(m.returnPct),
+    }));
+
+    return {
+      fund: {
+        id: fund.id,
+        ticker: fund.ticker,
+        name: fund.name,
+        assetClass: fund.assetClass,
+        exchange: fund.exchange,
+        currency: fund.currency,
+        monthsAvailable: rows.length,
+        earliestMonth: rows[0].month,
+      },
+      ...buildFundHistory(rows, parsed.range as (typeof RANGE_KEYS)[number]),
+    };
   }
 
   async listPortfolios(userId: string): Promise<PortfolioSummary[]> {

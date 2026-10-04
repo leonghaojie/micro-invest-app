@@ -59,7 +59,7 @@ jest.mock("./services/peerInsights.service", () => ({
 }));
 jest.mock("./services/plan.service", () => ({ planService: { startPlan: jest.fn(), getActivePlan: jest.fn() } }));
 jest.mock("./services/portfolio.service", () => ({
-  portfolioService: { listFunds: jest.fn(), listPortfolios: jest.fn(), createPortfolio: jest.fn() },
+  portfolioService: { listFunds: jest.fn(), getFundDetail: jest.fn(), listPortfolios: jest.fn(), createPortfolio: jest.fn() },
 }));
 jest.mock("./services/profile.service", () => ({ profileService: { getProfile: jest.fn(), upsertProfile: jest.fn() } }));
 
@@ -91,6 +91,7 @@ const protectedRoutes: RouteCase[] = [
   { name: "GET /user/profile", method: "get", path: "/user/profile", fn: profileService.getProfile as jest.Mock, returns: { id: "p" }, status: 200, args: [USER_ID] },
   { name: "POST /user/profile", method: "post", path: "/user/profile", body, fn: profileService.upsertProfile as jest.Mock, returns: { id: "p" }, status: 200, args: [USER_ID, body] },
   { name: "GET /portfolio/funds", method: "get", path: "/portfolio/funds", fn: portfolioService.listFunds as jest.Mock, returns: [], status: 200, args: [] },
+  { name: "GET /portfolio/funds/:id", method: "get", path: "/portfolio/funds/abc", fn: portfolioService.getFundDetail as jest.Mock, returns: {}, status: 200, args: ["abc", undefined] },
   { name: "GET /portfolio/portfolios", method: "get", path: "/portfolio/portfolios", fn: portfolioService.listPortfolios as jest.Mock, returns: [], status: 200, args: [USER_ID] },
   { name: "POST /portfolio/portfolios", method: "post", path: "/portfolio/portfolios", body, fn: portfolioService.createPortfolio as jest.Mock, returns: { id: "pf" }, status: 201, args: [USER_ID, body] },
   { name: "POST /plan", method: "post", path: "/plan", body, fn: planService.startPlan as jest.Mock, returns: { planId: "pl" }, status: 201, args: [USER_ID, body] },

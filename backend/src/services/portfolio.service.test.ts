@@ -8,13 +8,13 @@ import { portfolioService } from "./portfolio.service";
 
 jest.mock("../config/prisma", () => ({
   prisma: {
-    fund: { findMany: jest.fn() },
+    fund: { findMany: jest.fn(), findUnique: jest.fn() },
     portfolio: { findMany: jest.fn(), create: jest.fn() },
   },
 }));
 
 const mockedPrisma = prisma as unknown as {
-  fund: { findMany: jest.Mock };
+  fund: { findMany: jest.Mock; findUnique: jest.Mock };
   portfolio: { findMany: jest.Mock; create: jest.Mock };
 };
 
@@ -197,5 +197,89 @@ describe("PortfolioService", () => {
     it("rejects an empty allocations list", async () => {
       await expect(portfolioService.createPortfolio("user-1", { name: "Empty", allocations: [] })).rejects.toThrow();
     });
+  });
+});
+
+describe("PortfolioService.getFundDetail (DECISIONS.md #14)", () => {
+  const FUND_ID = "11111111-1111-4111-8111-111111111111";
+
+  /** n consecutive months from 2024-01 as database rows. */
+  function dbRows(n: number, returnPct = "0.010000") {
+    return Array.from({ length: n }, (_, i) => ({
+      monthDate: new Date(Date.UTC(2024, i, 1)),
+      endPrice: "10.0000",
+      dividendAmount: "0.0500",
+      returnPct,
+    }));
+  }
+
+  function fundWith(rows: ReturnType<typeof dbRows>) {
+    return { id: FUND_ID, ticker: "ES3.SI", name: "SPDR STI", assetClass: "EQUITY", exchange: "SGX", currency: "SGD", monthlyReturns: rows };
+  }
+
+  it("returns the fund's identity with its history and statistics", async () => {
+    mockedPrisma.fund.findUnique.mockResolvedValue(fundWith(dbRows(24)));
+
+    const detail = await portfolioService.getFundDetail(FUND_ID, "max");
+
+    expect(detail.fund).toEqual({
+      id: FUND_ID,
+      ticker: "ES3.SI",
+      name: "SPDR STI",
+      assetClass: "EQUITY",
+      exchange: "SGX",
+      currency: "SGD",
+      monthsAvailable: 24,
+      earliestMonth: "2024-01",
+    });
+    expect(detail.range).toBe("max");
+    expect(detail.series).toHaveLength(25);
+    expect(detail.stats.totalReturnPct).toBeCloseTo((Math.pow(1.01, 24) - 1) * 100, 1);
+    expect(detail.latestPrice).toBe(10);
+  });
+
+  it("asks the database for the months oldest first, and nothing about any user", async () => {
+    mockedPrisma.fund.findUnique.mockResolvedValue(fundWith(dbRows(3)));
+    await portfolioService.getFundDetail(FUND_ID, "max");
+
+    expect(mockedPrisma.fund.findUnique).toHaveBeenCalledWith({
+      where: { id: FUND_ID },
+      include: { monthlyReturns: { orderBy: { monthDate: "asc" } } },
+    });
+  });
+
+  it("defaults to a 5 year range, or everything if the fund is younger", async () => {
+    mockedPrisma.fund.findUnique.mockResolvedValue(fundWith(dbRows(24)));
+    const young = await portfolioService.getFundDetail(FUND_ID);
+    expect(young.range).toBe("max");
+    expect(young.months).toBe(24);
+
+    mockedPrisma.fund.findUnique.mockResolvedValue(fundWith(dbRows(84)));
+    const old = await portfolioService.getFundDetail(FUND_ID);
+    expect(old.range).toBe("5y");
+    expect(old.months).toBe(60);
+  });
+
+  it("honours a requested range", async () => {
+    mockedPrisma.fund.findUnique.mockResolvedValue(fundWith(dbRows(84)));
+    expect((await portfolioService.getFundDetail(FUND_ID, "1y")).months).toBe(12);
+  });
+
+  it("404s for an unknown fund", async () => {
+    mockedPrisma.fund.findUnique.mockResolvedValue(null);
+    await expect(portfolioService.getFundDetail(FUND_ID, "max")).rejects.toMatchObject({ statusCode: 404 });
+  });
+
+  it("404s for a fund with no history yet", async () => {
+    mockedPrisma.fund.findUnique.mockResolvedValue(fundWith([]));
+    await expect(portfolioService.getFundDetail(FUND_ID, "max")).rejects.toMatchObject({ statusCode: 404 });
+  });
+
+  it("rejects a malformed id and an unknown range before touching the database", async () => {
+    mockedPrisma.fund.findUnique.mockClear();
+    await expect(portfolioService.getFundDetail("not-a-uuid", "max")).rejects.toThrow();
+    await expect(portfolioService.getFundDetail(FUND_ID, "2y")).rejects.toThrow();
+    await expect(portfolioService.getFundDetail(FUND_ID, "constructor")).rejects.toThrow();
+    expect(mockedPrisma.fund.findUnique).not.toHaveBeenCalled();
   });
 });

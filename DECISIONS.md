@@ -977,6 +977,78 @@ needs a check on a physical phone, ideally on both platforms.
 Implements: no new FR (usability, NFR-04 / UI). Owner: `mobile/src/components/KeyboardScreen.tsx`
 and the screens listed above.
 
+## 14. Fund history and statistics (4 Oct 2026)
+
+**Problem.** The Funds tab only told you a fund *exists* (ticker, asset class,
+last month's return). To decide whether to put money in, a user wants to see how
+it has actually behaved.
+
+**Decision.** Tapping a fund opens a detail screen (`FundDetailScreen`) with its
+history, built from the monthly rows we already store (start / end price,
+dividend, return — gap-free, 8 to 33 years per fund). No new data, no new table.
+
+**What it shows**, for a chosen range (1Y, 3Y, 5Y, 10Y, Max; default 5Y; only
+ranges the fund has history for are offered):
+
+| | |
+|---|---|
+| Growth of 100 | line chart; 100 compounded by each month's total return, so dividends are treated as reinvested. **Drag across it to read any month.** |
+| Key figures | total return; per-year (annualised) return; volatility; worst fall (max drawdown); best and worst month; share of up months; trailing 12-month dividend yield |
+| Month by month | the last 36 monthly returns as bars (green up, red down) |
+| Year by year | calendar-year returns, last 10, a partial year flagged |
+
+**Honest-data rules** (`backend/src/utils/fundStats.ts`, pure and unit-tested):
+- Annualised return, volatility and yield need **12+ months**; below that they
+  show "—" with a "Needs 12+ months" note rather than a misleading number.
+- A range longer than the fund's history is treated as **Max**, and the response
+  reports the range actually used.
+- Figures are in the **fund's own currency** (SGD or USD); no FX is applied, and
+  the screen says so, because a Singapore user holding a USD fund also carries
+  currency movement these charts do not show.
+- The screen states that **past performance does not predict future results**
+  and that it is information, not advice. It describes history; it ranks and
+  recommends nothing.
+
+**API.** `GET /portfolio/funds/:id?range=` — one response with the fund, the
+series, the statistics, the last 36 months and the calendar years. Funds are
+shared catalog data, so there is no per-user check. A malformed id or an unknown
+range is a 400; an unknown fund, or one with no history, a 404. The longest
+history (402 months) answers in about 8 ms.
+
+**Funds list.** Tapping a row used to *select the fund for a new portfolio*, which
+would now collide with opening it. So a row opens the detail ("View history ›")
+and a separate **+** button selects it (✓ when selected, with its weight box
+below, as before).
+
+**Verification.** Unit tests for the maths with hand-checkable cases (compounding,
+drawdown, annualisation and volatility thresholds, ranges, calendar years,
+trailing yield, edge cases), service and route tests. Beyond that, an
+**independent recomputation** straight from the stored start/end prices and
+dividends (not from my code or the stored return) for all 8 funds × 3 ranges
+agreed with the API to within 0.02 percentage points. As a real-world check,
+SPY's calendar-year total returns match the published ones (2022 −18.2%, 2023
++26.2%, 2024 +24.9%, 2019 +31.2%), and the maximum drawdowns are plausible
+(SPY −50.8%, ES3 −50.8%, VWO −61.8%). In the Expo web preview: range switching,
+drag-to-read (readouts like "Jun 2009 · 282.0"), a young fund (CFA.SI, no 10Y
+chip), and that **+** still builds a portfolio without navigating.
+
+**Limits.** One fund at a time — no side-by-side comparison, no benchmark line,
+and no "add this fund to my portfolio" button on the detail screen (use + on the
+list). Monthly data only, so no intra-month moves. Charts have no animation. Drag
+to read was exercised with a real mouse in the browser; **touch dragging on a
+phone has not been tried** (it only claims a mostly-horizontal drag, so vertical
+scrolling over the chart should still work).
+
+**SRS.** Amended in `Phase2_SRS_v1.11.docx` (new FR26–FR27 extending FR04, UC-03,
+five terms, new S-09 Fund Detail), new scope rather than a reopened TBD.
+
+Implements: extends FR04 (SRS v1.11 adds FR26–FR27). Owner:
+`backend/src/utils/fundStats.ts`, `backend/src/services/portfolio.service.ts`
+(`getFundDetail`), `backend/src/controllers/portfolio.controller.ts`,
+`backend/src/routes/portfolio.routes.ts`, mobile `FundDetailScreen.tsx`,
+`FundBrowserScreen.tsx`, `components/charts/LineChart.tsx`, `ReturnBars.tsx`,
+`navigation/AppNavigator.tsx`.
+
 ## Open items (Design Model §8, carried forward)
 
 - **`Phase2_SRS_v1.6.docx` — done, no longer open.** Produced in the same

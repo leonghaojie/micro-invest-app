@@ -10,6 +10,15 @@ export async function listFunds(req: Request, res: Response, next: NextFunction)
   }
 }
 
+export async function getFundDetail(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const result = await portfolioService.getFundDetail(req.params.id, req.query.range);
+    res.status(200).json(result);
+  } catch (err) {
+    next(err);
+  }
+}
+
 export async function listPortfolios(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const result = await portfolioService.listPortfolios(req.userId!);

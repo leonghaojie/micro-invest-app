@@ -156,7 +156,7 @@ export function FundBrowserScreen({ navigation }: Props) {
   return (
     <KeyboardScreen contentContainerStyle={styles.scrollContainer}>
       <Text style={styles.title}>Funds</Text>
-      <Text style={styles.subtitle}>Browse the fund catalog, or tap funds below to build your own portfolio.</Text>
+      <Text style={styles.subtitle}>Tap a fund to see how it has moved. Use + to add funds to a new portfolio.</Text>
 
       <View style={styles.form}>
         <Text style={styles.label}>Portfolio name</Text>
@@ -174,18 +174,35 @@ export function FundBrowserScreen({ navigation }: Props) {
             const isSelected = fund.id in weightsByFundId;
             return (
               <View key={fund.id} style={[styles.fundCard, isSelected && styles.optionButtonSelected]}>
-                <Pressable onPress={() => toggleFund(fund.id)} disabled={buildSubmitting}>
-                  <Text style={[styles.optionButtonText, isSelected && styles.optionButtonTextSelected]}>
-                    {fund.ticker} — {fund.name}
-                  </Text>
-                  <Text style={styles.fundMeta}>
-                    {fund.assetClass} · {fund.exchange} ·{" "}
-                    {fund.latestMonthlyReturn !== null
-                      ? `${(fund.latestMonthlyReturn * 100).toFixed(1)}% last month`
-                      : "no data yet"}{" "}
-                    · real data since {fund.earliestMonth ?? "—"} ({fund.monthsAvailable}mo)
-                  </Text>
-                </Pressable>
+                <View style={styles.fundRow}>
+                  <Pressable
+                    style={styles.fundMain}
+                    onPress={() => navigation.navigate("FundDetail", { fundId: fund.id, ticker: fund.ticker })}
+                    accessibilityRole="button"
+                    accessibilityLabel={`${fund.ticker} details`}
+                  >
+                    <Text style={[styles.optionButtonText, isSelected && styles.optionButtonTextSelected]}>
+                      {fund.ticker} — {fund.name}
+                    </Text>
+                    <Text style={styles.fundMeta}>
+                      {fund.assetClass} · {fund.exchange} ·{" "}
+                      {fund.latestMonthlyReturn !== null
+                        ? `${(fund.latestMonthlyReturn * 100).toFixed(1)}% last month`
+                        : "no data yet"}{" "}
+                      · real data since {fund.earliestMonth ?? "—"} ({fund.monthsAvailable}mo)
+                    </Text>
+                    <Text style={styles.viewLink}>View history ›</Text>
+                  </Pressable>
+                  <Pressable
+                    style={[styles.addButton, isSelected && styles.addButtonSelected]}
+                    onPress={() => toggleFund(fund.id)}
+                    disabled={buildSubmitting}
+                    accessibilityRole="button"
+                    accessibilityLabel={isSelected ? `Remove ${fund.ticker} from portfolio` : `Add ${fund.ticker} to portfolio`}
+                  >
+                    <Text style={[styles.addButtonText, isSelected && styles.addButtonTextSelected]}>{isSelected ? "✓" : "+"}</Text>
+                  </Pressable>
+                </View>
                 {isSelected && (
                   <TextInput
                     style={styles.weightInput}
@@ -246,6 +263,13 @@ const styles = StyleSheet.create({
   container: { flex: 1, alignItems: "center", justifyContent: "center", padding: 24, gap: 8 },
   scrollContainer: { flexGrow: 1, alignItems: "center", padding: 24, gap: 8 },
   title: { fontSize: 24, fontWeight: "700" },
+  fundRow: { flexDirection: "row", alignItems: "center", gap: 12 },
+  fundMain: { flex: 1, gap: 2 },
+  viewLink: { color: "#2e6fdb", fontSize: 12, fontWeight: "600", marginTop: 2 },
+  addButton: { width: 40, height: 40, borderRadius: 20, borderWidth: 1, borderColor: "#2e6fdb", alignItems: "center", justifyContent: "center" },
+  addButtonSelected: { backgroundColor: "#2e6fdb" },
+  addButtonText: { color: "#2e6fdb", fontSize: 22, fontWeight: "600", lineHeight: 24 },
+  addButtonTextSelected: { color: "#fff", fontSize: 18 },
   subtitle: { fontSize: 14, color: "#555", marginBottom: 16, textAlign: "center" },
   form: { width: "100%", maxWidth: 360, gap: 8 },
   label: { fontSize: 14, fontWeight: "600", marginTop: 12 },
