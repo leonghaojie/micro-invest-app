@@ -50,6 +50,10 @@ export interface PortfolioSummary {
   name: string;
   isPreset: boolean;
   riskLevel: string | null;
+  /** The earliest month a plan on this portfolio can start ("YYYY-MM"): the latest of its
+   * funds' first months, since a plan needs every fund's real return for every month. null
+   * if a fund has no data yet. */
+  earliestStartMonth: string | null;
   allocations: PortfolioAllocationSummary[];
 }
 
@@ -134,7 +138,8 @@ class PortfolioService {
       orderBy: [{ isPreset: "desc" }, { createdAt: "asc" }],
     });
 
-    return portfolios.map(toPortfolioSummary);
+    const firstMonths = await firstMonthByFund(portfolios.flatMap((p) => p.allocations.map((a) => a.fundId)));
+    return portfolios.map((p) => toPortfolioSummary(p, firstMonths));
   }
 
   async createPortfolio(userId: string, input: unknown): Promise<PortfolioSummary> {
@@ -170,7 +175,7 @@ class PortfolioService {
       include: { allocations: { include: { fund: true } } },
     });
 
-    return toPortfolioSummary(portfolio);
+    return toPortfolioSummary(portfolio, await firstMonthByFund(fundIds));
   }
 }
 
@@ -178,18 +183,31 @@ function round2(value: number): number {
   return Math.round(value * 100) / 100;
 }
 
-function toPortfolioSummary(portfolio: {
+/** Each fund's first month of real data, "YYYY-MM". A fund with no rows is absent. */
+async function firstMonthByFund(fundIds: string[]): Promise<Map<string, string>> {
+  const unique = [...new Set(fundIds)];
+  if (unique.length === 0) return new Map();
+  const rows = await prisma.fundMonthlyReturn.groupBy({ by: ["fundId"], where: { fundId: { in: unique } }, _min: { monthDate: true } });
+  return new Map(rows.filter((r) => r._min.monthDate).map((r) => [r.fundId, r._min.monthDate!.toISOString().slice(0, 7)]));
+}
+
+function toPortfolioSummary(
+  portfolio: {
   id: string;
   name: string;
   isPreset: boolean;
   riskLevel: string | null;
   allocations: { fundId: string; weightPct: unknown; fund: { ticker: string; name: string } }[];
-}): PortfolioSummary {
+  },
+  firstMonths: Map<string, string>
+): PortfolioSummary {
+  const starts = portfolio.allocations.map((a) => firstMonths.get(a.fundId));
   return {
     id: portfolio.id,
     name: portfolio.name,
     isPreset: portfolio.isPreset,
     riskLevel: portfolio.riskLevel,
+    earliestStartMonth: starts.length === 0 || starts.some((m) => m === undefined) ? null : (starts as string[]).reduce((max, m) => (m > max ? m : max)),
     allocations: portfolio.allocations.map((a) => ({
       fundId: a.fundId,
       ticker: a.fund.ticker,

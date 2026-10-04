@@ -16,7 +16,7 @@ and `DECISIONS.md` for the algorithm decisions this structure encodes.
 
 **Plan engine** (`plan.service.ts`, formerly "simulation engine" —
 `DECISIONS.md` #1 and its three dated amendments): a user picks a
-portfolio (any weighted combination of real funds from an eight-fund
+portfolio (any weighted combination of real funds from a 23-fund
 catalog — SGX + US-listed, spanning bonds/equity/REITs/EM equity/gold),
 a monthly contribution amount (capped by their profile's income), and a
 start month; the plan then runs from there through to the real current
@@ -61,6 +61,16 @@ all aggregation runs in PostgreSQL. The peer pool is ~300 reproducible
 synthetic peers, with income calibrated to SingStat's 2024 median
 (S$3,615 per household member) and the other patterns stated as
 assumptions; charts are hand-built on `react-native-svg`.
+
+**Bigger catalog and more presets** (`fund-catalog.json`, `presetPortfolios.ts` —
+`DECISIONS.md` #16, 4 Oct 2026): the Funds tab now offers 23 ETFs (global and US
+equity, Asia/emerging, bonds from T-bills to long Treasuries, REITs, gold, silver
+and broad commodities), searchable and filterable by asset class, and there are 10
+preset portfolios — the original three plus seven diversified ones (Capital
+Preservation, Singapore Income, Global 60/40, All-Weather, Dividend & Income,
+Global Equity, Asia Growth). Each portfolio shows the earliest month a plan can
+start, since funds have very different history lengths. The original presets are
+never changed, because plans recompute from them.
 
 **Automatic data updates** (`fundDataUpdate.service.ts` — `DECISIONS.md` #15,
 4 Oct 2026): the fund history keeps itself current. The backend sleeps until
@@ -138,7 +148,8 @@ Strategy pattern for peer-group fallback).
 micro-invest-app/
 ├─ backend/
 │  ├─ prisma/schema.prisma            Design Model §4 — DB schema (Fund / Portfolio / PortfolioAllocation / FundMonthlyReturn / Plan / PlanMonth, DECISIONS.md #1's three amendments)
-│  ├─ prisma/seed.ts                  Preset portfolios (Conservative/Balanced/Growth) + ~300 reproducible synthetic peers (src/utils/syntheticPeers.ts: income calibrated to SingStat, other patterns assumptions) — requires ingest-funds-yfinance to have run first, no offline fallback catalog any more
+│  ├─ prisma/seed.ts                  Preset portfolios (the original Conservative/Balanced/Growth plus seven diversified multi-fund ones, src/utils/presetPortfolios.ts) + ~300 reproducible synthetic peers (src/utils/syntheticPeers.ts: income calibrated to SingStat, other patterns assumptions) — requires ingest-funds-yfinance to have run first, no offline fallback catalog any more
+│  ├─ prisma/fund-catalog.json        The fund catalog (23 ETFs across five asset classes) - the one list the fetch and the presets both read (DECISIONS.md #16)
 │  ├─ prisma/ingest-funds-yfinance.py Live yfinance ingestion, step 1/2 — fetches monthly OHLC+dividends (no API key needed); the first source confirmed to cover the SGX funds (A35/CFA/ES3/G3B) with real data — see DECISIONS.md #1 third amendment
 │  ├─ prisma/ingest-funds-yfinance.ts Live yfinance ingestion, step 2/2 — derives monthly returns from the .py output, upserts Fund + FundMonthlyReturn via Prisma
 │  ├─ src/routes/                     auth, profile, portfolio (funds + portfolios), plan, dashboard, peers, friends, insights
@@ -210,7 +221,7 @@ npm run prisma:ingest-funds # first-time load of real fund data via yfinance (Py
                             # after that the running server keeps it current each month by itself; to update by hand:
                             #   npm run update-fund-data           (only if a completed month is missing)
                             #   npm run update-fund-data -- --force
-npm run prisma:seed         # seeds preset portfolios (Conservative/Balanced/Growth) + ~300 synthetic peers
+npm run prisma:seed         # seeds preset portfolios (10, never editing existing ones) + ~300 synthetic peers
                             # add `-- --reset-synthetic` to regenerate the peers (deletes all synthetic users and
                             # anything cascading from them, incl. a real account's friend links to demo users)
 npm run dev                 # starts on http://localhost:4000
@@ -310,6 +321,12 @@ original Word documents, each superseding the last within its phase:
   recompute plans, reject implausible data), new terms (Complete month, Data
   through), Funds screen amended. New scope, not a reopened TBD
   (`DECISIONS.md` #15). Kept alongside v1.11, not replacing it.
+- `Phase2_SRS_v1.13.docx` — Phase 4 addition (4 Oct 2026): **bigger fund
+  catalog and more presets** — new FR29–FR30 (a catalog across the five asset
+  classes with diversified presets and the original presets protected; the
+  earliest start month shown, enforced and one-tap fillable), new terms (Preset
+  portfolio, Earliest start month), S-03 amended. New scope, not a reopened TBD
+  (`DECISIONS.md` #16). Kept alongside v1.12, not replacing it.
 - `FYP Roadmap.docx` — the full Phase 0–9 plan mapped to the Lab #1–#5
   sequence and semester timeline.
 - `FYP_SRS_UseCase_UI_Lab1Style.docx` — an earlier Lab #1-formatted SRS
@@ -338,12 +355,13 @@ income-based/monthly-backtest rewrite (`DECISIONS.md` #1 third amendment,
 | — | Friends' holdings (new scope) | FR24–25 | ✅ Done — opt-in (off by default) sharing of funds and weights; Rankings / Holdings view; percentages only, custom portfolio names hidden (DECISIONS.md #12, SRS v1.10) |
 | — | Fund history (new scope) | FR26–27 | ✅ Done — fund detail screen: growth-of-100 chart with drag-to-read, ranges, key figures, monthly bars, calendar years; stats cross-checked against an independent recomputation (DECISIONS.md #14, SRS v1.11) |
 | — | Automatic data updates (new scope) | FR28 | ✅ Done — server sleeps until the start of each month (one catch-up check at startup, a few bounded retries, no polling); fetches only when a completed month is missing; validates, loads, recomputes plans. First live run took the data from July to September (8 funds, 308 plans). Needs Python + yfinance (DECISIONS.md #15, SRS v1.12) |
+| — | More funds and presets (new scope) | FR29–30 | ✅ Done — 23 funds (15 added, gap-checked), 10 presets (7 diversified; originals untouched), search + asset-class filters, earliest start month per portfolio; every preset verified live (DECISIONS.md #16, SRS v1.13) |
 | 7 | History, polish, NFRs | FR13 | ✅ Done — `GET /plan` returns the one active plan directly (trivial now that there's only ever one) |
-| 8 | Testing (Lab #4) | — | 🟡 In progress — 378 backend tests (20 suites, ~95% line coverage): per-service unit tests (basis-path coverage of the peer-grouping widening/floor branches, equivalence-class/boundary coverage of the monthly engine, reset-code limits) plus a black-box HTTP suite (`src/api.contract.test.ts`) driving every route through the real Express app — auth gate, status codes, error mapping. That suite found a real bug (malformed JSON returned 500, now 400). Still to do: package as the formal Lab #4 deliverable (documented FR-traced results, reflection report) and the coding-agent exercises |
+| 8 | Testing (Lab #4) | — | 🟡 In progress — 422 backend tests (21 suites, ~95% line coverage): per-service unit tests (basis-path coverage of the peer-grouping widening/floor branches, equivalence-class/boundary coverage of the monthly engine, reset-code limits) plus a black-box HTTP suite (`src/api.contract.test.ts`) driving every route through the real Express app — auth gate, status codes, error mapping. That suite found a real bug (malformed JSON returned 500, now 400). Still to do: package as the formal Lab #4 deliverable (documented FR-traced results, reflection report) and the coding-agent exercises |
 | 9 | Demo prep & submission | — | ⬜ Not started |
 
 There is no remaining functional gap against the SRS as of this pass —
-`Phase2_SRS_v1.6.docx`, `v1.7.docx`, `v1.8.docx`, `v1.9.docx`, `v1.10.docx`, `v1.11.docx` and `v1.12.docx` each land in the same
+`Phase2_SRS_v1.6.docx`, `v1.7.docx`, `v1.8.docx`, `v1.9.docx`, `v1.10.docx`, `v1.11.docx`, `v1.12.docx` and `v1.13.docx` each land in the same
 pass as the code, matching every prior amendment.
 
 The old "Budget band (B1–B4) thresholds" gap is moot, not resolved:

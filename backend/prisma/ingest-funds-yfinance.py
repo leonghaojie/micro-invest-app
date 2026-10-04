@@ -24,20 +24,12 @@ import yfinance as yf
 OUT_DIR = os.path.join(os.path.dirname(__file__), "yfinance-data")
 os.makedirs(OUT_DIR, exist_ok=True)
 
-# ticker, exchange code (matches Fund.exchange), name, assetClass, currency.
-# SGX three are the funds this project has always tracked (POSB
-# Invest-Saver counter list); G3B added as a second STI-tracker option;
-# SPY/AGG/VWO/GLD are the existing US catalog (prisma/seed.ts history).
-CATALOG = [
-    ("A35.SI", "SGX", "ABF Singapore Bond Index Fund ETF", "BOND", "SGD"),
-    ("CFA.SI", "SGX", "Amova/NikkoAM-StraitsTrading Asia ex Japan REIT ETF", "REIT", "SGD"),
-    ("ES3.SI", "SGX", "SPDR Straits Times Index ETF", "EQUITY", "SGD"),
-    ("G3B.SI", "SGX", "Nikko AM Singapore STI ETF", "EQUITY", "SGD"),
-    ("SPY", "US", "SPDR S&P 500 ETF Trust", "EQUITY", "USD"),
-    ("AGG", "US", "iShares Core U.S. Aggregate Bond ETF", "BOND", "USD"),
-    ("VWO", "US", "Vanguard FTSE Emerging Markets ETF", "EQUITY_EM", "USD"),
-    ("GLD", "US", "SPDR Gold Shares", "COMMODITY", "USD"),
-]
+# The fund catalog lives in fund-catalog.json (next to this file) so the preset portfolios,
+# their tests and this fetch all read one list: symbol, exchange code (matches
+# Fund.exchange), name, assetClass, currency. To add a fund, add it there; the next
+# `npm run update-fund-data -- --force` fetches it (DECISIONS.md #16).
+with open(os.path.join(os.path.dirname(__file__), "fund-catalog.json"), encoding="utf-8") as _f:
+    CATALOG = [(c["symbol"], c["exchange"], c["name"], c["assetClass"], c["currency"]) for c in json.load(_f)]
 
 
 def main():

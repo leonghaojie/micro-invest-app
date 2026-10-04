@@ -1,0 +1,29 @@
+[
+  { "symbol": "A35.SI", "exchange": "SGX", "name": "ABF Singapore Bond Index Fund ETF", "assetClass": "BOND", "currency": "SGD" },
+  { "symbol": "CFA.SI", "exchange": "SGX", "name": "Amova/NikkoAM-StraitsTrading Asia ex Japan REIT ETF", "assetClass": "REIT", "currency": "SGD" },
+  { "symbol": "ES3.SI", "exchange": "SGX", "name": "SPDR Straits Times Index ETF", "assetClass": "EQUITY", "currency": "SGD" },
+  { "symbol": "G3B.SI", "exchange": "SGX", "name": "Nikko AM Singapore STI ETF", "assetClass": "EQUITY", "currency": "SGD" },
+  { "symbol": "CLR.SI", "exchange": "SGX", "name": "Lion-Phillip S-REIT ETF", "assetClass": "REIT", "currency": "SGD" },
+  { "symbol": "MBH.SI", "exchange": "SGX", "name": "Amova SGD Investment Grade Corporate Bond ETF", "assetClass": "BOND", "currency": "SGD" },
+
+  { "symbol": "SPY", "exchange": "US", "name": "SPDR S&P 500 ETF Trust", "assetClass": "EQUITY", "currency": "USD" },
+  { "symbol": "VT", "exchange": "US", "name": "Vanguard Total World Stock ETF", "assetClass": "EQUITY", "currency": "USD" },
+  { "symbol": "QQQ", "exchange": "US", "name": "Invesco QQQ Trust (Nasdaq-100)", "assetClass": "EQUITY", "currency": "USD" },
+  { "symbol": "VEA", "exchange": "US", "name": "Vanguard FTSE Developed Markets ETF", "assetClass": "EQUITY", "currency": "USD" },
+  { "symbol": "SCHD", "exchange": "US", "name": "Schwab U.S. Dividend Equity ETF", "assetClass": "EQUITY", "currency": "USD" },
+  { "symbol": "VWO", "exchange": "US", "name": "Vanguard FTSE Emerging Markets ETF", "assetClass": "EQUITY_EM", "currency": "USD" },
+  { "symbol": "INDA", "exchange": "US", "name": "iShares MSCI India ETF", "assetClass": "EQUITY_EM", "currency": "USD" },
+  { "symbol": "MCHI", "exchange": "US", "name": "iShares MSCI China ETF", "assetClass": "EQUITY_EM", "currency": "USD" },
+
+  { "symbol": "AGG", "exchange": "US", "name": "iShares Core U.S. Aggregate Bond ETF", "assetClass": "BOND", "currency": "USD" },
+  { "symbol": "BIL", "exchange": "US", "name": "SPDR Bloomberg 1-3 Month T-Bill ETF", "assetClass": "BOND", "currency": "USD" },
+  { "symbol": "TIP", "exchange": "US", "name": "iShares TIPS Bond ETF", "assetClass": "BOND", "currency": "USD" },
+  { "symbol": "LQD", "exchange": "US", "name": "iShares iBoxx $ Investment Grade Corporate Bond ETF", "assetClass": "BOND", "currency": "USD" },
+  { "symbol": "TLT", "exchange": "US", "name": "iShares 20+ Year Treasury Bond ETF", "assetClass": "BOND", "currency": "USD" },
+
+  { "symbol": "VNQ", "exchange": "US", "name": "Vanguard Real Estate ETF", "assetClass": "REIT", "currency": "USD" },
+
+  { "symbol": "GLD", "exchange": "US", "name": "SPDR Gold Shares", "assetClass": "COMMODITY", "currency": "USD" },
+  { "symbol": "SLV", "exchange": "US", "name": "iShares Silver Trust", "assetClass": "COMMODITY", "currency": "USD" },
+  { "symbol": "DBC", "exchange": "US", "name": "Invesco DB Commodity Index Tracking Fund", "assetClass": "COMMODITY", "currency": "USD" }
+]

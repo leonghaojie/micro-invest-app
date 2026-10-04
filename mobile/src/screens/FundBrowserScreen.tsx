@@ -19,6 +19,7 @@ import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from 
 import { useFocusEffect } from "@react-navigation/native";
 import { apiFetch, ApiError } from "../api/client";
 import type { MainTabScreenProps } from "../navigation/AppNavigator";
+import { ASSET_CLASS_LABELS } from "../components/charts/MixBar";
 import { KeyboardScreen } from "../components/KeyboardScreen";
 
 type Props = MainTabScreenProps<"Funds">;
@@ -50,6 +51,11 @@ export function FundBrowserScreen({ navigation }: Props) {
   const [funds, setFunds] = useState<FundSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
+
+  // Narrowing a long list: by asset class and by a search of ticker / name. Funds picked for the
+  // new portfolio stay picked even when a filter hides them.
+  const [assetFilter, setAssetFilter] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
 
   const [newPortfolioName, setNewPortfolioName] = useState("");
   const [weightsByFundId, setWeightsByFundId] = useState<Record<string, string>>({});
@@ -101,6 +107,14 @@ export function FundBrowserScreen({ navigation }: Props) {
   // The oldest "latest month" across funds: the month every fund has data to.
   const latestMonths = funds.map((f) => f.latestMonth).filter((m): m is string => m !== null);
   const dataThrough = latestMonths.length > 0 ? longMonth(latestMonths.reduce((min, m) => (m < min ? m : min))) : null;
+
+  const assetClasses = ASSET_CLASS_ORDER.filter((c) => funds.some((f) => f.assetClass === c));
+  const needle = search.trim().toLowerCase();
+  const visibleFunds = funds.filter(
+    (f) =>
+      (assetFilter === null || f.assetClass === assetFilter) &&
+      (needle === "" || f.ticker.toLowerCase().includes(needle) || f.name.toLowerCase().includes(needle))
+  );
 
   const selectedFundIds = Object.keys(weightsByFundId);
   const weightTotal = selectedFundIds.reduce((sum, id) => sum + (Number(weightsByFundId[id]) || 0), 0);
@@ -175,8 +189,30 @@ export function FundBrowserScreen({ navigation }: Props) {
         />
 
         <Text style={styles.label}>Funds ({selectedFundIds.length} selected)</Text>
+
+        <TextInput
+          style={styles.input}
+          placeholder={`Search ${funds.length} funds by name or ticker`}
+          autoCapitalize="none"
+          autoCorrect={false}
+          value={search}
+          onChangeText={setSearch}
+        />
+        <View style={styles.filterRow}>
+          {[null, ...assetClasses].map((c) => (
+            <Pressable key={c ?? "all"} style={[styles.filterChip, assetFilter === c && styles.filterChipSelected]} onPress={() => setAssetFilter(c)} accessibilityRole="button">
+              <Text style={[styles.filterChipText, assetFilter === c && styles.filterChipTextSelected]}>{c === null ? "All" : ASSET_CLASS_LABELS[c] ?? c}</Text>
+            </Pressable>
+          ))}
+        </View>
+        <Text style={styles.fundMeta}>
+          Showing {visibleFunds.length} of {funds.length}
+          {selectedFundIds.length > 0 && visibleFunds.length < funds.length ? " · picked funds stay picked when filtered out" : ""}
+        </Text>
+        {visibleFunds.length === 0 && <Text style={styles.fundMeta}>No fund matches. Clear the search or choose another group.</Text>}
+
         <View style={styles.optionColumn}>
-          {funds.map((fund) => {
+          {visibleFunds.map((fund) => {
             const isSelected = fund.id in weightsByFundId;
             return (
               <View key={fund.id} style={[styles.fundCard, isSelected && styles.optionButtonSelected]}>
@@ -191,7 +227,7 @@ export function FundBrowserScreen({ navigation }: Props) {
                       {fund.ticker} — {fund.name}
                     </Text>
                     <Text style={styles.fundMeta}>
-                      {fund.assetClass} · {fund.exchange} ·{" "}
+                      {ASSET_CLASS_LABELS[fund.assetClass] ?? fund.assetClass} · {fund.exchange} · {fund.currency} ·{" "}
                       {fund.latestMonthlyReturn !== null
                         ? `${(fund.latestMonthlyReturn * 100).toFixed(1)}% last month`
                         : "no data yet"}{" "}
@@ -253,6 +289,9 @@ export function FundBrowserScreen({ navigation }: Props) {
   );
 }
 
+// Group order for the filter chips.
+const ASSET_CLASS_ORDER = ["EQUITY", "EQUITY_EM", "BOND", "REIT", "COMMODITY"];
+
 const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 /** "2026-09" -> "Sep 2026" */
 function longMonth(month: string): string {
@@ -278,6 +317,11 @@ const styles = StyleSheet.create({
   title: { fontSize: 24, fontWeight: "700" },
   fundRow: { flexDirection: "row", alignItems: "center", gap: 12 },
   fundMain: { flex: 1, gap: 2 },
+  filterRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  filterChip: { borderWidth: 1, borderColor: "#ccc", borderRadius: 16, paddingVertical: 5, paddingHorizontal: 12 },
+  filterChipSelected: { borderColor: "#2e6fdb", backgroundColor: "#eaf1fd" },
+  filterChipText: { color: "#333", fontSize: 13 },
+  filterChipTextSelected: { color: "#2e6fdb", fontWeight: "700" },
   viewLink: { color: "#2e6fdb", fontSize: 12, fontWeight: "600", marginTop: 2 },
   addButton: { width: 40, height: 40, borderRadius: 20, borderWidth: 1, borderColor: "#2e6fdb", alignItems: "center", justifyContent: "center" },
   addButtonSelected: { backgroundColor: "#2e6fdb" },

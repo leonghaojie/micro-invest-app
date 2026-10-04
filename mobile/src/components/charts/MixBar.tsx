@@ -15,7 +15,7 @@ export const ASSET_CLASS_LABELS: Record<string, string> = {
   EQUITY_EM: "EM equity",
   BOND: "Bonds",
   REIT: "REITs",
-  COMMODITY: "Gold",
+  COMMODITY: "Commodities",
 };
 
 export const ASSET_CLASS_COLORS: Record<string, string> = {
