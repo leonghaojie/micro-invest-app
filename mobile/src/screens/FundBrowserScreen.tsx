@@ -32,6 +32,7 @@ interface FundSummary {
   currency: string;
   monthsAvailable: number;
   earliestMonth: string | null;
+  latestMonth: string | null;
   latestMonthlyReturn: number | null;
 }
 
@@ -97,6 +98,10 @@ export function FundBrowserScreen({ navigation }: Props) {
     setWeightsByFundId((prev) => ({ ...prev, [fundId]: value }));
   }
 
+  // The oldest "latest month" across funds: the month every fund has data to.
+  const latestMonths = funds.map((f) => f.latestMonth).filter((m): m is string => m !== null);
+  const dataThrough = latestMonths.length > 0 ? longMonth(latestMonths.reduce((min, m) => (m < min ? m : min))) : null;
+
   const selectedFundIds = Object.keys(weightsByFundId);
   const weightTotal = selectedFundIds.reduce((sum, id) => sum + (Number(weightsByFundId[id]) || 0), 0);
 
@@ -157,6 +162,7 @@ export function FundBrowserScreen({ navigation }: Props) {
     <KeyboardScreen contentContainerStyle={styles.scrollContainer}>
       <Text style={styles.title}>Funds</Text>
       <Text style={styles.subtitle}>Tap a fund to see how it has moved. Use + to add funds to a new portfolio.</Text>
+      {dataThrough && <Text style={styles.dataNote}>Fund data through {dataThrough} · updates automatically each month</Text>}
 
       <View style={styles.form}>
         <Text style={styles.label}>Portfolio name</Text>
@@ -247,6 +253,13 @@ export function FundBrowserScreen({ navigation }: Props) {
   );
 }
 
+const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+/** "2026-09" -> "Sep 2026" */
+function longMonth(month: string): string {
+  const [y, m] = month.split("-");
+  return `${MONTH_NAMES[Number(m) - 1]} ${y}`;
+}
+
 function round2(value: number): number {
   return Math.round(value * 100) / 100;
 }
@@ -270,7 +283,8 @@ const styles = StyleSheet.create({
   addButtonSelected: { backgroundColor: "#2e6fdb" },
   addButtonText: { color: "#2e6fdb", fontSize: 22, fontWeight: "600", lineHeight: 24 },
   addButtonTextSelected: { color: "#fff", fontSize: 18 },
-  subtitle: { fontSize: 14, color: "#555", marginBottom: 16, textAlign: "center" },
+  subtitle: { fontSize: 14, color: "#555", marginBottom: 4, textAlign: "center" },
+  dataNote: { fontSize: 12, color: "#888", marginBottom: 12, textAlign: "center" },
   form: { width: "100%", maxWidth: 360, gap: 8 },
   label: { fontSize: 14, fontWeight: "600", marginTop: 12 },
   optionColumn: { gap: 8 },

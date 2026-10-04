@@ -48,6 +48,7 @@ describe("PortfolioService", () => {
           currency: "SGD",
           monthsAvailable: 2,
           earliestMonth: "2026-07",
+          latestMonth: "2026-08",
           latestMonthlyReturn: 0.0281,
         },
       ]);
@@ -68,7 +69,7 @@ describe("PortfolioService", () => {
 
       const result = await portfolioService.listFunds();
 
-      expect(result[0]).toEqual(expect.objectContaining({ monthsAvailable: 0, earliestMonth: null, latestMonthlyReturn: null }));
+      expect(result[0]).toEqual(expect.objectContaining({ monthsAvailable: 0, earliestMonth: null, latestMonth: null, latestMonthlyReturn: null }));
     });
   });
 

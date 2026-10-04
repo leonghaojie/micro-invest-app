@@ -1049,6 +1049,106 @@ Implements: extends FR04 (SRS v1.11 adds FR26–FR27). Owner:
 `FundBrowserScreen.tsx`, `components/charts/LineChart.tsx`, `ReturnBars.tsx`,
 `navigation/AppNavigator.tsx`.
 
+## 15. Fund data updates itself every month (4 Oct 2026)
+
+**Problem.** New months only arrived when someone ran the two ingest scripts by
+hand. The data stopped at July while it was already October, and because every
+plan, dashboard figure and peer comparison is capped at the *oldest* fund's
+latest month, the whole app was frozen there.
+
+**Decision.** The backend keeps the history current by itself.
+
+- **When: once a month, and it does not poll.** The data only changes when a
+  calendar month ends, so the scheduler (`jobs/fundDataScheduler.ts`) *sleeps*
+  until the start of the next month and wakes then — 00:30 UTC on the 1st, by
+  which time the previous month has closed on SGX (09:00 UTC) and the US
+  exchanges (~21:00 UTC). After the update it sleeps again until the month after.
+  Between wake-ups the process does nothing. (An earlier version checked every
+  6 hours; that was cheap, database-only work, but still woke the server all day
+  for nothing, so it was replaced.) Node caps one timer at about 24.8 days, so the
+  month-long sleep is split into chunks; those intermediate wake-ups only re-arm
+  the timer, they make no check.
+- **One catch-up check at startup.** A server that was off over a month-end would
+  otherwise stay stale until the next month. This check only looks at the
+  database: it works out the latest *complete* month (last month; the current one
+  is still open, UTC) and compares it with the month the laggard fund has data
+  to. If nothing is missing it stops — no network call, no writes — and goes back
+  to sleeping.
+- **If a month is missing** it runs the existing yfinance fetch
+  (`prisma/ingest-funds-yfinance.py`, a child process), loads the result, checks
+  that no fund's history has a gap, and **recomputes every user's plan** — plans
+  are stored rows rebuilt on read, and peer statistics read the stored rows, so
+  without this a real user's plan would run to September while the 300 synthetic
+  peers sat at July and every comparison would mix months.
+- **Same source and settings as the original history** (yfinance, unadjusted
+  close plus dividends), so new months are consistent with old ones.
+- Turn it off with `FUND_DATA_AUTO_UPDATE=false`; `npm run update-fund-data`
+  runs the same job by hand (`-- --force` fetches even when nothing looks
+  missing). `ingest-funds-yfinance.ts` is now a thin wrapper over the same loader.
+
+**Safeguards.**
+- *Idempotent.* New months are inserted; an existing month is rewritten only if a
+  stored value actually changed (Yahoo does restate dividends occasionally);
+  re-running changes nothing.
+- *Implausible months are rejected, not stored*: non-positive or non-finite
+  prices, or a one-month return outside −60%…+100%, are logged and skipped.
+- *One run at a time*, and the job never throws — a failure becomes a status the
+  scheduler acts on.
+- *Bounded retries, then it stops.* If Yahoo has nothing new yet (its data can lag
+  the month end by hours) or the fetch fails, it retries a few times with growing
+  gaps — after 1 h, 3 h, 6 h, 12 h and 24 h, about two days in all — and then
+  waits for next month. It never loops, so a stuck fund or an outage cannot cause
+  repeated downloads. The retry count starts afresh each month.
+- *Clear failure messages*: Python not installed (set `PYTHON_BIN`), yfinance not
+  installed (`pip install yfinance`), the script's own last output otherwise,
+  and a 5-minute timeout.
+
+**A bug found by running it for real.** The first live run reported SPY
+"49 revised" months while every other fund showed none. The cause was my change
+detection, not Yahoo: prices are stored to 4 decimal places and early S&P 500
+prices are in 1/32 steps (44.40625 is stored as 44.4063), so the rounding gap
+equalled my comparison tolerance and unchanged months looked changed. Harmless
+once (the same rounded value was rewritten) but it would have reported "changed"
+on every run and defeated the back-off. It now compares at the precision values
+are *stored* at; a regression test uses that exact price, and a forced re-run
+shows 0 revised for all 8 funds.
+
+**Result of the first real run** (the automatic path, triggered by the dev server
+restarting): data ended 2026-07, latest complete month 2026-09 → +2 months for each
+of the 8 funds (Aug, Sep), 308 plans refreshed. Checked afterwards: every fund ends
+2026-09 with no gaps; the demo plan runs 2026-03…2026-09; no stored plan stops
+before September; SPY's calendar-year returns for 2017–2025 are unchanged (so
+nothing historic was disturbed); the peer dashboard still answers, and its
+trajectory grew to 21 months. The Funds tab now says "Fund data through Sep 2026 ·
+updates automatically each month".
+
+**Limits.**
+- Needs **Python with yfinance** on the machine running the backend, and Yahoo's
+  unofficial API to be reachable. Yahoo can rate-limit or change; the job reports
+  it and retries.
+- It only runs **while the backend is running**. It checks at startup, so it
+  catches up the next time the server starts, but a server that is never started
+  never updates.
+- A month can appear only after it has ended (from the 1st, UTC); the data for a
+  just-ended month may take a few hours to show up at Yahoo, which the retries
+  above cover. **If an outage outlasts those ~2 days, the data stays one month
+  behind until the next month's check** — restart the server (the startup check
+  looks again) or run `npm run update-fund-data` to fix it sooner.
+- If the computer sleeps through a month boundary the timer fires when it wakes,
+  so the check is late but not missed.
+- A gap in a fund's history (Yahoo missing a month) is reported loudly but not
+  repaired automatically.
+- No notification beyond the server log. New funds still need adding to the
+  `CATALOG` in the Python script.
+
+**SRS.** `Phase2_SRS_v1.12.docx` (new FR28 and two terms, Funds screen amended).
+
+Implements: new scope (data currency; extends FR04). Owner:
+`backend/src/utils/fundIngest.ts`, `backend/src/services/fundDataUpdate.service.ts`,
+`backend/src/jobs/fundDataScheduler.ts`, `backend/src/jobs/pythonFetcher.ts`,
+`backend/src/index.ts`, `backend/prisma/update-fund-data.ts`,
+`backend/prisma/ingest-funds-yfinance.ts`, mobile `FundBrowserScreen.tsx`.
+
 ## Open items (Design Model §8, carried forward)
 
 - **`Phase2_SRS_v1.6.docx` — done, no longer open.** Produced in the same

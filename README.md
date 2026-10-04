@@ -29,8 +29,9 @@ project's development, to be the first source that actually covers the
 SGX-listed funds (A35/CFA/ES3/G3B) with real monthly prices and
 dividends; both EODHD and Alpha Vantage were tried first and have zero
 SGX coverage. Fully reproducible (NFR-04) — every fund's return series is
-static ingested data, never live-fetched or randomly resampled at
-simulation time. A user has one active plan at a time; starting a new one
+stored data, never live-fetched or randomly resampled at simulation time.
+It is refreshed once a month in the background (`DECISIONS.md` #15), which
+only appends newly completed months, so earlier results stay fixed. A user has one active plan at a time; starting a new one
 replaces the old. `Phase2_SRS_v1.3.docx`/`v1.4.docx`/`v1.6.docx`
 (alongside — not replacing — `v1.2.docx`) reflect the engine's three
 amendments in turn: real annual-return replay, then user-composed
@@ -60,6 +61,17 @@ all aggregation runs in PostgreSQL. The peer pool is ~300 reproducible
 synthetic peers, with income calibrated to SingStat's 2024 median
 (S$3,615 per household member) and the other patterns stated as
 assumptions; charts are hand-built on `react-native-svg`.
+
+**Automatic data updates** (`fundDataUpdate.service.ts` — `DECISIONS.md` #15,
+4 Oct 2026): the fund history keeps itself current. The backend sleeps until
+the start of each month, then fetches the month that just ended (the yfinance
+script), validates and loads it, and recomputes every plan so plans and peer
+comparisons move to the new month together. It does not poll: apart from one
+catch-up check at server start (which fetches only if a month is missing) and a
+few spaced retries if Yahoo isn't ready, it does nothing between months. Needs Python with `yfinance` on the backend machine
+(`pip install yfinance`). Run it by hand with `npm run update-fund-data`
+(`-- --force` to fetch regardless); turn it off with `FUND_DATA_AUTO_UPDATE=false`.
+The Funds tab shows how current the data is.
 
 **Fund history** (`fundStats.ts` — `DECISIONS.md` #14, 4 Oct 2026): tap any
 fund in the Funds tab to see how it has moved — growth of 100 with dividends
@@ -194,7 +206,10 @@ cd backend
 npm install
 cp .env.example .env        # already matches the docker-compose credentials
 npx prisma migrate dev
-npm run prisma:ingest-funds # pulls real fund data via yfinance (Python + yfinance package required, no API key) — run once
+npm run prisma:ingest-funds # first-time load of real fund data via yfinance (Python + yfinance package required, no API key)
+                            # after that the running server keeps it current each month by itself; to update by hand:
+                            #   npm run update-fund-data           (only if a completed month is missing)
+                            #   npm run update-fund-data -- --force
 npm run prisma:seed         # seeds preset portfolios (Conservative/Balanced/Growth) + ~300 synthetic peers
                             # add `-- --reset-synthetic` to regenerate the peers (deletes all synthetic users and
                             # anything cascading from them, incl. a real account's friend links to demo users)
@@ -290,6 +305,11 @@ original Word documents, each superseding the last within its phase:
   Maximum drawdown, Annualised return, Trailing dividend yield), new S-09 Fund
   Detail screen. New scope, not a reopened TBD (`DECISIONS.md` #14). Kept
   alongside v1.10, not replacing it.
+- `Phase2_SRS_v1.12.docx` — Phase 4 addition (4 Oct 2026): **automatic fund
+  data updates** — new FR28 (keep fund history current each completed month,
+  recompute plans, reject implausible data), new terms (Complete month, Data
+  through), Funds screen amended. New scope, not a reopened TBD
+  (`DECISIONS.md` #15). Kept alongside v1.11, not replacing it.
 - `FYP Roadmap.docx` — the full Phase 0–9 plan mapped to the Lab #1–#5
   sequence and semester timeline.
 - `FYP_SRS_UseCase_UI_Lab1Style.docx` — an earlier Lab #1-formatted SRS
@@ -317,12 +337,13 @@ income-based/monthly-backtest rewrite (`DECISIONS.md` #1 third amendment,
 | — | Password reset (new scope) | FR22–23 | ✅ Done — emailed 6-digit code via Gmail SMTP (console fallback in dev); attempt cap, expiry, no account enumeration (DECISIONS.md #10, SRS v1.9). Gmail delivery itself untested until SMTP credentials are set |
 | — | Friends' holdings (new scope) | FR24–25 | ✅ Done — opt-in (off by default) sharing of funds and weights; Rankings / Holdings view; percentages only, custom portfolio names hidden (DECISIONS.md #12, SRS v1.10) |
 | — | Fund history (new scope) | FR26–27 | ✅ Done — fund detail screen: growth-of-100 chart with drag-to-read, ranges, key figures, monthly bars, calendar years; stats cross-checked against an independent recomputation (DECISIONS.md #14, SRS v1.11) |
+| — | Automatic data updates (new scope) | FR28 | ✅ Done — server sleeps until the start of each month (one catch-up check at startup, a few bounded retries, no polling); fetches only when a completed month is missing; validates, loads, recomputes plans. First live run took the data from July to September (8 funds, 308 plans). Needs Python + yfinance (DECISIONS.md #15, SRS v1.12) |
 | 7 | History, polish, NFRs | FR13 | ✅ Done — `GET /plan` returns the one active plan directly (trivial now that there's only ever one) |
-| 8 | Testing (Lab #4) | — | 🟡 In progress — 331 backend tests (17 suites, ~95% line coverage): per-service unit tests (basis-path coverage of the peer-grouping widening/floor branches, equivalence-class/boundary coverage of the monthly engine, reset-code limits) plus a black-box HTTP suite (`src/api.contract.test.ts`) driving every route through the real Express app — auth gate, status codes, error mapping. That suite found a real bug (malformed JSON returned 500, now 400). Still to do: package as the formal Lab #4 deliverable (documented FR-traced results, reflection report) and the coding-agent exercises |
+| 8 | Testing (Lab #4) | — | 🟡 In progress — 378 backend tests (20 suites, ~95% line coverage): per-service unit tests (basis-path coverage of the peer-grouping widening/floor branches, equivalence-class/boundary coverage of the monthly engine, reset-code limits) plus a black-box HTTP suite (`src/api.contract.test.ts`) driving every route through the real Express app — auth gate, status codes, error mapping. That suite found a real bug (malformed JSON returned 500, now 400). Still to do: package as the formal Lab #4 deliverable (documented FR-traced results, reflection report) and the coding-agent exercises |
 | 9 | Demo prep & submission | — | ⬜ Not started |
 
 There is no remaining functional gap against the SRS as of this pass —
-`Phase2_SRS_v1.6.docx`, `v1.7.docx`, `v1.8.docx`, `v1.9.docx`, `v1.10.docx` and `v1.11.docx` each land in the same
+`Phase2_SRS_v1.6.docx`, `v1.7.docx`, `v1.8.docx`, `v1.9.docx`, `v1.10.docx`, `v1.11.docx` and `v1.12.docx` each land in the same
 pass as the code, matching every prior amendment.
 
 The old "Budget band (B1–B4) thresholds" gap is moot, not resolved:
