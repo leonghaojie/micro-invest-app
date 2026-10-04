@@ -839,6 +839,109 @@ Owner: `backend/src/services/auth.service.ts` (`getCurrentUser`),
 `backend/src/routes/auth.routes.ts`, mobile `navigation/AppNavigator.tsx`,
 `navigation/navigationRef.ts`, `api/client.ts`, `App.tsx`.
 
+## 12. Friends can see each other's holdings (4 Oct 2026)
+
+**Problem.** The Friends view (decision #8) ranked five numbers — value,
+return, contribution rate, savings rate, emergency buffer. Useful, but not very
+interesting: what people actually want to know about a friend is *what they are
+invested in*.
+
+**Decision.** Add **holdings** as a sixth thing a user can share: which funds
+are in their plan and each fund's weight. It is a **separate opt-in
+(`FriendSharing.shareHoldings`), off by default**, like every other flag, and
+it is checked on every request — turning it off hides the user from friends'
+Holdings view on their next load, nothing is cached.
+
+**What a friend sees** (accepted friends who opted in; see "List, then detail" below for the two endpoints):
+
+| Shown | Never shown |
+|---|---|
+| display name | email, user id |
+| fund ticker, name, asset class | currency amounts, contribution, start month |
+| each fund's weight, as a percentage | a custom portfolio's name |
+| "Balanced" / "Growth" etc. for a *preset* portfolio, else "Custom mix" | |
+| "you hold this too" on funds the viewer also holds | |
+
+- **Custom portfolio names are hidden** because they are free text the owner
+  typed ("Baby's college fund") and so can be personal. A preset's name is
+  public and is shown.
+- Percentages only, no amounts: a weight shows *what* someone holds without
+  revealing how much money they have, which the Value toggle controls
+  separately.
+- **Counts, not names, for everyone else.** Friends who keep holdings private
+  and friends who share but have no plan are returned only as counts ("1 friend
+  keeps their holdings private"). A private friend's plan is never even read.
+- The viewer's own holdings are always shown first, regardless of their own
+  toggle (same rule as the metrics: you always see your own).
+
+**List, then detail (not one long page).** The first cut returned every
+friend's full portfolio in one response and drew them all on one page. That
+doesn't scale: with 50 friends, some holding dozens of funds, it floods the page
+and the payload. So it is split in two:
+
+- `GET /friends/holdings` — the **friends list**: one summary row per friend who
+  shares (name, a friendship handle, preset name or "Custom mix", fund count,
+  funds in common with you, an asset-class mix) plus your own row and the
+  private / no-plan counts. No per-fund list, so it stays small however large the
+  portfolios are (tested with 50 friends × 60 funds: the overview carries no fund
+  rows).
+- `GET /friends/holdings/:id` — **one person's full holdings**, opened by tapping
+  them. `:id` is a friendship id, or `me`. Never a user id. Every way it can fail
+  — not your friendship, not accepted, friend keeps holdings private, friend has
+  no plan — returns the **same 404 "Holdings not available"**, so it can't be used
+  to probe who shares what, and a private friend's plan is never read.
+
+**Mobile.** The Friends view has a Rankings | Holdings selector.
+- *Holdings* is a compact list: a row per friend (name, "Balanced · 4 funds · 1 in
+  common", a small asset-class bar), your own row pinned first, a search box once
+  there are more than 8 friends, and the first 15 shown with "Show all". Tapping a
+  row opens `FriendHoldingsScreen`: an asset-class bar, then each fund with its
+  weight and a proportional bar (largest 10 first, "Show all", and a search box
+  once a portfolio has more than 15 funds). The sharing screen gains a "Holdings"
+  switch with a note that only percentages are shown.
+- *Rankings* had the same flooding problem (a 51-row board), so it now shows the
+  top 5 plus **your own row** (so you can always find yourself, with its true
+  rank) and a "Show all" toggle. The seeded demo friends share holdings (`prisma/seed.ts`) so the view
+has data; re-running the seed (no reset needed) turns it on for existing demo
+users.
+
+**Relationship to NFR-03.** This extends the consent-based exception recorded in
+#8 (named figures, only for accepted friends, only what each friend opted into).
+The anonymous peer comparison is untouched and still aggregate-only.
+
+**Limits.** The friend cap is still 50 (`MAX_FRIENDS`, decision #8), not 100; the
+list, search and paging are built to cope if it is raised.
+
+**Choices to revisit.** One toggle covers the whole portfolio (no per-fund
+hiding), and holdings are the *current plan only* — no history. Both are easy
+to change; I chose the simplest version that matches what was asked.
+
+**Verification.** Unit tests for the pure `toMemberHoldings` and
+`summarizeHoldings`, for the list's privacy (only sharers shown, private friends
+never fetched, no ids/emails/amounts/custom names, switching off takes effect
+immediately, no friends / no plan, 50 friends × 60 funds stays small) and for the
+detail's access rules (generic 404 for each failure case, a private friend's plan
+never read, `me` works without sharing), plus route tests. A live run against the real API and
+database with a throwaway user and four demo friends (one private) held every
+check: counts, ordering, weights summing to 100, "you hold this too" only on
+the viewer's own funds, no emails or ids, no amounts. Checked in the Expo web
+preview at phone size with a 30-friend account: Rankings collapse to top 5 +
+your row; the Holdings list pages at 15 with working search; a friend opens to
+their own screen and back. The detail screen's paging and search were checked
+by temporarily lowering their thresholds, because the fund catalog has only 8
+funds and so cannot produce a 10+ fund portfolio. The new switch saves correctly.
+
+**SRS.** Amended in `Phase2_SRS_v1.10.docx` (new FR24–FR25, UC-08, two terms,
+S-07 / S-05 amended, new S-08 Friend Holdings), new scope rather than a reopened TBD.
+
+Implements: new scope beyond FR01–FR23 (SRS v1.10 adds FR24–FR25). Owner:
+`backend/src/services/friends.service.ts` (`getHoldings`, `getHoldingsDetail`,
+`toMemberHoldings`, `summarizeHoldings`, `toSharingSettings`), `backend/src/controllers/friends.controller.ts`,
+`backend/src/routes/friends.routes.ts`, `backend/prisma/schema.prisma`
+(`shareHoldings`), mobile `FriendsComparison.tsx` (`HoldingsList`, `RankingsBoard`),
+`FriendHoldingsScreen.tsx`, `FriendsScreen.tsx`, `navigation/AppNavigator.tsx`,
+`components/charts/MixBar.tsx`.
+
 ## Open items (Design Model §8, carried forward)
 
 - **`Phase2_SRS_v1.6.docx` — done, no longer open.** Produced in the same

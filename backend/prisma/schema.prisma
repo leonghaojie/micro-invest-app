@@ -94,6 +94,10 @@ model FriendSharing {
   shareContributionRate Boolean @default(false)
   shareSavingsRate      Boolean @default(false)
   shareEmergencyBuffer  Boolean @default(false)
+  // DECISIONS.md #12: whether accepted friends may see which funds are in
+  // this user's plan and each fund's weight (percent only, never amounts).
+  // Off by default like every other flag here.
+  shareHoldings         Boolean @default(false)
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 

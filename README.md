@@ -81,6 +81,15 @@ consent-based exception to the aggregate-only rule (NFR-03); the anonymous
 `/peers/*` endpoints are untouched. Seeded demo users can be added with the
 codes `DEMO0001`, `DEMO0002`, … (requests to them are auto-accepted).
 
+**Friends' holdings** (`friends.service.ts` — `DECISIONS.md` #12, 4 Oct 2026):
+the Friends view has a Rankings | Holdings selector. Holdings is a compact,
+searchable list of friends; tapping one opens their own screen with what they
+invest in — their funds and each fund's weight, with an asset-class bar — and
+marks funds you hold too, so a long friends list or a big portfolio never floods
+a page (Rankings likewise show the top 5 plus your own row). It is its own opt-in
+switch, off by default, and shows percentages only: never amounts, and never a
+custom portfolio's name. Friends who keep it private are counted, not named.
+
 ## Architecture
 
 Four-layer architecture, communicating strictly downward:
@@ -261,6 +270,11 @@ original Word documents, each superseding the last within its phase:
   reset** — new FR22–FR23 (request a reset code; reset with the code), UC-01
   exceptions, S-01 amended, new Data Dictionary term. New scope, not a
   reopened TBD (`DECISIONS.md` #10). Kept alongside v1.8, not replacing it.
+- `Phase2_SRS_v1.10.docx` — Phase 4 addition (4 Oct 2026): **friends'
+  holdings** — new FR24–FR25 (share holdings; view friends' holdings), UC-08
+  amended, new Data Dictionary terms (Holdings, Custom portfolio name), S-07 and
+  the Friends view amended, new S-08 Friend Holdings screen. New scope, not a reopened TBD (`DECISIONS.md` #12).
+  Kept alongside v1.9, not replacing it.
 - `FYP Roadmap.docx` — the full Phase 0–9 plan mapped to the Lab #1–#5
   sequence and semester timeline.
 - `FYP_SRS_UseCase_UI_Lab1Style.docx` — an earlier Lab #1-formatted SRS
@@ -286,12 +300,13 @@ income-based/monthly-backtest rewrite (`DECISIONS.md` #1 third amendment,
 | — | Friends comparison (new scope) | FR14–17 | ✅ Done — mutual friends, invite code/email only, per-metric opt-in sharing, ranked Friends view on the Peers tab (DECISIONS.md #8, SRS v1.7) |
 | — | Peer dashboard views (new scope) | FR18–21 | ✅ Done — segmentation, percentile + histogram, month-by-month trajectory, allocation panel; ~300 calibrated synthetic peers; privacy guards (min group 10, min cell 3) (DECISIONS.md #9, SRS v1.8) |
 | — | Password reset (new scope) | FR22–23 | ✅ Done — emailed 6-digit code via Gmail SMTP (console fallback in dev); attempt cap, expiry, no account enumeration (DECISIONS.md #10, SRS v1.9). Gmail delivery itself untested until SMTP credentials are set |
+| — | Friends' holdings (new scope) | FR24–25 | ✅ Done — opt-in (off by default) sharing of funds and weights; Rankings / Holdings view; percentages only, custom portfolio names hidden (DECISIONS.md #12, SRS v1.10) |
 | 7 | History, polish, NFRs | FR13 | ✅ Done — `GET /plan` returns the one active plan directly (trivial now that there's only ever one) |
-| 8 | Testing (Lab #4) | — | 🟡 In progress — 256 backend tests (16 suites, ~95% line coverage): per-service unit tests (basis-path coverage of the peer-grouping widening/floor branches, equivalence-class/boundary coverage of the monthly engine, reset-code limits) plus a black-box HTTP suite (`src/api.contract.test.ts`) driving every route through the real Express app — auth gate, status codes, error mapping. That suite found a real bug (malformed JSON returned 500, now 400). Still to do: package as the formal Lab #4 deliverable (documented FR-traced results, reflection report) and the coding-agent exercises |
+| 8 | Testing (Lab #4) | — | 🟡 In progress — 294 backend tests (16 suites, ~95% line coverage): per-service unit tests (basis-path coverage of the peer-grouping widening/floor branches, equivalence-class/boundary coverage of the monthly engine, reset-code limits) plus a black-box HTTP suite (`src/api.contract.test.ts`) driving every route through the real Express app — auth gate, status codes, error mapping. That suite found a real bug (malformed JSON returned 500, now 400). Still to do: package as the formal Lab #4 deliverable (documented FR-traced results, reflection report) and the coding-agent exercises |
 | 9 | Demo prep & submission | — | ⬜ Not started |
 
 There is no remaining functional gap against the SRS as of this pass —
-`Phase2_SRS_v1.6.docx`, `v1.7.docx`, `v1.8.docx` and `v1.9.docx` each land in the same
+`Phase2_SRS_v1.6.docx`, `v1.7.docx`, `v1.8.docx`, `v1.9.docx` and `v1.10.docx` each land in the same
 pass as the code, matching every prior amendment.
 
 The old "Budget band (B1–B4) thresholds" gap is moot, not resolved:

@@ -26,10 +26,10 @@ export const ASSET_CLASS_COLORS: Record<string, string> = {
   COMMODITY: "#c9a227",
 };
 
-export function MixBar({ label, entries }: { label: string; entries: MixEntry[] }) {
+export function MixBar({ label, entries }: { label?: string; entries: MixEntry[] }) {
   return (
     <View style={styles.block}>
-      <Text style={styles.label}>{label}</Text>
+      {label ? <Text style={styles.label}>{label}</Text> : null}
       {entries.length === 0 ? (
         <Text style={styles.empty}>No plan yet</Text>
       ) : (
