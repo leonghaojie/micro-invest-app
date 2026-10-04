@@ -10,6 +10,7 @@ import { useState } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import { apiFetch, ApiError, setStoredAuthToken } from "../api/client";
 import type { RootStackScreenProps } from "../navigation/AppNavigator";
+import { KeyboardScreen } from "../components/KeyboardScreen";
 
 type Props = RootStackScreenProps<"WelcomeLogin">;
 
@@ -76,7 +77,7 @@ export function WelcomeLoginScreen({ navigation, route }: Props) {
   }
 
   return (
-    <View style={styles.container}>
+    <KeyboardScreen contentContainerStyle={styles.container}>
       <Text style={styles.title}>Micro-Invest</Text>
       <Text style={styles.subtitle}>{isLogin ? "Log in to continue" : "Create your account"}</Text>
 
@@ -142,7 +143,7 @@ export function WelcomeLoginScreen({ navigation, route }: Props) {
           </Text>
         </Pressable>
       </View>
-    </View>
+    </KeyboardScreen>
   );
 }
 
@@ -157,7 +158,7 @@ function describeError(err: unknown, isLogin: boolean): string {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, alignItems: "center", justifyContent: "center", padding: 24, gap: 8 },
+  container: { flexGrow: 1, alignItems: "center", justifyContent: "center", padding: 24, gap: 8 },
   title: { fontSize: 28, fontWeight: "700" },
   subtitle: { fontSize: 15, color: "#555", marginBottom: 16 },
   form: { width: "100%", maxWidth: 360, gap: 12 },

@@ -15,10 +15,11 @@
  * the Contribution tab's portfolio picker.
  */
 import { useCallback, useState } from "react";
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import { useFocusEffect } from "@react-navigation/native";
 import { apiFetch, ApiError } from "../api/client";
 import type { MainTabScreenProps } from "../navigation/AppNavigator";
+import { KeyboardScreen } from "../components/KeyboardScreen";
 
 type Props = MainTabScreenProps<"Funds">;
 
@@ -153,7 +154,7 @@ export function FundBrowserScreen({ navigation }: Props) {
   }
 
   return (
-    <ScrollView contentContainerStyle={styles.scrollContainer}>
+    <KeyboardScreen contentContainerStyle={styles.scrollContainer}>
       <Text style={styles.title}>Funds</Text>
       <Text style={styles.subtitle}>Browse the fund catalog, or tap funds below to build your own portfolio.</Text>
 
@@ -225,7 +226,7 @@ export function FundBrowserScreen({ navigation }: Props) {
           {buildSubmitting ? <ActivityIndicator color="#fff" /> : <Text style={styles.submitButtonText}>Save portfolio</Text>}
         </Pressable>
       </View>
-    </ScrollView>
+    </KeyboardScreen>
   );
 }
 

@@ -13,10 +13,11 @@
  * existing one (POST /plan deletes-then-creates).
  */
 import { useCallback, useEffect, useState } from "react";
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import { useFocusEffect } from "@react-navigation/native";
 import { apiFetch, ApiError } from "../api/client";
 import type { MainTabScreenProps } from "../navigation/AppNavigator";
+import { KeyboardScreen } from "../components/KeyboardScreen";
 
 type Props = MainTabScreenProps<"Contribution">;
 
@@ -183,7 +184,7 @@ export function PlanSetupScreen({ navigation }: Props) {
   const selectedPortfolio = portfolios.find((p) => p.id === selectedPortfolioId) ?? null;
 
   return (
-    <ScrollView contentContainerStyle={styles.scrollContainer}>
+    <KeyboardScreen contentContainerStyle={styles.scrollContainer}>
       <Text style={styles.title}>Your plan</Text>
       <Text style={styles.subtitle}>Pick a portfolio, a monthly contribution, and a start month.</Text>
 
@@ -257,7 +258,7 @@ export function PlanSetupScreen({ navigation }: Props) {
           )}
         </View>
       )}
-    </ScrollView>
+    </KeyboardScreen>
   );
 }
 

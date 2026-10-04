@@ -23,6 +23,7 @@ import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { apiFetch, ApiError } from "../api/client";
 import { MixBar, MixLegend } from "../components/charts/MixBar";
 import type { RootStackParamList } from "../navigation/AppNavigator";
+import { KeyboardScreen } from "../components/KeyboardScreen";
 
 interface HoldingsSummary {
   /** null for the user themselves (opened as "me"). */
@@ -166,11 +167,11 @@ export function FriendsComparison({ onManage }: { onManage: () => void }) {
 
   if (view === "holdings" && holdings) {
     return (
-      <ScrollView contentContainerStyle={styles.scrollContainer} keyboardShouldPersistTaps="handled">
+      <KeyboardScreen contentContainerStyle={styles.scrollContainer}>
         {header}
         <HoldingsList overview={holdings} />
         {footer}
-      </ScrollView>
+      </KeyboardScreen>
     );
   }
 
