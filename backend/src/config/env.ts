@@ -29,6 +29,13 @@ export const env = {
   smtpUser: process.env.SMTP_USER,
   smtpPass: process.env.SMTP_PASS,
   mailFrom: process.env.MAIL_FROM,
+  // DECISIONS.md #15: automatic monthly refresh of fund data. The server sleeps until
+  // the start of each month, then fetches and loads the month that just ended (plus
+  // one catch-up check at startup). Set FUND_DATA_AUTO_UPDATE=false to turn it off
+  // (the manual `npm run update-fund-data` still works).
+  fundDataAutoUpdate: (process.env.FUND_DATA_AUTO_UPDATE ?? "true").toLowerCase() !== "false",
+  // The fetch step is a Python script (yfinance). "python" on Windows, "python3" elsewhere.
+  pythonBin: process.env.PYTHON_BIN ?? (process.platform === "win32" ? "python" : "python3"),
   // Optional — only prisma/ingest-funds.ts needs this, not the server.
   eodhdApiKey: process.env.EODHD_API_KEY,
 };

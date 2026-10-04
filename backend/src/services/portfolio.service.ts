@@ -19,6 +19,8 @@ export interface FundSummary {
   currency: string;
   monthsAvailable: number;
   earliestMonth: string | null;
+  /** Newest month with data ("YYYY-MM"); the app shows how current the data is. */
+  latestMonth: string | null;
   latestMonthlyReturn: number | null;
 }
 
@@ -86,6 +88,7 @@ class PortfolioService {
       currency: fund.currency,
       monthsAvailable: fund.monthlyReturns.length,
       earliestMonth: fund.monthlyReturns.length > 0 ? fund.monthlyReturns[fund.monthlyReturns.length - 1].monthDate.toISOString().slice(0, 7) : null,
+      latestMonth: fund.monthlyReturns[0] ? fund.monthlyReturns[0].monthDate.toISOString().slice(0, 7) : null,
       latestMonthlyReturn: fund.monthlyReturns[0] ? Number(fund.monthlyReturns[0].returnPct) : null,
     }));
   }
