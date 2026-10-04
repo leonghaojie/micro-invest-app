@@ -942,6 +942,41 @@ Implements: new scope beyond FR01–FR23 (SRS v1.10 adds FR24–FR25). Owner:
 `FriendHoldingsScreen.tsx`, `FriendsScreen.tsx`, `navigation/AppNavigator.tsx`,
 `components/charts/MixBar.tsx`.
 
+## 13. The on-screen keyboard no longer hides the field you're typing in (4 Oct 2026)
+
+**Problem.** On a phone the keyboard covers about half the screen. Login, Forgot
+password and Profile Setup were fixed (non-scrolling) layouts, so the field being
+typed into could sit under the keyboard with no way to scroll it into view; the
+other input screens scrolled but didn't make room for the keyboard.
+
+**Decision.** One shared wrapper, `components/KeyboardScreen.tsx`, used by every
+screen with a text input (Login, Forgot password, Profile Setup, Contribution /
+plan setup, Funds, Friends settings, the Friends holdings list and a friend's
+holdings). It makes the page scroll and keeps the focused field visible:
+
+- **iOS:** `ScrollView.automaticallyAdjustKeyboardInsets` pads the scroll area by
+  the keyboard height and scrolls to the focused input.
+- **Android:** the app is edge-to-edge (Expo's default), so the window no longer
+  resizes for the keyboard; `KeyboardAvoidingView` (padding) shrinks the scroll
+  view instead.
+- **Both:** `keyboardShouldPersistTaps="handled"` (a button works on the first
+  tap while the keyboard is open) and dragging the page dismisses the keyboard.
+- Previously fixed layouts changed `flex: 1` to `flexGrow: 1` on their container,
+  so short forms stay centred but taller content can scroll. Their look at normal
+  size is unchanged.
+
+**Verified, and what wasn't.** In the Expo web preview with the window shrunk to
+about half height (a stand-in for the keyboard being open): Login and Profile
+Setup, which could not scroll before, now scroll and their last controls (Create
+an account, Continue) are reachable; at normal phone size Login looks the same;
+no new console errors on the Peers, Contribution or Funds screens. **The real
+keyboard was not exercised** — a browser has no on-screen keyboard — so the
+iOS and Android behaviour above comes from how those platform mechanisms work and
+needs a check on a physical phone, ideally on both platforms.
+
+Implements: no new FR (usability, NFR-04 / UI). Owner: `mobile/src/components/KeyboardScreen.tsx`
+and the screens listed above.
+
 ## Open items (Design Model §8, carried forward)
 
 - **`Phase2_SRS_v1.6.docx` — done, no longer open.** Produced in the same

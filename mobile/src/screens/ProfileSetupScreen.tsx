@@ -17,6 +17,7 @@ import { useEffect, useState } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import { apiFetch, ApiError } from "../api/client";
 import type { RootStackScreenProps } from "../navigation/AppNavigator";
+import { KeyboardScreen } from "../components/KeyboardScreen";
 
 type Props = RootStackScreenProps<"ProfileSetup">;
 
@@ -141,7 +142,7 @@ export function ProfileSetupScreen({ navigation }: Props) {
   }
 
   return (
-    <View style={styles.container}>
+    <KeyboardScreen contentContainerStyle={styles.container}>
       <Text style={styles.title}>Set up your profile</Text>
       <Text style={styles.subtitle}>This shapes your plan and peer comparisons.</Text>
 
@@ -216,7 +217,7 @@ export function ProfileSetupScreen({ navigation }: Props) {
           {submitting ? <ActivityIndicator color="#fff" /> : <Text style={styles.submitButtonText}>Continue</Text>}
         </Pressable>
       </View>
-    </View>
+    </KeyboardScreen>
   );
 }
 
@@ -258,7 +259,7 @@ function describeError(err: unknown): string {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, alignItems: "center", justifyContent: "center", padding: 24, gap: 8 },
+  container: { flexGrow: 1, alignItems: "center", justifyContent: "center", padding: 24, gap: 8 },
   title: { fontSize: 24, fontWeight: "700" },
   subtitle: { fontSize: 14, color: "#555", marginBottom: 16, textAlign: "center" },
   form: { width: "100%", maxWidth: 360, gap: 8 },

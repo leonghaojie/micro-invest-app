@@ -10,11 +10,12 @@
  * viewer's own holdings. Never a user id.
  */
 import { useCallback, useMemo, useState } from "react";
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import { useFocusEffect } from "@react-navigation/native";
 import { apiFetch, ApiError } from "../api/client";
 import { ASSET_CLASS_COLORS, ASSET_CLASS_LABELS, MixBar, MixLegend } from "../components/charts/MixBar";
 import type { RootStackScreenProps } from "../navigation/AppNavigator";
+import { KeyboardScreen } from "../components/KeyboardScreen";
 
 type Props = RootStackScreenProps<"FriendHoldings">;
 
@@ -102,7 +103,7 @@ export function FriendHoldingsScreen({ route }: Props) {
   const sharedCount = data.holdings.filter((h) => h.youHold).length;
 
   return (
-    <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
+    <KeyboardScreen contentContainerStyle={styles.container}>
       <View style={styles.card}>
         <Text style={styles.name}>{isMe ? `${data.displayName} (you)` : data.displayName}</Text>
         <Text style={styles.sub}>
@@ -170,7 +171,7 @@ export function FriendHoldingsScreen({ route }: Props) {
       )}
 
       <Text style={styles.note}>Weights are percentages of the portfolio — no amounts are shared.</Text>
-    </ScrollView>
+    </KeyboardScreen>
   );
 }
 

@@ -12,6 +12,7 @@ import { useState } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import { apiFetch, ApiError } from "../api/client";
 import type { RootStackScreenProps } from "../navigation/AppNavigator";
+import { KeyboardScreen } from "../components/KeyboardScreen";
 
 type Props = RootStackScreenProps<"ForgotPassword">;
 
@@ -76,7 +77,7 @@ export function ForgotPasswordScreen({ navigation, route }: Props) {
   }
 
   return (
-    <View style={styles.container}>
+    <KeyboardScreen contentContainerStyle={styles.container}>
       <Text style={styles.title}>Reset your password</Text>
       <Text style={styles.subtitle}>
         {step === "email" ? "We'll email you a 6-digit code." : `Enter the code sent to ${email.trim()}.`}
@@ -166,7 +167,7 @@ export function ForgotPasswordScreen({ navigation, route }: Props) {
           <Text style={styles.linkText}>Back to log in</Text>
         </Pressable>
       </View>
-    </View>
+    </KeyboardScreen>
   );
 }
 
@@ -179,7 +180,7 @@ function describeError(err: unknown, fallback: string): string {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, alignItems: "center", justifyContent: "center", padding: 24, gap: 8 },
+  container: { flexGrow: 1, alignItems: "center", justifyContent: "center", padding: 24, gap: 8 },
   title: { fontSize: 24, fontWeight: "700" },
   subtitle: { fontSize: 15, color: "#555", marginBottom: 16, textAlign: "center" },
   form: { width: "100%", maxWidth: 360, gap: 12 },

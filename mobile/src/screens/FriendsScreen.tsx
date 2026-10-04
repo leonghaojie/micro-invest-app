@@ -11,9 +11,10 @@
  *  - sharing is opt-in per metric, everything off by default.
  */
 import { useCallback, useState } from "react";
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from "react-native";
+import { ActivityIndicator, Pressable, StyleSheet, Switch, Text, TextInput, View } from "react-native";
 import { useFocusEffect } from "@react-navigation/native";
 import { apiFetch, ApiError } from "../api/client";
+import { KeyboardScreen } from "../components/KeyboardScreen";
 
 interface SharingSettings {
   shareValue: boolean;
@@ -164,7 +165,7 @@ export function FriendsScreen() {
   const needsName = !overview.displayName;
 
   return (
-    <ScrollView contentContainerStyle={styles.scrollContainer}>
+    <KeyboardScreen contentContainerStyle={styles.scrollContainer}>
       <View style={styles.card}>
         <Text style={styles.cardHeading}>Your invite code</Text>
         <Text selectable style={styles.code}>
@@ -285,7 +286,7 @@ export function FriendsScreen() {
       </View>
 
       {actionError && <Text style={styles.error}>{actionError}</Text>}
-    </ScrollView>
+    </KeyboardScreen>
   );
 }
 
