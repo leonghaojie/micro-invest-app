@@ -17,7 +17,10 @@ import {
   GENERIC_REQUEST_RESPONSE,
   MAX_FRIENDS,
   MemberMetrics,
+  PortfolioSnapshot,
   SharingSettings,
+  summarizeHoldings,
+  toMemberHoldings,
 } from "./friends.service";
 
 jest.mock("../config/prisma", () => ({
@@ -34,6 +37,7 @@ jest.mock("../config/prisma", () => ({
     },
     friendSharing: { upsert: jest.fn() },
     userProfile: { findMany: jest.fn() },
+    plan: { findUnique: jest.fn(), findMany: jest.fn() },
   },
 }));
 jest.mock("./plan.service", () => ({
@@ -54,6 +58,7 @@ const db = prisma as unknown as {
   };
   friendSharing: { upsert: jest.Mock };
   userProfile: { findMany: jest.Mock };
+  plan: { findUnique: jest.Mock; findMany: jest.Mock };
 };
 const plans = planService as unknown as { getActivePlan: jest.Mock };
 
@@ -63,6 +68,7 @@ const ALL_ON: SharingSettings = {
   shareContributionRate: true,
   shareSavingsRate: true,
   shareEmergencyBuffer: true,
+  shareHoldings: true,
 };
 const ALL_OFF: SharingSettings = {
   shareValue: false,
@@ -70,6 +76,7 @@ const ALL_OFF: SharingSettings = {
   shareContributionRate: false,
   shareSavingsRate: false,
   shareEmergencyBuffer: false,
+  shareHoldings: false,
 };
 
 function metrics(overrides: Partial<MemberMetrics> = {}): MemberMetrics {
@@ -434,6 +441,25 @@ describe("FriendsService.updateSettings", () => {
     expect(result.sharing.shareSavingsRate).toBe(false);
   });
 
+  it("saves the holdings toggle on its own, and it defaults to off", async () => {
+    db.friendSharing.upsert.mockResolvedValue({ ...ALL_OFF, shareHoldings: true });
+    db.user.findUnique.mockResolvedValue({ displayName: "Hao" });
+
+    const result = await friendsService.updateSettings("me", { shareHoldings: true });
+
+    expect(db.friendSharing.upsert).toHaveBeenCalledWith({
+      where: { userId: "me" },
+      create: { userId: "me", shareHoldings: true },
+      update: { shareHoldings: true },
+    });
+    expect(result.sharing.shareHoldings).toBe(true);
+    expect(result.sharing.shareValue).toBe(false); // the metric toggles are independent
+  });
+
+  it("rejects a non-boolean holdings flag", async () => {
+    await expect(friendsService.updateSettings("me", { shareHoldings: "yes" })).rejects.toThrow();
+  });
+
   it("rejects an empty or over-long display name", async () => {
     await expect(friendsService.updateSettings("me", { displayName: "   " })).rejects.toThrow();
     await expect(friendsService.updateSettings("me", { displayName: "x".repeat(31) })).rejects.toThrow();
@@ -505,5 +531,304 @@ describe("FriendsService.getComparison", () => {
 
     expect(result.friendCount).toBe(0);
     expect(result.metrics.value.rows).toEqual([]);
+  });
+});
+
+// -- Holdings (DECISIONS.md #12) ----------------------------------------
+
+const fund = (ticker: string, assetClass = "EQUITY") => ({ ticker, name: `${ticker} Fund`, assetClass });
+
+function portfolio(over: Partial<PortfolioSnapshot> = {}): PortfolioSnapshot {
+  return {
+    name: "Balanced",
+    isPreset: true,
+    allocations: [
+      { weightPct: 30, fund: fund("A35", "BOND") },
+      { weightPct: 50, fund: fund("ES3") },
+      { weightPct: 20, fund: fund("G3B") },
+    ],
+    ...over,
+  };
+}
+
+describe("toMemberHoldings", () => {
+  it("lists holdings largest first and marks the funds the viewer also holds", () => {
+    const result = toMemberHoldings("Ann", portfolio(), new Set(["ES3", "ZZZ"]));
+
+    expect(result.holdings.map((h) => [h.ticker, h.weightPct, h.youHold])).toEqual([
+      ["ES3", 50, true],
+      ["A35", 30, false],
+      ["G3B", 20, false],
+    ]);
+  });
+
+  it("breaks weight ties by ticker so the order is stable", () => {
+    const tied = portfolio({ allocations: [{ weightPct: 50, fund: fund("ZZZ") }, { weightPct: 50, fund: fund("AAA") }] });
+    expect(toMemberHoldings("Ann", tied, new Set()).holdings.map((h) => h.ticker)).toEqual(["AAA", "ZZZ"]);
+  });
+
+  it("shows a preset's name but never a custom portfolio's (free text the owner typed)", () => {
+    expect(toMemberHoldings("Ann", portfolio(), new Set()).portfolioName).toBe("Balanced");
+    expect(toMemberHoldings("Ann", portfolio({ name: "Baby's college fund", isPreset: false }), new Set()).portfolioName).toBeNull();
+  });
+});
+
+describe("summarizeHoldings", () => {
+  const member = toMemberHoldings(
+    "Ann",
+    portfolio({
+      allocations: [
+        { weightPct: 30, fund: fund("A35", "BOND") },
+        { weightPct: 25, fund: fund("ES3") },
+        { weightPct: 25, fund: fund("G3B") },
+        { weightPct: 20, fund: fund("SPY") },
+      ],
+    }),
+    new Set(["ES3", "SPY"])
+  );
+
+  it("counts funds, sums weight per asset class (largest first) and counts funds the viewer also holds", () => {
+    const summary = summarizeHoldings(member, "fs-1");
+
+    expect(summary).toMatchObject({ friendshipId: "fs-1", displayName: "Ann", portfolioName: "Balanced", fundCount: 4, sharedFundCount: 2 });
+    expect(summary.mix).toEqual([
+      { assetClass: "EQUITY", pct: 70 },
+      { assetClass: "BOND", pct: 30 },
+    ]);
+  });
+
+  it("carries no fund list (that is fetched per person, so a long list stays small)", () => {
+    expect(JSON.stringify(summarizeHoldings(member, "fs-1"))).not.toContain("ES3");
+  });
+
+  it("reports no shared funds for the viewer's own row", () => {
+    expect(summarizeHoldings(member, null)).toMatchObject({ friendshipId: null, sharedFundCount: 0 });
+  });
+});
+
+describe("FriendsService.getHoldings (friends list)", () => {
+  const dbPortfolio = (name: string, isPreset: boolean, rows: [string, string, number][]) => ({
+    name,
+    isPreset,
+    allocations: rows.map(([ticker, assetClass, w]) => ({ weightPct: String(w), fund: fund(ticker, assetClass) })),
+  });
+
+  function arrange(opts: { sharing: Record<string, boolean | null>; plans: Record<string, ReturnType<typeof dbPortfolio> | null> }) {
+    const ids = Object.keys(opts.sharing);
+    db.friendship.findMany.mockResolvedValue(ids.map((id, i) => ({ id: `fs-${i}`, requesterId: "me", addresseeId: id })));
+    db.user.findMany.mockResolvedValue(
+      ids.map((id) => ({
+        id,
+        displayName: id.replace("u-", "").replace(/^./, (c) => c.toUpperCase()),
+        sharing: opts.sharing[id] === null ? null : { shareHoldings: opts.sharing[id] },
+      }))
+    );
+    db.user.findUnique.mockResolvedValue({ displayName: "Me" });
+    db.plan.findUnique.mockResolvedValue(opts.plans.me ? { userId: "me", portfolio: opts.plans.me } : null);
+    db.plan.findMany.mockImplementation(({ where }: { where: { userId: { in: string[] } } }) =>
+      Promise.resolve(where.userId.in.filter((id) => opts.plans[id]).map((id) => ({ userId: id, portfolio: opts.plans[id] })))
+    );
+  }
+
+  it("lists only friends who opted in, counts the rest without naming them, and leaks no ids, emails, amounts or custom names", async () => {
+    arrange({
+      sharing: { "u-ann": true, "u-bob": false, "u-cat": null },
+      plans: {
+        me: dbPortfolio("Growth", true, [["ES3", "EQUITY", 100]]),
+        "u-ann": dbPortfolio("Balanced", true, [["ES3", "EQUITY", 60], ["A35", "BOND", 40]]),
+        "u-bob": dbPortfolio("Bob secret", false, [["G3B", "EQUITY", 100]]),
+        "u-cat": dbPortfolio("Cat secret", false, [["G3B", "EQUITY", 100]]),
+      },
+    });
+
+    const result = await friendsService.getHoldings("me");
+
+    expect(result.friendCount).toBe(3);
+    expect(result.friends.map((f) => f.displayName)).toEqual(["Ann"]);
+    expect(result.hiddenCount).toBe(2);
+    expect(result.noPlanCount).toBe(0);
+
+    const json = JSON.stringify(result);
+    for (const secret of ["u-ann", "u-bob", "u-cat", "@", "secret", "contribution", "amount"]) {
+      expect(json).not.toContain(secret);
+    }
+    // a private friend's plan is never even fetched
+    expect(db.plan.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { userId: { in: ["u-ann"] } } }));
+  });
+
+  it("gives each friend a friendship handle (never a user id) and a summary, not the fund list", async () => {
+    arrange({
+      sharing: { "u-ann": true },
+      plans: {
+        me: dbPortfolio("Custom", false, [["ES3", "EQUITY", 100]]),
+        "u-ann": dbPortfolio("Balanced", true, [["ES3", "EQUITY", 60], ["A35", "BOND", 40]]),
+      },
+    });
+
+    const [ann] = (await friendsService.getHoldings("me")).friends;
+
+    expect(ann).toEqual({
+      friendshipId: "fs-0",
+      displayName: "Ann",
+      portfolioName: "Balanced",
+      fundCount: 2,
+      sharedFundCount: 1,
+      mix: [
+        { assetClass: "EQUITY", pct: 60 },
+        { assetClass: "BOND", pct: 40 },
+      ],
+    });
+  });
+
+  it("always includes the viewer's own summary, even when they share nothing", async () => {
+    arrange({ sharing: { "u-ann": false }, plans: { me: dbPortfolio("Growth", true, [["ES3", "EQUITY", 100]]) } });
+
+    const result = await friendsService.getHoldings("me");
+
+    expect(result.me).toMatchObject({ displayName: "Me", portfolioName: "Growth", friendshipId: null, fundCount: 1 });
+    expect(result.friends).toEqual([]);
+    expect(result.hiddenCount).toBe(1);
+    expect(db.plan.findMany).not.toHaveBeenCalled(); // nobody shared, so no friend plans are read
+  });
+
+  it("counts a sharing friend with no plan yet, instead of naming them or failing", async () => {
+    arrange({ sharing: { "u-ann": true }, plans: { me: null, "u-ann": null } });
+
+    const result = await friendsService.getHoldings("me");
+
+    expect(result.me).toBeNull();
+    expect(result.friends).toEqual([]);
+    expect(result.noPlanCount).toBe(1);
+    expect(result.hiddenCount).toBe(0);
+  });
+
+  it("handles a user with no friends without querying for an empty id list", async () => {
+    db.friendship.findMany.mockResolvedValue([]);
+    db.user.findUnique.mockResolvedValue({ displayName: "Me" });
+    db.plan.findUnique.mockResolvedValue(null);
+
+    const result = await friendsService.getHoldings("me");
+
+    expect(result).toEqual({ friendCount: 0, me: null, friends: [], hiddenCount: 0, noPlanCount: 0 });
+    expect(db.user.findMany).not.toHaveBeenCalled();
+    expect(db.plan.findMany).not.toHaveBeenCalled();
+  });
+
+  it("stops listing a friend the moment they switch it off (nothing is cached)", async () => {
+    const plans = { "u-ann": dbPortfolio("Balanced", true, [["ES3", "EQUITY", 100]]), me: null };
+
+    arrange({ sharing: { "u-ann": true }, plans });
+    expect((await friendsService.getHoldings("me")).friends).toHaveLength(1);
+
+    arrange({ sharing: { "u-ann": false }, plans });
+    const after = await friendsService.getHoldings("me");
+    expect(after.friends).toHaveLength(0);
+    expect(after.hiddenCount).toBe(1);
+  });
+
+  it("stays small for a long friends list (one summary row each, no per-fund payload)", async () => {
+    const ids = Array.from({ length: 50 }, (_, i) => `u-f${String(i).padStart(2, "0")}`);
+    const manyFunds = Array.from({ length: 60 }, (_, i): [string, string, number] => [`T${i}`, "EQUITY", 100 / 60]);
+    arrange({
+      sharing: Object.fromEntries(ids.map((id) => [id, true])),
+      plans: { me: null, ...Object.fromEntries(ids.map((id) => [id, dbPortfolio("Custom", false, manyFunds)])) },
+    });
+
+    const result = await friendsService.getHoldings("me");
+
+    expect(result.friends).toHaveLength(50);
+    expect(result.friends[0].fundCount).toBe(60);
+    expect(JSON.stringify(result)).not.toContain("T59"); // no fund list anywhere in the overview
+  });
+});
+
+describe("FriendsService.getHoldingsDetail", () => {
+  const portfolioRow = (rows: [string, string, number][], name = "Balanced", isPreset = true) => ({
+    name,
+    isPreset,
+    allocations: rows.map(([ticker, assetClass, w]) => ({ weightPct: String(w), fund: fund(ticker, assetClass) })),
+  });
+
+  function arrange(over: {
+    link?: { requesterId: string; addresseeId: string; status: "ACCEPTED" | "PENDING" } | null;
+    friendSharing?: { shareHoldings: boolean } | null;
+    friendPlan?: ReturnType<typeof portfolioRow> | null;
+    myPlan?: ReturnType<typeof portfolioRow> | null;
+  }) {
+    db.friendship.findUnique.mockResolvedValue("link" in over ? over.link : { requesterId: "me", addresseeId: "u-ann", status: "ACCEPTED" });
+    db.user.findUnique.mockImplementation(({ where }: { where: { id: string } }) =>
+      Promise.resolve(
+        where.id === "me"
+          ? { displayName: "Me" }
+          : { displayName: "Ann", sharing: "friendSharing" in over ? over.friendSharing : { shareHoldings: true } }
+      )
+    );
+    db.plan.findUnique.mockImplementation(({ where }: { where: { userId: string } }) => {
+      const p = where.userId === "me" ? ("myPlan" in over ? over.myPlan : portfolioRow([["ES3", "EQUITY", 100]], "Growth")) : "friendPlan" in over ? over.friendPlan : portfolioRow([["ES3", "EQUITY", 60], ["A35", "BOND", 40]]);
+      return Promise.resolve(p ? { userId: where.userId, portfolio: p } : null);
+    });
+  }
+
+  const NOT_AVAILABLE = { statusCode: 404, message: "Holdings not available" };
+
+  it("returns the full holdings, largest first, with the funds the viewer also holds marked", async () => {
+    arrange({});
+
+    const result = await friendsService.getHoldingsDetail("me", "fs-1");
+
+    expect(result.displayName).toBe("Ann");
+    expect(result.portfolioName).toBe("Balanced");
+    expect(result.holdings.map((h) => [h.ticker, h.weightPct, h.youHold])).toEqual([
+      ["ES3", 60, true],
+      ["A35", 40, false],
+    ]);
+  });
+
+  it("works when the viewer is the addressee, not the requester", async () => {
+    arrange({ link: { requesterId: "u-ann", addresseeId: "me", status: "ACCEPTED" } });
+    await expect(friendsService.getHoldingsDetail("me", "fs-1")).resolves.toMatchObject({ displayName: "Ann" });
+  });
+
+  it("never exposes a custom portfolio's name", async () => {
+    arrange({ friendPlan: portfolioRow([["ES3", "EQUITY", 100]], "Baby's college fund", false) });
+    const result = await friendsService.getHoldingsDetail("me", "fs-1");
+    expect(result.portfolioName).toBeNull();
+    expect(JSON.stringify(result)).not.toContain("college");
+  });
+
+  it.each([
+    ["the friendship does not exist", { link: null }],
+    ["the friendship is still pending", { link: { requesterId: "me", addresseeId: "u-ann", status: "PENDING" as const } }],
+    ["the friendship belongs to two other people", { link: { requesterId: "u-x", addresseeId: "u-y", status: "ACCEPTED" as const } }],
+    ["the friend keeps holdings private", { friendSharing: { shareHoldings: false } }],
+    ["the friend has never set sharing", { friendSharing: null }],
+    ["the friend has no plan", { friendPlan: null }],
+  ])("gives the same 404 when %s, so it cannot be used to probe", async (_label, over) => {
+    arrange(over);
+    await expect(friendsService.getHoldingsDetail("me", "fs-1")).rejects.toMatchObject(NOT_AVAILABLE);
+  });
+
+  it("does not read a private friend's plan at all", async () => {
+    arrange({ friendSharing: { shareHoldings: false } });
+    await expect(friendsService.getHoldingsDetail("me", "fs-1")).rejects.toBeDefined();
+    expect(db.plan.findUnique).not.toHaveBeenCalledWith(expect.objectContaining({ where: { userId: "u-ann" } }));
+  });
+
+  it('opens the viewer\'s own holdings as "me", with no sharing needed', async () => {
+    arrange({});
+    const result = await friendsService.getHoldingsDetail("me", "me");
+    expect(result).toMatchObject({ displayName: "Me", portfolioName: "Growth" });
+    expect(db.friendship.findUnique).not.toHaveBeenCalled();
+  });
+
+  it('404s for "me" when the viewer has no plan', async () => {
+    arrange({ myPlan: null });
+    await expect(friendsService.getHoldingsDetail("me", "me")).rejects.toMatchObject(NOT_AVAILABLE);
+  });
+
+  it("leaks no ids, emails or amounts", async () => {
+    arrange({});
+    const json = JSON.stringify(await friendsService.getHoldingsDetail("me", "fs-1"));
+    for (const secret of ["u-ann", "@", "contribution", "amount"]) expect(json).not.toContain(secret);
   });
 });

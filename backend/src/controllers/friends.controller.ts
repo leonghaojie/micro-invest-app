@@ -52,3 +52,19 @@ export async function getComparison(req: Request, res: Response, next: NextFunct
     next(err);
   }
 }
+
+export async function getHoldings(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    res.status(200).json(await friendsService.getHoldings(req.userId!));
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function getHoldingsDetail(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    res.status(200).json(await friendsService.getHoldingsDetail(req.userId!, req.params.id));
+  } catch (err) {
+    next(err);
+  }
+}

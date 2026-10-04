@@ -28,6 +28,7 @@ import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import type { BottomTabScreenProps } from "@react-navigation/bottom-tabs";
 import { apiFetch, ApiError, clearStoredAuthToken, getStoredAuthToken, setUnauthorizedHandler } from "../api/client";
+import { FriendHoldingsScreen } from "../screens/FriendHoldingsScreen";
 import { ForgotPasswordScreen } from "../screens/ForgotPasswordScreen";
 import { FriendsScreen } from "../screens/FriendsScreen";
 import { ProfileSetupScreen } from "../screens/ProfileSetupScreen";
@@ -52,6 +53,9 @@ export type RootStackParamList = {
   Main: NavigatorScreenParams<MainTabParamList> | undefined;
   // DECISIONS.md #8: friend management, opened from the Peers tab.
   Friends: undefined;
+  // DECISIONS.md #12: one person's full holdings. friendshipId is a friendship
+  // handle (never a user id), or "me" for the viewer's own.
+  FriendHoldings: { friendshipId: string; displayName: string };
 };
 
 // Props helper for the two pre-login stack screens.
@@ -126,6 +130,11 @@ export function AppNavigator() {
       <Stack.Screen name="ProfileSetup" component={ProfileSetupScreen} options={{ title: "Set Up Profile" }} />
       <Stack.Screen name="Main" component={MainTabNavigator} options={{ headerShown: false }} />
       <Stack.Screen name="Friends" component={FriendsScreen} options={{ title: "Friends" }} />
+      <Stack.Screen
+        name="FriendHoldings"
+        component={FriendHoldingsScreen}
+        options={({ route }) => ({ title: `${route.params.displayName}'s holdings` })}
+      />
     </Stack.Navigator>
   );
 }

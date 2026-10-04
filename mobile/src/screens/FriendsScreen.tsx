@@ -21,6 +21,7 @@ interface SharingSettings {
   shareContributionRate: boolean;
   shareSavingsRate: boolean;
   shareEmergencyBuffer: boolean;
+  shareHoldings: boolean;
 }
 
 interface FriendLink {
@@ -42,6 +43,11 @@ const SHARE_OPTIONS: { key: keyof SharingSettings; label: string; hint: string }
   { key: "shareContributionRate", label: "Contribution rate", hint: "Monthly contribution as a % of your income" },
   { key: "shareSavingsRate", label: "Savings rate", hint: "(income − expense) / income" },
   { key: "shareEmergencyBuffer", label: "Emergency buffer", hint: "How many months of expenses your wallet covers" },
+  {
+    key: "shareHoldings",
+    label: "Holdings",
+    hint: "The funds in your plan and each one's weight (percentages only, never amounts). Custom portfolio names stay private.",
+  },
 ];
 
 export function FriendsScreen() {

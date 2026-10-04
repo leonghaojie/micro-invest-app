@@ -232,6 +232,7 @@ async function seedFriendDemoIdentities(): Promise<void> {
         shareContributionRate: true,
         shareSavingsRate: true,
         shareEmergencyBuffer: true,
+        shareHoldings: true,
       },
       update: {
         shareValue: true,
@@ -239,6 +240,7 @@ async function seedFriendDemoIdentities(): Promise<void> {
         shareContributionRate: true,
         shareSavingsRate: true,
         shareEmergencyBuffer: true,
+        shareHoldings: true,
       },
     });
     updated += 1;
