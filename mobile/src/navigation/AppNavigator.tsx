@@ -15,11 +15,11 @@
  *   Insights (S-06) — five sibling tabs a user jumps between directly,
  *   instead of a fixed linear order.
  *
- * Auto-login: a stored JWT (mobile/src/api/client.ts) is checked once on
- * boot; if present we assume an already-onboarded returning user (the
- * same assumption WelcomeLoginScreen's own login path already made) and
- * open straight on Main rather than making them re-enter credentials
- * every launch.
+ * Auto-login: a stored JWT (mobile/src/api/client.ts) is verified against
+ * the server (GET /auth/me) on boot. Only if the server confirms it do we
+ * assume an already-onboarded returning user (the same assumption
+ * WelcomeLoginScreen's own login path already made) and open straight on
+ * Main; a missing, expired or orphaned token lands on the login screen.
  */
 import { useEffect, useState } from "react";
 import { ActivityIndicator, View } from "react-native";
@@ -27,12 +27,13 @@ import type { CompositeScreenProps, NavigatorScreenParams } from "@react-navigat
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import type { BottomTabScreenProps } from "@react-navigation/bottom-tabs";
-import { getStoredAuthToken } from "../api/client";
+import { apiFetch, ApiError, clearStoredAuthToken, getStoredAuthToken, setUnauthorizedHandler } from "../api/client";
 import { ForgotPasswordScreen } from "../screens/ForgotPasswordScreen";
 import { FriendsScreen } from "../screens/FriendsScreen";
 import { ProfileSetupScreen } from "../screens/ProfileSetupScreen";
 import { WelcomeLoginScreen } from "../screens/WelcomeLoginScreen";
 import { MainTabNavigator } from "./MainTabNavigator";
+import { navigationRef } from "./navigationRef";
 
 export type MainTabParamList = {
   Dashboard: undefined;
@@ -71,12 +72,40 @@ export function AppNavigator() {
 
   useEffect(() => {
     let cancelled = false;
-    getStoredAuthToken().then((token) => {
-      if (!cancelled) setInitialRoute(token ? "Main" : "WelcomeLogin");
+    // A stored token only skips the login screen if the server confirms it
+    // still belongs to a real account. A token left over from an old session,
+    // an expired one, or one whose user no longer exists (e.g. after a database
+    // reset) is discarded. If the server can't be reached we can't verify, so
+    // we show the login screen rather than the dashboard.
+    async function checkSession() {
+      const token = await getStoredAuthToken();
+      if (!token) return "WelcomeLogin" as const;
+      try {
+        await apiFetch("/auth/me");
+        return "Main" as const;
+      } catch (err) {
+        if (err instanceof ApiError && err.status === 401) await clearStoredAuthToken();
+        return "WelcomeLogin" as const;
+      }
+    }
+    checkSession().then((route) => {
+      if (!cancelled) setInitialRoute(route);
     });
     return () => {
       cancelled = true;
     };
+  }, []);
+
+  // Mid-session: if any authenticated request later comes back 401 (token
+  // expired, account removed), the API client clears the token and we land on
+  // the login screen instead of leaving a broken dashboard on screen.
+  useEffect(() => {
+    setUnauthorizedHandler(() => {
+      if (navigationRef.isReady()) {
+        navigationRef.reset({ index: 0, routes: [{ name: "WelcomeLogin" }] });
+      }
+    });
+    return () => setUnauthorizedHandler(null);
   }, []);
 
   // Resolve the auto-login check before the navigator ever mounts, rather

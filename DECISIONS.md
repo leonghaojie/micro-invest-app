@@ -805,6 +805,40 @@ Implements: new scope beyond FR01–FR21 (SRS v1.9 adds FR22–FR23). Owner:
 `backend/prisma/schema.prisma` (`PasswordResetCode`), mobile
 `ForgotPasswordScreen.tsx`, `WelcomeLoginScreen.tsx`.
 
+## 11. Verify the session on launch, not just the presence of a token (4 Oct 2026)
+
+**Problem.** On launch the app opened the dashboard whenever *any* token was
+stored (`AppNavigator.tsx`), without checking it. A token left from an earlier
+session, an expired one, or one whose account no longer exists (e.g. after a
+database reset) therefore skipped the login screen and showed a broken
+dashboard. The backend couldn't catch the orphaned case either: `requireAuth`
+verifies only the JWT signature, never that the user still exists.
+
+**Decision.**
+- New `GET /auth/me` (behind `requireAuth`): returns `{user}` if the token's
+  account exists and is real, otherwise 401 "Account no longer exists".
+- On launch the app calls it. Only a confirmed session opens the dashboard;
+  no token, a rejected token (cleared from storage), or an unreachable server
+  all land on the login screen. A server that can't be reached can't confirm
+  anyone, so it fails closed rather than open.
+- Mid-session: any authenticated request that returns 401 clears the token and
+  sends the user to the login screen (`setUnauthorizedHandler` in
+  `api/client.ts`, wired through `navigationRef`), instead of leaving a broken
+  screen. Login and register are exempt (`skipAuth`).
+
+**Unchanged.** A valid session still opens straight on the dashboard, so a
+returning user isn't made to log in every launch. "Log out" is as before.
+
+**Known limitation.** Only `/auth/me` checks the user still exists; other
+routes still trust a validly signed token for its remaining lifetime. In
+practice that matters only for a deleted account, which the next launch (or
+`/auth/me`) catches.
+
+Implements: no new FR (a defect in UC-01, "authenticated user has access").
+Owner: `backend/src/services/auth.service.ts` (`getCurrentUser`),
+`backend/src/routes/auth.routes.ts`, mobile `navigation/AppNavigator.tsx`,
+`navigation/navigationRef.ts`, `api/client.ts`, `App.tsx`.
+
 ## Open items (Design Model §8, carried forward)
 
 - **`Phase2_SRS_v1.6.docx` — done, no longer open.** Produced in the same
