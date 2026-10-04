@@ -8,11 +8,12 @@
  *
  * Two concerns:
  *
- * 1. Preset portfolios — one single-fund, 100%-weight Portfolio per
- *    catalog fund (Conservative/Balanced/Growth on the three SGX funds
- *    this project has always tracked), same shape as before
- *    (DECISIONS.md #1 second amendment). Users can still build their own
- *    multi-fund Portfolio instead (portfolio.service.ts).
+ * 1. Preset portfolios — the quick-start portfolios in
+ *    src/utils/presetPortfolios.ts: the original single-fund
+ *    Conservative/Balanced/Growth plus diversified multi-fund ones
+ *    (DECISIONS.md #1 second amendment, #16). Existing presets are never
+ *    modified. Users can still build their own multi-fund Portfolio
+ *    (portfolio.service.ts).
  *
  * 2. Synthetic peer data (SRS §2.6, DECISIONS.md #4, #9) — ~300 reproducible
  *    peers from src/utils/syntheticPeers.ts, each with a profile, a custom
@@ -32,8 +33,11 @@
  *                                                    regenerate
  *      npm run prisma:seed -- --reset-synthetic --peers=500
  */
+import { readFileSync } from "fs";
+import { join } from "path";
 import { PrismaClient, RiskLevel } from "@prisma/client";
 import { planService } from "../src/services/plan.service";
+import { PRESET_PORTFOLIOS } from "../src/utils/presetPortfolios";
 import { FundInfo, generatePeerSpecs, SyntheticPeerSpec } from "../src/utils/syntheticPeers";
 
 const prisma = new PrismaClient();
@@ -59,25 +63,33 @@ async function inChunks<T>(items: T[], size: number, fn: (item: T) => Promise<vo
   }
 }
 
-const PRESET_PORTFOLIOS: { name: string; riskLevel: RiskLevel; ticker: string; exchange: string }[] = [
-  { name: "Conservative", riskLevel: RiskLevel.LOW, ticker: "A35.SI", exchange: "SGX" },
-  { name: "Balanced", riskLevel: RiskLevel.MEDIUM, ticker: "CFA.SI", exchange: "SGX" },
-  { name: "Growth", riskLevel: RiskLevel.HIGH, ticker: "ES3.SI", exchange: "SGX" },
-];
+// The preset definitions live in src/utils/presetPortfolios.ts (tested there); the fund
+// catalog, which says which exchange each ticker is on, is prisma/fund-catalog.json.
+const CATALOG: { symbol: string; exchange: string }[] = JSON.parse(readFileSync(join(__dirname, "fund-catalog.json"), "utf-8"));
+const EXCHANGE_OF = new Map(CATALOG.map((c) => [c.symbol, c.exchange]));
 
+/** Creates any preset portfolio that does not exist yet. Presets are matched by NAME and an
+ * existing one is never touched: plans point at their portfolio and are recomputed on read,
+ * so editing a preset's funds would silently rewrite those plans' results. */
 async function seedPresetPortfolios(): Promise<void> {
   let created = 0;
   for (const preset of PRESET_PORTFOLIOS) {
     const existing = await prisma.portfolio.findFirst({ where: { name: preset.name, isPreset: true } });
     if (existing) continue;
 
-    const fund = await prisma.fund.findUnique({
-      where: { ticker_exchange: { ticker: preset.ticker, exchange: preset.exchange } },
-    });
-    if (!fund) {
+    const funds = await Promise.all(
+      preset.allocations.map(async (a) => ({
+        allocation: a,
+        fund: await prisma.fund.findUnique({
+          where: { ticker_exchange: { ticker: a.ticker, exchange: EXCHANGE_OF.get(a.ticker) ?? "US" } },
+        }),
+      }))
+    );
+    const missing = funds.filter((f) => !f.fund).map((f) => f.allocation.ticker);
+    if (missing.length > 0) {
       console.warn(
-        `[seed] skipping preset "${preset.name}" — fund ${preset.ticker}.${preset.exchange} not found. ` +
-          "Run `npm run prisma:ingest-funds` first."
+        `[seed] skipping preset "${preset.name}" - fund(s) not found: ${missing.join(", ")}. ` +
+          "Run `npm run update-fund-data -- --force` first."
       );
       continue;
     }
@@ -85,10 +97,12 @@ async function seedPresetPortfolios(): Promise<void> {
     await prisma.portfolio.create({
       data: {
         name: preset.name,
-        riskLevel: preset.riskLevel,
+        riskLevel: RiskLevel[preset.riskLevel],
         isPreset: true,
         userId: null,
-        allocations: { create: [{ fundId: fund.id, weightPct: "100.00" }] },
+        allocations: {
+          create: funds.map(({ allocation, fund }) => ({ fundId: fund!.id, weightPct: allocation.weightPct.toFixed(2) })),
+        },
       },
     });
     created += 1;

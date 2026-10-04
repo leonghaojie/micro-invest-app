@@ -1139,7 +1139,7 @@ updates automatically each month".
 - A gap in a fund's history (Yahoo missing a month) is reported loudly but not
   repaired automatically.
 - No notification beyond the server log. New funds still need adding to the
-  `CATALOG` in the Python script.
+  catalog (`prisma/fund-catalog.json`; see #16) and force one fetch.
 
 **SRS.** `Phase2_SRS_v1.12.docx` (new FR28 and two terms, Funds screen amended).
 
@@ -1148,6 +1148,109 @@ Implements: new scope (data currency; extends FR04). Owner:
 `backend/src/jobs/fundDataScheduler.ts`, `backend/src/jobs/pythonFetcher.ts`,
 `backend/src/index.ts`, `backend/prisma/update-fund-data.ts`,
 `backend/prisma/ingest-funds-yfinance.ts`, mobile `FundBrowserScreen.tsx`.
+
+## 16. A bigger fund catalog and more preset portfolios (4 Oct 2026)
+
+**Problem.** The Funds tab offered 8 funds and 3 presets, and the presets were weak:
+each was a single fund, and "Balanced" was 100% one REIT ETF (which has lost money
+since 2017). There was little to browse, and nothing diversified to start from.
+
+**Funds: 8 → 23.** 15 added, chosen to fill gaps rather than duplicate (a second
+S&P 500 fund adds nothing). Each was probed against Yahoo first for a long,
+gap-free monthly history; one candidate, the S&P 500 listed on SGX (S27.SI), was
+**rejected for having gaps**, and a few others returned no data at all.
+
+| Group | Added |
+|---|---|
+| Global / US equity | VT (total world), QQQ (Nasdaq-100), VEA (developed ex-US), SCHD (US dividend) |
+| Asia / emerging | INDA (India), MCHI (China) — joining VWO |
+| Bonds, from cash-like to long | BIL (1–3 month T-bills), TIP (inflation-linked), LQD (investment-grade corporate), TLT (20+ year Treasuries), MBH.SI (SGD investment-grade corporate) |
+| Property | VNQ (US REITs), CLR.SI (Singapore REITs) |
+| Commodities | SLV (silver, from your original brief), DBC (broad commodities) |
+
+No new asset class was needed (the existing five cover it), but `COMMODITY` was
+labelled "Gold" in the app and now reads "Commodities", since it holds silver and a
+broad basket too.
+
+**One list, not two.** The catalog is now `prisma/fund-catalog.json`, read by the
+Python fetch and by the preset definitions and their tests. Before, the list lived
+in the Python script and tickers had to be kept in step by hand. To add a fund: add
+it to the JSON and run `npm run update-fund-data -- --force` once (the monthly job
+only looks at funds already in the database, so a brand-new fund needs that one
+manual fetch).
+
+**Presets: 3 → 10.** Seven diversified, multi-fund presets
+(`src/utils/presetPortfolios.ts`):
+
+| Preset | Risk | Mix |
+|---|---|---|
+| Capital Preservation | Low | BIL 40, AGG 30, A35.SI 20, GLD 10 |
+| Singapore Income | Medium | A35.SI 30, ES3.SI 30, MBH.SI 20, CLR.SI 20 (all SGD) |
+| Global 60/40 | Medium | VT 60, AGG 40 |
+| All-Weather | Medium | TLT 40, VT 30, AGG 15, GLD 8, DBC 7 |
+| Dividend & Income | Medium | SCHD 35, LQD 25, VNQ 20, CLR.SI 20 |
+| Global Equity | High | VT 60, QQQ 25, VWO 15 |
+| Asia Growth | High | ES3.SI, MCHI, INDA, VWO at 25 each |
+
+**The original three presets are deliberately left exactly as they were.** A plan
+points at its portfolio and is recomputed on read, so changing a preset's funds
+would silently rewrite the results of every plan already using it. A test pins
+their composition, and the seed matches presets by name and never edits an
+existing one. (They remain a weak starting point — "Balanced" is still one REIT
+ETF. Renaming them to say so, or retiring them for new users, is a choice for you;
+nothing here forces it.)
+
+**Earliest start month.** With funds of very different ages (SPY from 1993, the
+S-REIT ETF from 2017), a portfolio can only start where *all* its funds have data,
+and the app used to say so only after you tried (a 422). Each portfolio now reports
+`earliestStartMonth` (the latest of its funds' first months, one query for all
+portfolios), the plan screen shows "Data from Sep 2018" on each card, offers a
+one-tap "Earliest for this portfolio", and refuses an earlier month with a clear
+message before calling the server.
+
+**Funds list.** 23 funds in one scroll would repeat the problem the holdings screen
+was redesigned to avoid, so the list gains a search box (name or ticker) and asset-
+class chips (All, Equity, EM equity, Bonds, REITs, Commodities), shows currency in
+each row, and keeps funds you have picked even when a filter hides them (and says
+so).
+
+**Verification.**
+- Unit tests (31): every preset has positive weights summing to exactly 100, uses
+  only catalog funds, no fund twice, no more than 60% in one fund; LOW presets are
+  mostly bonds, HIGH presets mostly equity; the three originals are unchanged;
+  catalog fields and exchange/currency consistent; `earliestStartMonth` is the
+  *latest* first month, is null if a fund has no data, and costs one query.
+- The forced update loaded all 15 new funds (3,364 months): 0 rejected, no gaps,
+  and the original 8 untouched (0 revised).
+- **Every preset, against the live API:** a plan started *at* its reported earliest
+  month succeeds and one month *earlier* is refused, for all 10. The seed created 7
+  and skipped the 3 existing.
+- The independent recomputation (stats from stored prices and dividends) agrees for
+  **all 23 funds** to within 0.02 points; extremes match history (QQQ −81% in the
+  dot-com crash, T-bills 0.56% volatility).
+- In the Expo web preview at phone size: 23 funds, chip filtering, search combined
+  with a filter, a picked fund staying picked when hidden, all 10 presets with their
+  data-start months, the earlier-start guard message, and the one-tap fill.
+
+**Limits.**
+- Funds and presets are a **starting selection, not advice**: presets are standard
+  textbook-style mixes, not recommendations for any person.
+- **No currency conversion** (as before): the SGD-only preset avoids it; mixes like
+  Global 60/40 are USD funds blended without FX, and SGD/USD funds in one portfolio
+  are blended the same way.
+- The 300 synthetic peers still hold only the original funds; re-seeding them would
+  spread them across the new ones (`--reset-synthetic`, which deletes any friend
+  links to them), so that was left alone.
+- Preset history is limited by their youngest fund: Singapore Income and Dividend &
+  Income start only in late 2017 / 2018.
+
+**SRS.** `Phase2_SRS_v1.13.docx` (new FR29–FR30, two terms, S-03 amended).
+
+Implements: extends FR04 (SRS v1.13 adds FR29–FR30). Owner: `backend/prisma/fund-catalog.json`,
+`backend/prisma/ingest-funds-yfinance.py`, `backend/src/utils/presetPortfolios.ts`,
+`backend/prisma/seed.ts`, `backend/src/services/portfolio.service.ts`
+(`earliestStartMonth`), mobile `FundBrowserScreen.tsx`, `PlanSetupScreen.tsx`,
+`components/charts/MixBar.tsx`.
 
 ## Open items (Design Model §8, carried forward)
 

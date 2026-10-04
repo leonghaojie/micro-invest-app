@@ -33,6 +33,8 @@ interface PortfolioSummary {
   name: string;
   isPreset: boolean;
   riskLevel: string | null;
+  /** Earliest month a plan on this portfolio can start ("YYYY-MM"), or null if a fund has no data. */
+  earliestStartMonth: string | null;
   allocations: PortfolioAllocationSummary[];
 }
 
@@ -119,6 +121,10 @@ export function PlanSetupScreen({ navigation }: Props) {
     }
     if (!START_MONTH_PATTERN.test(startMonth.trim())) {
       return "Enter a start month as YYYY-MM, e.g. 2026-01.";
+    }
+    const earliest = portfolios.find((p) => p.id === selectedPortfolioId)?.earliestStartMonth;
+    if (earliest && startMonth.trim() < earliest) {
+      return `This portfolio's data starts in ${longMonth(earliest)}. Choose ${earliest} or later.`;
     }
     return null;
   }
@@ -210,6 +216,9 @@ export function PlanSetupScreen({ navigation }: Props) {
                 <Text style={styles.templateMeta}>
                   {portfolio.allocations.map((a) => `${a.ticker} ${a.weightPct}%`).join(" · ")}
                 </Text>
+                {portfolio.earliestStartMonth && (
+                  <Text style={styles.templateMeta}>Data from {longMonth(portfolio.earliestStartMonth)}</Text>
+                )}
               </Pressable>
             ))}
           </View>
@@ -244,6 +253,13 @@ export function PlanSetupScreen({ navigation }: Props) {
               <Text style={styles.templateMeta}>
                 Your plan runs from this month through to the current month, using each fund's real monthly returns.
               </Text>
+              {selectedPortfolio?.earliestStartMonth && (
+                <Pressable onPress={() => setStartMonth(selectedPortfolio.earliestStartMonth!)} disabled={submitting}>
+                  <Text style={styles.secondaryButtonText}>
+                    Earliest for this portfolio: {selectedPortfolio.earliestStartMonth} — tap to use it
+                  </Text>
+                </Pressable>
+              )}
 
               {error && <Text style={styles.error}>{error}</Text>}
 
@@ -269,6 +285,13 @@ function ResultRow({ label, value, emphasized }: { label: string; value: string;
       <Text style={[styles.resultValue, emphasized && styles.resultValueEmphasized]}>{value}</Text>
     </View>
   );
+}
+
+const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+/** "2026-09" -> "Sep 2026" */
+function longMonth(month: string): string {
+  const [y, m] = month.split("-");
+  return `${MONTH_NAMES[Number(m) - 1]} ${y}`;
 }
 
 function formatCurrency(value: number): string {

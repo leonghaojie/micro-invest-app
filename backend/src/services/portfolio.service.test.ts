@@ -10,12 +10,14 @@ jest.mock("../config/prisma", () => ({
   prisma: {
     fund: { findMany: jest.fn(), findUnique: jest.fn() },
     portfolio: { findMany: jest.fn(), create: jest.fn() },
+    fundMonthlyReturn: { groupBy: jest.fn() },
   },
 }));
 
 const mockedPrisma = prisma as unknown as {
   fund: { findMany: jest.Mock; findUnique: jest.Mock };
   portfolio: { findMany: jest.Mock; create: jest.Mock };
+  fundMonthlyReturn: { groupBy: jest.Mock };
 };
 
 describe("PortfolioService", () => {
@@ -85,6 +87,8 @@ describe("PortfolioService", () => {
         },
       ]);
 
+      mockedPrisma.fundMonthlyReturn.groupBy.mockResolvedValue([{ fundId: "fund-1", _min: { monthDate: new Date("2008-02-01T00:00:00Z") } }]);
+
       const result = await portfolioService.listPortfolios("user-1");
 
       expect(mockedPrisma.portfolio.findMany).toHaveBeenCalledWith(
@@ -96,9 +100,59 @@ describe("PortfolioService", () => {
           name: "Conservative",
           isPreset: true,
           riskLevel: "LOW",
+          earliestStartMonth: "2008-02",
           allocations: [{ fundId: "fund-1", ticker: "A35", fundName: "ABF Sg Bond", weightPct: 100 }],
         },
       ]);
+    });
+
+    describe("earliestStartMonth (the earliest month a plan on the portfolio can start)", () => {
+      const portfolioOf = (id: string, fundIds: string[]) => ({
+        id,
+        name: id,
+        isPreset: true,
+        riskLevel: "MEDIUM",
+        allocations: fundIds.map((fundId) => ({ fundId, weightPct: "50.00", fund: { ticker: fundId.toUpperCase(), name: fundId } })),
+      });
+      const first = (fundId: string, month: string) => ({ fundId, _min: { monthDate: new Date(`${month}-01T00:00:00Z`) } });
+
+      it("is the LATEST of the funds' first months, because a plan needs every fund's real return", async () => {
+        mockedPrisma.portfolio.findMany.mockResolvedValue([portfolioOf("mix", ["old", "mid", "young"])]);
+        mockedPrisma.fundMonthlyReturn.groupBy.mockResolvedValue([first("old", "1993-02"), first("mid", "2011-10"), first("young", "2017-11")]);
+
+        const [mix] = await portfolioService.listPortfolios("user-1");
+
+        expect(mix.earliestStartMonth).toBe("2017-11");
+      });
+
+      it("is computed per portfolio, with one query for all of them", async () => {
+        mockedPrisma.fundMonthlyReturn.groupBy.mockClear();
+        mockedPrisma.portfolio.findMany.mockResolvedValue([portfolioOf("a", ["old", "young"]), portfolioOf("b", ["old", "mid"])]);
+        mockedPrisma.fundMonthlyReturn.groupBy.mockResolvedValue([first("old", "1993-02"), first("mid", "2011-10"), first("young", "2017-11")]);
+
+        const result = await portfolioService.listPortfolios("user-1");
+
+        expect(result.map((p) => [p.name, p.earliestStartMonth])).toEqual([
+          ["a", "2017-11"],
+          ["b", "2011-10"],
+        ]);
+        expect(mockedPrisma.fundMonthlyReturn.groupBy).toHaveBeenCalledTimes(1);
+        expect(mockedPrisma.fundMonthlyReturn.groupBy.mock.calls[0][0].where.fundId.in.sort()).toEqual(["mid", "old", "young"]);
+      });
+
+      it("is null when any fund has no data yet (the portfolio cannot start anywhere)", async () => {
+        mockedPrisma.portfolio.findMany.mockResolvedValue([portfolioOf("mix", ["old", "empty"])]);
+        mockedPrisma.fundMonthlyReturn.groupBy.mockResolvedValue([first("old", "1993-02")]);
+
+        expect((await portfolioService.listPortfolios("user-1"))[0].earliestStartMonth).toBeNull();
+      });
+
+      it("does not query for first months when there are no portfolios", async () => {
+        mockedPrisma.fundMonthlyReturn.groupBy.mockClear();
+        mockedPrisma.portfolio.findMany.mockResolvedValue([]);
+        expect(await portfolioService.listPortfolios("user-1")).toEqual([]);
+        expect(mockedPrisma.fundMonthlyReturn.groupBy).not.toHaveBeenCalled();
+      });
     });
   });
 
@@ -107,6 +161,10 @@ describe("PortfolioService", () => {
       const fund1 = "11111111-1111-1111-1111-111111111111";
       const fund2 = "22222222-2222-2222-2222-222222222222";
       mockedPrisma.fund.findMany.mockResolvedValue([{ id: fund1 }, { id: fund2 }]);
+      mockedPrisma.fundMonthlyReturn.groupBy.mockResolvedValue([
+        { fundId: fund1, _min: { monthDate: new Date("2008-02-01T00:00:00Z") } },
+        { fundId: fund2, _min: { monthDate: new Date("2012-06-01T00:00:00Z") } },
+      ]);
       mockedPrisma.portfolio.create.mockResolvedValue({
         id: "pf-new",
         name: "My mix",
@@ -127,6 +185,7 @@ describe("PortfolioService", () => {
       });
 
       expect(result.allocations).toHaveLength(2);
+      expect(result.earliestStartMonth).toBe("2012-06");
       expect(mockedPrisma.portfolio.create).toHaveBeenCalledWith(
         expect.objectContaining({
           data: expect.objectContaining({ userId: "user-1", name: "My mix", isPreset: false }),
@@ -149,6 +208,7 @@ describe("PortfolioService", () => {
 
     it("accepts weights within floating-point rounding tolerance of 100", async () => {
       mockedPrisma.fund.findMany.mockResolvedValue([{ id: "fund-1" }, { id: "fund-2" }, { id: "fund-3" }]);
+      mockedPrisma.fundMonthlyReturn.groupBy.mockResolvedValue([]);
       mockedPrisma.portfolio.create.mockResolvedValue({
         id: "pf-new",
         name: "Thirds",
