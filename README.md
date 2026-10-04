@@ -61,6 +61,15 @@ synthetic peers, with income calibrated to SingStat's 2024 median
 (S$3,615 per household member) and the other patterns stated as
 assumptions; charts are hand-built on `react-native-svg`.
 
+**Fund history** (`fundStats.ts` — `DECISIONS.md` #14, 4 Oct 2026): tap any
+fund in the Funds tab to see how it has moved — growth of 100 with dividends
+reinvested over 1Y / 3Y / 5Y / 10Y / Max (drag across the chart to read any
+month), key figures (total and annualised return, volatility, worst fall, best
+and worst month, share of up months, dividend yield), the last 36 monthly
+returns and calendar-year returns. Descriptive history in the fund's own
+currency, with a past-performance note — not a forecast or advice. A separate +
+button adds a fund to the portfolio you're building.
+
 **Password reset** (`auth.service.ts`, `mailer.service.ts` — `DECISIONS.md`
 #10, 3 Oct 2026): "Forgot password?" on the login screen emails a one-time
 6-digit code (15-minute expiry, 5 attempts, stored only as a keyed hash) and
@@ -275,6 +284,12 @@ original Word documents, each superseding the last within its phase:
   amended, new Data Dictionary terms (Holdings, Custom portfolio name), S-07 and
   the Friends view amended, new S-08 Friend Holdings screen. New scope, not a reopened TBD (`DECISIONS.md` #12).
   Kept alongside v1.9, not replacing it.
+- `Phase2_SRS_v1.11.docx` — Phase 4 addition (4 Oct 2026): **fund history and
+  statistics** — new FR26–FR27 extending FR04 (open a fund; choose a range),
+  UC-03 amended, five new Data Dictionary terms (Growth of 100, Volatility,
+  Maximum drawdown, Annualised return, Trailing dividend yield), new S-09 Fund
+  Detail screen. New scope, not a reopened TBD (`DECISIONS.md` #14). Kept
+  alongside v1.10, not replacing it.
 - `FYP Roadmap.docx` — the full Phase 0–9 plan mapped to the Lab #1–#5
   sequence and semester timeline.
 - `FYP_SRS_UseCase_UI_Lab1Style.docx` — an earlier Lab #1-formatted SRS
@@ -301,12 +316,13 @@ income-based/monthly-backtest rewrite (`DECISIONS.md` #1 third amendment,
 | — | Peer dashboard views (new scope) | FR18–21 | ✅ Done — segmentation, percentile + histogram, month-by-month trajectory, allocation panel; ~300 calibrated synthetic peers; privacy guards (min group 10, min cell 3) (DECISIONS.md #9, SRS v1.8) |
 | — | Password reset (new scope) | FR22–23 | ✅ Done — emailed 6-digit code via Gmail SMTP (console fallback in dev); attempt cap, expiry, no account enumeration (DECISIONS.md #10, SRS v1.9). Gmail delivery itself untested until SMTP credentials are set |
 | — | Friends' holdings (new scope) | FR24–25 | ✅ Done — opt-in (off by default) sharing of funds and weights; Rankings / Holdings view; percentages only, custom portfolio names hidden (DECISIONS.md #12, SRS v1.10) |
+| — | Fund history (new scope) | FR26–27 | ✅ Done — fund detail screen: growth-of-100 chart with drag-to-read, ranges, key figures, monthly bars, calendar years; stats cross-checked against an independent recomputation (DECISIONS.md #14, SRS v1.11) |
 | 7 | History, polish, NFRs | FR13 | ✅ Done — `GET /plan` returns the one active plan directly (trivial now that there's only ever one) |
-| 8 | Testing (Lab #4) | — | 🟡 In progress — 294 backend tests (16 suites, ~95% line coverage): per-service unit tests (basis-path coverage of the peer-grouping widening/floor branches, equivalence-class/boundary coverage of the monthly engine, reset-code limits) plus a black-box HTTP suite (`src/api.contract.test.ts`) driving every route through the real Express app — auth gate, status codes, error mapping. That suite found a real bug (malformed JSON returned 500, now 400). Still to do: package as the formal Lab #4 deliverable (documented FR-traced results, reflection report) and the coding-agent exercises |
+| 8 | Testing (Lab #4) | — | 🟡 In progress — 331 backend tests (17 suites, ~95% line coverage): per-service unit tests (basis-path coverage of the peer-grouping widening/floor branches, equivalence-class/boundary coverage of the monthly engine, reset-code limits) plus a black-box HTTP suite (`src/api.contract.test.ts`) driving every route through the real Express app — auth gate, status codes, error mapping. That suite found a real bug (malformed JSON returned 500, now 400). Still to do: package as the formal Lab #4 deliverable (documented FR-traced results, reflection report) and the coding-agent exercises |
 | 9 | Demo prep & submission | — | ⬜ Not started |
 
 There is no remaining functional gap against the SRS as of this pass —
-`Phase2_SRS_v1.6.docx`, `v1.7.docx`, `v1.8.docx`, `v1.9.docx` and `v1.10.docx` each land in the same
+`Phase2_SRS_v1.6.docx`, `v1.7.docx`, `v1.8.docx`, `v1.9.docx`, `v1.10.docx` and `v1.11.docx` each land in the same
 pass as the code, matching every prior amendment.
 
 The old "Budget band (B1–B4) thresholds" gap is moot, not resolved:

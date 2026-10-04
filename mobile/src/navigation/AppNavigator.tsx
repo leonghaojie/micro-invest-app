@@ -29,6 +29,7 @@ import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import type { BottomTabScreenProps } from "@react-navigation/bottom-tabs";
 import { apiFetch, ApiError, clearStoredAuthToken, getStoredAuthToken, setUnauthorizedHandler } from "../api/client";
 import { FriendHoldingsScreen } from "../screens/FriendHoldingsScreen";
+import { FundDetailScreen } from "../screens/FundDetailScreen";
 import { ForgotPasswordScreen } from "../screens/ForgotPasswordScreen";
 import { FriendsScreen } from "../screens/FriendsScreen";
 import { ProfileSetupScreen } from "../screens/ProfileSetupScreen";
@@ -56,6 +57,8 @@ export type RootStackParamList = {
   // DECISIONS.md #12: one person's full holdings. friendshipId is a friendship
   // handle (never a user id), or "me" for the viewer's own.
   FriendHoldings: { friendshipId: string; displayName: string };
+  // DECISIONS.md #14: one fund's history and statistics, opened from the Funds tab.
+  FundDetail: { fundId: string; ticker: string };
 };
 
 // Props helper for the two pre-login stack screens.
@@ -135,6 +138,7 @@ export function AppNavigator() {
         component={FriendHoldingsScreen}
         options={({ route }) => ({ title: `${route.params.displayName}'s holdings` })}
       />
+      <Stack.Screen name="FundDetail" component={FundDetailScreen} options={({ route }) => ({ title: route.params.ticker })} />
     </Stack.Navigator>
   );
 }

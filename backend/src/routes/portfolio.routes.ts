@@ -3,10 +3,12 @@
  * (multi-fund portfolios). Requires auth.
  */
 import { Router } from "express";
-import { createPortfolio, listFunds, listPortfolios } from "../controllers/portfolio.controller";
+import { createPortfolio, getFundDetail, listFunds, listPortfolios } from "../controllers/portfolio.controller";
 
 export const portfolioRouter = Router();
 
 portfolioRouter.get("/funds", listFunds);
+// DECISIONS.md #14: one fund's history and statistics. ?range=1y|3y|5y|10y|max
+portfolioRouter.get("/funds/:id", getFundDetail);
 portfolioRouter.get("/portfolios", listPortfolios);
 portfolioRouter.post("/portfolios", createPortfolio);
