@@ -19,8 +19,22 @@ export function errorHandler(err: unknown, req: Request, res: Response, next: Ne
     return;
   }
 
+  // express.json() rejects an unparseable or oversized body before any
+  // controller runs. That is the client's mistake, not a server fault, so it
+  // must not surface as a 500 (or be logged as one).
+  if (isBodyParserError(err)) {
+    res.status(err.status).json({ error: err.status === 413 ? "Request body too large" : "Malformed request body" });
+    return;
+  }
+
   console.error(err);
   res.status(500).json({ error: "Internal server error" });
+}
+
+function isBodyParserError(err: unknown): err is { status: number; type: string } {
+  if (typeof err !== "object" || err === null) return false;
+  const { type, status } = err as { type?: unknown; status?: unknown };
+  return typeof type === "string" && type.startsWith("entity.") && typeof status === "number";
 }
 
 export function notFoundHandler(req: Request, res: Response): void {
