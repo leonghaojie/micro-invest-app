@@ -4,7 +4,7 @@
  */
 import { Router } from "express";
 import { requireAuth } from "../middleware/auth.middleware";
-import { forgotPassword, login, me, register, resetPassword } from "../controllers/auth.controller";
+import { changeEmail, changePassword, forgotPassword, login, me, register, resetPassword } from "../controllers/auth.controller";
 
 export const authRouter = Router();
 
@@ -12,5 +12,8 @@ authRouter.post("/register", register);
 authRouter.post("/login", login);
 // The one /auth route that needs a token: lets the app verify a stored session.
 authRouter.get("/me", requireAuth, me);
+// DECISIONS.md #17: account management. Both need the current password.
+authRouter.post("/change-password", requireAuth, changePassword);
+authRouter.put("/email", requireAuth, changeEmail);
 authRouter.post("/forgot-password", forgotPassword);
 authRouter.post("/reset-password", resetPassword);

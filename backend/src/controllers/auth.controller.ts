@@ -52,3 +52,20 @@ export async function me(req: Request, res: Response, next: NextFunction): Promi
     next(err);
   }
 }
+
+export async function changePassword(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    await authService.changePassword(req.userId!, req.body);
+    res.status(200).json({ message: "Password updated." });
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function changeEmail(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    res.status(200).json({ user: await authService.changeEmail(req.userId!, req.body) });
+  } catch (err) {
+    next(err);
+  }
+}

@@ -7,6 +7,7 @@ import jwt from "jsonwebtoken";
 import { z } from "zod";
 import { env } from "../config/env";
 import { prisma } from "../config/prisma";
+import { createAttemptLimiter } from "../utils/attemptLimiter";
 import { HttpError } from "../utils/httpError";
 import { mailerService } from "./mailer.service";
 
@@ -34,6 +35,23 @@ const resetPasswordSchema = z.object({
 export const RESET_CODE_TTL_MS = 15 * 60 * 1000;
 export const RESET_MAX_ATTEMPTS = 5;
 export const RESET_RESEND_COOLDOWN_MS = 60 * 1000;
+
+const changePasswordSchema = z.object({
+  currentPassword: z.string().min(1, "Enter your current password"),
+  newPassword: z.string().min(8, "New password must be at least 8 characters"),
+});
+
+const changeEmailSchema = z.object({
+  newEmail: z.string().trim().toLowerCase().email("Enter a valid email address"),
+  password: z.string().min(1, "Enter your current password"),
+});
+
+// DECISIONS.md #17: proving you know the current password (to change the password or
+// the email) allows 5 wrong guesses per 15 minutes per account, then blocks. Without
+// this, a stolen session token could be used to guess the password without limit.
+export const PASSWORD_CHECK_MAX_FAILURES = 5;
+export const PASSWORD_CHECK_WINDOW_MS = 15 * 60 * 1000;
+const passwordChecks = createAttemptLimiter({ maxFailures: PASSWORD_CHECK_MAX_FAILURES, windowMs: PASSWORD_CHECK_WINDOW_MS });
 
 export interface AuthResult {
   token: string;
@@ -108,12 +126,85 @@ class AuthService {
    * account, reset database); the mobile app calls this on launch to decide
    * whether to show the login screen.
    */
-  async getCurrentUser(userId: string): Promise<{ id: string; email: string }> {
+  async getCurrentUser(userId: string): Promise<{ id: string; email: string; displayName: string | null }> {
     const user = await prisma.user.findUnique({ where: { id: userId } });
     if (!user || user.isSynthetic) {
       throw new HttpError(401, "Account no longer exists");
     }
-    return { id: user.id, email: user.email };
+    return { id: user.id, email: user.email, displayName: user.displayName };
+  }
+
+  /**
+   * Loads the signed-in user and checks the password they typed against their
+   * current one. A wrong password is a 403, deliberately NOT a 401: the mobile app
+   * treats any authenticated 401 as "your session is dead" and logs the user out,
+   * and a typo here must not do that.
+   */
+  private async requireCurrentPassword(userId: string, password: string) {
+    const blocked = passwordChecks.blockedForMs(userId);
+    if (blocked > 0) {
+      throw new HttpError(429, `Too many incorrect attempts. Try again in ${Math.ceil(blocked / 60_000)} minute(s).`);
+    }
+
+    const user = await prisma.user.findUnique({ where: { id: userId } });
+    if (!user || user.isSynthetic) {
+      throw new HttpError(401, "Account no longer exists");
+    }
+    if (!(await bcrypt.compare(password, user.passwordHash))) {
+      passwordChecks.recordFailure(userId);
+      throw new HttpError(403, "Current password is incorrect");
+    }
+    passwordChecks.reset(userId);
+    return user;
+  }
+
+  /** Sets a new password. Needs the current one. Other devices stay signed in:
+   * sessions are stateless tokens (see DECISIONS.md #10 and #17). */
+  async changePassword(userId: string, input: unknown): Promise<void> {
+    const { currentPassword, newPassword } = changePasswordSchema.parse(input);
+    const user = await this.requireCurrentPassword(userId, currentPassword);
+
+    if (newPassword === currentPassword) {
+      throw new HttpError(400, "Your new password must be different from the current one");
+    }
+
+    const passwordHash = await bcrypt.hash(newPassword, env.bcryptSaltRounds);
+    await prisma.$transaction([
+      prisma.user.update({ where: { id: user.id }, data: { passwordHash } }),
+      // a reset code issued before this change must not outlive it
+      prisma.passwordResetCode.deleteMany({ where: { userId: user.id } }),
+    ]);
+  }
+
+  /** Changes the sign-in email. Needs the current password. The new address is not
+   * verified by email (DECISIONS.md #17), so a typo would make password reset
+   * unreachable: the screen asks the user to double-check it. */
+  async changeEmail(userId: string, input: unknown): Promise<{ id: string; email: string; displayName: string | null }> {
+    const { newEmail, password } = changeEmailSchema.parse(input);
+    const user = await this.requireCurrentPassword(userId, password);
+
+    if (newEmail === user.email) {
+      throw new HttpError(400, "That is already your email address");
+    }
+    const taken = await prisma.user.findUnique({ where: { email: newEmail } });
+    if (taken) {
+      throw new HttpError(409, "That email is already registered");
+    }
+
+    let updated;
+    try {
+      updated = await prisma.$transaction(async (tx) => {
+        const u = await tx.user.update({ where: { id: user.id }, data: { email: newEmail } });
+        // a reset code was addressed to the old email
+        await tx.passwordResetCode.deleteMany({ where: { userId: user.id } });
+        return u;
+      });
+    } catch (err) {
+      // lost a race with someone registering the same address
+      if (isUniqueConstraintError(err)) throw new HttpError(409, "That email is already registered");
+      throw err;
+    }
+    return { id: updated.id, email: updated.email, displayName: updated.displayName };
   }
 
   /**

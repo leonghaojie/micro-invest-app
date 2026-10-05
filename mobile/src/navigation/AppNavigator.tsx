@@ -28,6 +28,7 @@ import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import type { BottomTabScreenProps } from "@react-navigation/bottom-tabs";
 import { apiFetch, ApiError, clearStoredAuthToken, getStoredAuthToken, setUnauthorizedHandler } from "../api/client";
+import { EditAccountScreen } from "../screens/EditAccountScreen";
 import { FriendHoldingsScreen } from "../screens/FriendHoldingsScreen";
 import { FundDetailScreen } from "../screens/FundDetailScreen";
 import { ForgotPasswordScreen } from "../screens/ForgotPasswordScreen";
@@ -59,6 +60,8 @@ export type RootStackParamList = {
   FriendHoldings: { friendshipId: string; displayName: string };
   // DECISIONS.md #14: one fund's history and statistics, opened from the Funds tab.
   FundDetail: { fundId: string; ticker: string };
+  // DECISIONS.md #17: change one account detail, opened from the dashboard's Account section.
+  EditAccount: { kind: "name" | "email" | "password" };
 };
 
 // Props helper for the two pre-login stack screens.
@@ -137,6 +140,11 @@ export function AppNavigator() {
         name="FriendHoldings"
         component={FriendHoldingsScreen}
         options={({ route }) => ({ title: `${route.params.displayName}'s holdings` })}
+      />
+      <Stack.Screen
+        name="EditAccount"
+        component={EditAccountScreen}
+        options={({ route }) => ({ title: { name: "Display name", email: "Change email", password: "Change password" }[route.params.kind] })}
       />
       <Stack.Screen name="FundDetail" component={FundDetailScreen} options={({ route }) => ({ title: route.params.ticker })} />
     </Stack.Navigator>

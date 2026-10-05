@@ -28,7 +28,7 @@ import { profileService } from "./services/profile.service";
 import { HttpError } from "./utils/httpError";
 
 jest.mock("./services/auth.service", () => ({
-  authService: { register: jest.fn(), login: jest.fn(), requestPasswordReset: jest.fn(), resetPassword: jest.fn() },
+  authService: { register: jest.fn(), login: jest.fn(), requestPasswordReset: jest.fn(), resetPassword: jest.fn(), changePassword: jest.fn(), changeEmail: jest.fn(), getCurrentUser: jest.fn() },
 }));
 jest.mock("./services/dashboard.service", () => ({ dashboardService: { getSummary: jest.fn(), getGrowth: jest.fn() } }));
 jest.mock("./services/insight.service", () => ({ insightService: { generate: jest.fn() } }));
@@ -112,6 +112,9 @@ const protectedRoutes: RouteCase[] = [
 describe("authentication gate on protected routes", () => {
   const everyProtected = [
     ...protectedRoutes.map((r) => [r.name, r.method, r.path] as const),
+    ["GET /auth/me", "get", "/auth/me"] as const,
+    ["POST /auth/change-password", "post", "/auth/change-password"] as const,
+    ["PUT /auth/email", "put", "/auth/email"] as const,
     ["GET /peers/summary", "get", "/peers/summary"] as const,
     ["GET /peers/distribution", "get", "/peers/distribution"] as const,
     ["GET /peers/dashboard", "get", "/peers/dashboard"] as const,
@@ -268,6 +271,48 @@ describe("/auth routes (public)", () => {
     const bad = await request(app).post("/auth/reset-password").send({ email: "a@b.com", code: "000000", password: "longenough" });
     expect(bad.status).toBe(400);
     expect(bad.body).toEqual({ error: "Invalid or expired reset code" });
+  });
+});
+
+describe("account management routes (DECISIONS.md #17)", () => {
+  it("POST /auth/change-password passes the token's user id and the body through", async () => {
+    (authService.changePassword as jest.Mock).mockResolvedValue(undefined);
+    const body = { currentPassword: "oldpassword1", newPassword: "newpassword1" };
+
+    const res = await request(app).post("/auth/change-password").set(auth).send(body);
+
+    expect(res.status).toBe(200);
+    expect(authService.changePassword).toHaveBeenCalledWith(USER_ID, body);
+    expect(JSON.stringify(res.body)).not.toContain("newpassword1"); // never echoes a password
+  });
+
+  it("PUT /auth/email passes the token's user id and returns the updated user", async () => {
+    (authService.changeEmail as jest.Mock).mockResolvedValue({ id: USER_ID, email: "new@example.com", displayName: null });
+
+    const res = await request(app).put("/auth/email").set(auth).send({ newEmail: "new@example.com", password: "oldpassword1" });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ user: { id: USER_ID, email: "new@example.com", displayName: null } });
+    expect((authService.changeEmail as jest.Mock).mock.calls[0][0]).toBe(USER_ID);
+  });
+
+  it("a wrong current password is 403, never 401 (a 401 would sign the mobile user out)", async () => {
+    (authService.changePassword as jest.Mock).mockRejectedValue(new HttpError(403, "Current password is incorrect"));
+    const res = await request(app).post("/auth/change-password").set(auth).send({ currentPassword: "x", newPassword: "newpassword1" });
+    expect(res.status).toBe(403);
+    expect(res.body).toEqual({ error: "Current password is incorrect" });
+  });
+
+  it("too many wrong guesses is 429", async () => {
+    (authService.changeEmail as jest.Mock).mockRejectedValue(new HttpError(429, "Too many incorrect attempts. Try again in 12 minute(s)."));
+    const res = await request(app).put("/auth/email").set(auth).send({ newEmail: "a@b.com", password: "x" });
+    expect(res.status).toBe(429);
+  });
+
+  it("an email another account uses is 409", async () => {
+    (authService.changeEmail as jest.Mock).mockRejectedValue(new HttpError(409, "That email is already registered"));
+    const res = await request(app).put("/auth/email").set(auth).send({ newEmail: "a@b.com", password: "x" });
+    expect(res.status).toBe(409);
   });
 });
 
