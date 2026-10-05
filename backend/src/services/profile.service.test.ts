@@ -129,4 +129,31 @@ describe("ProfileService", () => {
       ).rejects.toThrow();
     });
   });
+
+  describe("experienceLevel (DECISIONS.md #18)", () => {
+    const base = { riskLevel: "MEDIUM", goalType: "GROWTH", monthlyIncome: 4000, monthlyExpense: 2400, age: 28 };
+
+    it("stores a chosen experience level and returns it", async () => {
+      mockedPrisma.userProfile.upsert.mockImplementation(({ create }) => Promise.resolve({ id: "p", ...create }));
+
+      const result = await profileService.upsertProfile("user-1", { ...base, experienceLevel: "EXPERIENCED" });
+
+      expect(result.experienceLevel).toBe("EXPERIENCED");
+      expect(mockedPrisma.userProfile.upsert.mock.calls[0][0].create.experienceLevel).toBe("EXPERIENCED");
+    });
+
+    it("rejects an unknown level", async () => {
+      await expect(profileService.upsertProfile("user-1", { ...base, experienceLevel: "EXPERT" })).rejects.toThrow();
+    });
+
+    it("leaves it out of the write when the client does not send it, so an update never resets it", async () => {
+      mockedPrisma.userProfile.upsert.mockImplementation(({ create }) => Promise.resolve({ id: "p", ...create, experienceLevel: "INTERMEDIATE" }));
+
+      await profileService.upsertProfile("user-1", base);
+
+      const call = mockedPrisma.userProfile.upsert.mock.calls[0][0];
+      expect(call.update.experienceLevel).toBeUndefined();
+      expect(call.create.experienceLevel).toBeUndefined(); // the database default (BEGINNER) applies on creation
+    });
+  });
 });

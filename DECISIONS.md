@@ -1364,6 +1364,133 @@ Implements: UC-04 amended, new scope (FR31–FR34). Owner:
 `backend/src/routes/auth.routes.ts`, mobile `DashboardScreen.tsx`,
 `EditAccountScreen.tsx`, `navigation/AppNavigator.tsx`.
 
+## 18. Peer comparison starts from "investors like you" (5 Oct 2026)
+
+**Problem.** The Peers tab opened on a comparison banded by income alone. A user could
+see a number and a rank but not *why those people* were the comparison, so the figures
+carried no context. Your framework document (`Peer_Comparison_Banding_Framework_Micro_Investment_App.pdf`)
+and the two mock-ups describe the fix: say who you are being compared with, pick peers
+per metric, and report medians and ranges rather than a single rank.
+
+**Decision.** The default Peers view ("Cohort") now follows the framework. The old
+dashboard (#9) stays as "Explore"; Friends (#8) is unchanged. Segments are
+**Cohort | Explore | Friends**.
+
+The screen, top to bottom, follows the mock-up:
+
+1. **Headline** — "Your portfolio returned X%. Similar portfolios with the same risk
+   level returned a median of Y%", with three figures: your portfolio, similar
+   investors, and a plain benchmark.
+2. **Your peer cohort** — four broad labels from the profile (e.g. *Early-career investor ·
+   Mid income · High investment capacity · Balanced risk*): the framework's Level 1
+   identity.
+3. **Your peer group** — how many investors, their age range, the monthly investment
+   range of the middle 80%, and the risk mix.
+4. **How you compare** — four cards, each *You | Peer median | Position* ("Top 24%",
+   or "Above 16% of peers" below the median), the middle half of peers, and one
+   sentence on **who the peers were chosen to be like**.
+5. **What stands out** — one neutral sentence (strongest and weakest card). Descriptive
+   only, never advice: the dashboard reflects statistics back, it is not a nudge. A
+   test fails if the sentence contains an instruction.
+
+**The algorithm** (`backend/src/utils/peerCohort.ts`, pure and tested), per the PDF:
+
+- **Match on the person, never on outcomes (revised 5 Oct 2026).** Peers are matched
+  only on profile data: income, investment capacity (spare income as a share of
+  income), life stage (age) and risk level. Portfolio value, holdings, returns,
+  contribution and investing experience are **not** used: the first four are the
+  things being compared, so matching on them would be circular, and experience is
+  held back as a filter for a future feature (it is still stored). A test asserts
+  that no weight set uses anything but those four features and that changing a
+  member's holdings, contribution or returns does not change any distance.
+- **Normalise.** Income and investment capacity become percentile ranks (mid-rank, so
+  ties are fair); age gap is capped at 15 years; risk is ordinal.
+- **Weighted distance per metric**, so each metric has its own peers. The PDF's
+  weights included experience, portfolio size and composition, so they were
+  re-split over the four remaining features. **These re-split weights are my
+  proposal, not the PDF's — please review:** general (income 35, capacity 35, life
+  stage 20, risk 10); *investment rate* (income 40, capacity 40, life stage 20);
+  *diversification* (risk 40, capacity 30, income 15, life stage 15); *return* and
+  *return per risk* (risk 50, life stage 20, income 15, capacity 15). A test asserts
+  each set sums to 1.
+- **Hard filter for returns:** only the same risk level may be compared. If fewer than
+  30 eligible people remain, it relaxes one step (same → adjacent → any) and the card
+  says it did.
+- **KNN:** the 50 nearest, ties broken by id so a result is stable.
+- **Statistics:** median, p25/p75, and the user's mid-rank percentile ("Top X%" is
+  `max(1, 100 − percentile)`).
+- **Privacy floor:** the existing `MIN_GROUP_SIZE` (10) still applies; below it the
+  whole view is withheld. Only aggregates leave the server; there is no id or email in
+  the response (a test checks).
+
+**What the cards measure.**
+
+| Card | Definition |
+|---|---|
+| Monthly investment rate | monthly contribution ÷ monthly income |
+| Diversification score | 0–100: 0.6 × asset-class spread + 0.4 × fund spread (1 − HHI, rescaled). Also shows your largest holding vs the peers' median |
+| Portfolio return | compounded return of the last min(12, your months) months; peers must have those same calendar months |
+| Return per unit of risk | annualised return ÷ annualised volatility; needs at least 6 months |
+
+The **benchmark** is a monthly-rebalanced blend of VT and AGG matched to your risk
+level: Low 20/80, Balanced 60/40, High 100% stocks.
+
+**Assumptions I had to make (please check these).**
+- **A new profile question: investing experience** (new / 1–3 years / more than 3),
+  added because the PDF weights it. After review it was taken **out of the banding**
+  and kept as stored data for a future filter. Existing accounts default to *new to
+  investing*. Synthetic peers get one assigned by age and the seed backfills existing
+  ones.
+- **Investment capacity** = (income − expense) ÷ income. The PDF also mentions
+  obligations and income stability; the app collects neither.
+- **Left out of the MVP:** *investment consistency* (every plan contributes
+  automatically, so everyone scores full marks and it would say nothing) and *goal
+  progress* (a goal here is a category, with no target amount or horizon to progress
+  towards). Both would need new inputs.
+- **Constants:** K = 50, relax below 30, window 12 months, age cap 15 years. All are
+  named constants in one place.
+- The PDF's "min 50–100 peers" is not reachable with ~310 investors for every
+  metric, hence K = 50 and the relaxation ladder; the group size is always shown.
+
+**Departure from #5 (aggregate in Postgres).** KNN needs every member's normalised
+features at once, so this is computed in application memory: one query for plans (with
+at most 12 months each), one for the two benchmark funds. That is cheap at hundreds of
+members (145 ms measured against the 2 s NFR-01 limit). If the population grew by
+orders of magnitude, precompute a feature table.
+
+**Limits.**
+- 300 of the 310 investors in the pool are simulated (97%); the screen says so.
+  Expense and contribution patterns are assumptions, not data.
+- The diversification score gives a single broad index fund 0 — it measures spread
+  *within* the portfolio, not how well the portfolio is diversified globally.
+- Return comparisons are 12 months of one market regime; a young plan with fewer
+  than 6 months has no risk-adjusted card.
+- "Top X%" reads well above the median; below it the screen says "Above Y% of
+  peers" instead.
+- Contribution is still a compared metric, but plans contribute automatically, so it says little until recurring buys exist (see the trading rework plan).
+
+**Verification.**
+- **Unit tests (73 engine, 12 service, +2 route, +3 profile, +4 synthetic):** weights
+  match the PDF; percentile normalisation with ties; distance properties; selection
+  (hard filter, fallback ladder, privacy floor, deterministic tie-break); a regression
+  for an options bug (an explicit `k: undefined` once overrode the defaults, so the
+  hard filter was never accepted); report invariants; no ids in output; the
+  observation variants and "descriptive only". Full suite: **564 tests, 25 suites**.
+- **Independent re-implementation** written from the PDF with plain loops and none of
+  the engine's code, run against the real database: identical median, quartiles,
+  percentile and cohort size on all four cards, identical benchmark, same-risk filter
+  holds for every return peer, no id/email anywhere in the response.
+- **UI (Expo web, phone size):** the view renders as the mock-up; Explore is
+  unchanged; the new profile question saves (it first moved the user's labels and
+  peers; that effect was removed again in the 5 Oct revision above).
+
+**SRS.** `Phase2_SRS_v1.15.docx`.
+
+Implements: UC-05 amended (FR35–FR37). Owner: `backend/src/utils/peerCohort.ts`,
+`backend/src/services/peerCohort.service.ts`, `backend/src/services/profile.service.ts`,
+`backend/prisma/schema.prisma` (`ExperienceLevel`), `backend/src/utils/syntheticPeers.ts`,
+mobile `PeerCohort.tsx`, `PeerComparisonScreen.tsx`, `ProfileSetupScreen.tsx`.
+
 ## Open items (Design Model §8, carried forward)
 
 - **`Phase2_SRS_v1.6.docx` — done, no longer open.** Produced in the same

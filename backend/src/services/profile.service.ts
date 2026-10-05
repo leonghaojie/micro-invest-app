@@ -9,7 +9,7 @@
  * it's a pure profile-level figure — (monthlyIncome - monthlyExpense) /
  * monthlyIncome — needing no Plan.
  */
-import { GoalType, RiskLevel } from "@prisma/client";
+import { ExperienceLevel, GoalType, RiskLevel } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "../config/prisma";
 import { HttpError } from "../utils/httpError";
@@ -21,6 +21,9 @@ const upsertProfileSchema = z.object({
   monthlyIncome: z.number().positive("Monthly income must be greater than 0"),
   monthlyExpense: z.number().nonnegative("Monthly expense cannot be negative"),
   age: z.number().int().min(13, "Age must be at least 13").max(120, "Enter a realistic age"),
+  // DECISIONS.md #18: optional so existing clients keep working; left unchanged on an update
+  // that omits it, and BEGINNER on first creation.
+  experienceLevel: z.nativeEnum(ExperienceLevel).optional(),
 });
 
 export type UpsertProfileInput = z.infer<typeof upsertProfileSchema>;
@@ -31,6 +34,7 @@ export interface ProfileResult {
   monthlyIncome: number;
   monthlyExpense: number;
   age: number;
+  experienceLevel: ExperienceLevel;
   savingsRatePct: number;
 }
 
@@ -39,7 +43,14 @@ function computeSavingsRatePct(monthlyIncome: number, monthlyExpense: number): n
   return round2(((monthlyIncome - monthlyExpense) / monthlyIncome) * 100);
 }
 
-function toResult(profile: { riskLevel: RiskLevel; goalType: GoalType; monthlyIncome: unknown; monthlyExpense: unknown; age: number }): ProfileResult {
+function toResult(profile: {
+  riskLevel: RiskLevel;
+  goalType: GoalType;
+  monthlyIncome: unknown;
+  monthlyExpense: unknown;
+  age: number;
+  experienceLevel: ExperienceLevel;
+}): ProfileResult {
   const monthlyIncome = Number(profile.monthlyIncome);
   const monthlyExpense = Number(profile.monthlyExpense);
   return {
@@ -48,6 +59,7 @@ function toResult(profile: { riskLevel: RiskLevel; goalType: GoalType; monthlyIn
     monthlyIncome,
     monthlyExpense,
     age: profile.age,
+    experienceLevel: profile.experienceLevel,
     savingsRatePct: computeSavingsRatePct(monthlyIncome, monthlyExpense),
   };
 }

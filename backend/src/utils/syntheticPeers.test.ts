@@ -3,7 +3,9 @@
  * peer statistic, so its guarantees (reproducible, anchored, internally
  * consistent) are tested directly rather than trusted.
  */
-import { createRng, FundInfo, generatePeerSpecs, INCOME_ANCHOR } from "./syntheticPeers";
+import {
+  assignExperience,
+  experienceStream, createRng, FundInfo, generatePeerSpecs, INCOME_ANCHOR } from "./syntheticPeers";
 
 const CATALOG: FundInfo[] = [
   { id: "f-a35", ticker: "A35.SI", assetClass: "BOND" },
@@ -129,5 +131,42 @@ describe("generatePeerSpecs", () => {
   it("works with a tiny catalog (never asks for more funds than exist)", () => {
     const specs = generatePeerSpecs(100, 3, CATALOG.slice(0, 2));
     for (const s of specs) expect(s.allocations.length).toBeLessThanOrEqual(2);
+  });
+});
+
+describe("experience level (DECISIONS.md #18)", () => {
+  it("assignExperience rises with age and covers all three levels", () => {
+    const share = (age: number, level: string) => {
+      let hits = 0;
+      for (let i = 0; i < 1000; i++) if (assignExperience(age, i / 1000) === level) hits++;
+      return hits / 1000;
+    };
+    expect(share(22, "BEGINNER")).toBeGreaterThan(share(35, "BEGINNER"));
+    expect(share(35, "EXPERIENCED")).toBeGreaterThan(share(22, "EXPERIENCED"));
+    for (const age of [20, 27, 40]) {
+      const levels = new Set(Array.from({ length: 1000 }, (_, i) => assignExperience(age, i / 1000)));
+      expect(levels).toEqual(new Set(["BEGINNER", "INTERMEDIATE", "EXPERIENCED"]));
+    }
+  });
+
+  it("is deterministic for a seed and peer, and different peers get different streams", () => {
+    expect(experienceStream(20261003, 5)()).toBe(experienceStream(20261003, 5)());
+    expect(experienceStream(20261003, 5)()).not.toBe(experienceStream(20261003, 6)());
+    expect(experienceStream(1, 5)()).not.toBe(experienceStream(2, 5)());
+  });
+
+  it("every generated peer has a valid level, and a population has all three", () => {
+    const catalog = [{ id: "f1", ticker: "A", assetClass: "EQUITY" }, { id: "f2", ticker: "B", assetClass: "BOND" }];
+    const specs = generatePeerSpecs(300, 20261003, catalog);
+    expect(specs.every((p) => ["BEGINNER", "INTERMEDIATE", "EXPERIENCED"].includes(p.experienceLevel))).toBe(true);
+    expect(new Set(specs.map((p) => p.experienceLevel)).size).toBe(3);
+  });
+
+  it("adding the field did not change any other attribute: same seed, same ages/incomes as before", () => {
+    const catalog = [{ id: "f1", ticker: "A", assetClass: "EQUITY" }];
+    const a = generatePeerSpecs(50, 42, catalog).map(({ experienceLevel: _e, ...rest }) => rest);
+    const b = generatePeerSpecs(50, 42, catalog).map(({ experienceLevel: _e, ...rest }) => rest);
+    expect(a).toEqual(b);
+    expect(a[0].age).toBeGreaterThanOrEqual(21);
   });
 });

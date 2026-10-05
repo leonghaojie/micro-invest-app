@@ -2,6 +2,7 @@ import { NextFunction, Request, Response } from "express";
 import { z } from "zod";
 import { peerBenchmarkService } from "../services/peerBenchmark.service";
 import { describeTier, parsePeerDimensions, peerGroupingService } from "../services/peerGrouping.service";
+import { peerCohortService } from "../services/peerCohort.service";
 import { PEER_METRICS, peerInsightsService } from "../services/peerInsights.service";
 
 const dashboardQuerySchema = z.object({
@@ -50,6 +51,16 @@ export async function getDistribution(req: Request, res: Response, next: NextFun
     const group = await peerGroupingService.assignPeerGroup(userId);
     const stats = await peerBenchmarkService.computeStats(userId, group);
     res.status(200).json({ bandPct: group.bandPct, ...stats });
+  } catch (err) {
+    next(err);
+  }
+}
+
+// DECISIONS.md #18: the default peer comparison - a cohort chosen by weighted nearest
+// neighbours, one peer set per metric. Aggregates only.
+export async function getCohort(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    res.status(200).json(await peerCohortService.getCohort(req.userId!));
   } catch (err) {
     next(err);
   }

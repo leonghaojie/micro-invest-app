@@ -20,6 +20,7 @@ import { dashboardService } from "./services/dashboard.service";
 import { friendsService } from "./services/friends.service";
 import { insightService } from "./services/insight.service";
 import { peerBenchmarkService } from "./services/peerBenchmark.service";
+import { peerCohortService } from "./services/peerCohort.service";
 import { peerGroupingService } from "./services/peerGrouping.service";
 import { peerInsightsService } from "./services/peerInsights.service";
 import { planService } from "./services/plan.service";
@@ -53,6 +54,7 @@ jest.mock("./services/peerGrouping.service", () => ({
   ...jest.requireActual("./services/peerGrouping.service"),
   peerGroupingService: { assignPeerGroup: jest.fn(), resolveSegment: jest.fn() },
 }));
+jest.mock("./services/peerCohort.service", () => ({ peerCohortService: { getCohort: jest.fn() } }));
 jest.mock("./services/peerInsights.service", () => ({
   ...jest.requireActual("./services/peerInsights.service"),
   peerInsightsService: { getDashboard: jest.fn() },
@@ -118,6 +120,7 @@ describe("authentication gate on protected routes", () => {
     ["GET /peers/summary", "get", "/peers/summary"] as const,
     ["GET /peers/distribution", "get", "/peers/distribution"] as const,
     ["GET /peers/dashboard", "get", "/peers/dashboard"] as const,
+    ["GET /peers/cohort", "get", "/peers/cohort"] as const,
   ];
 
   it.each(everyProtected)("%s -> 401 with no Authorization header", async (_n, method, path) => {
@@ -350,6 +353,14 @@ describe("/peers routes", () => {
     const res = await request(app).get("/peers/dashboard?dims=income,email").set(auth);
     expect(res.status).toBe(400);
     expect(peerGroupingService.resolveSegment).not.toHaveBeenCalled();
+  });
+
+  it("GET /peers/cohort passes the token's user id and returns the report", async () => {
+    (peerCohortService.getCohort as jest.Mock).mockResolvedValue({ status: "no-plan" });
+    const res = await request(app).get("/peers/cohort").set(auth);
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ status: "no-plan" });
+    expect(peerCohortService.getCohort).toHaveBeenCalledWith(USER_ID);
   });
 
   it("GET /peers/summary combines group, stats and the caller's own metrics", async () => {

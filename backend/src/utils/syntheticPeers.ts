@@ -35,6 +35,7 @@ const COHORT_MEAN_AGE = 31;
 
 export type RiskLevelName = "LOW" | "MEDIUM" | "HIGH";
 export type GoalTypeName = "LEARN" | "HABIT" | "GROWTH";
+export type ExperienceLevelName = "BEGINNER" | "INTERMEDIATE" | "EXPERIENCED";
 
 export interface FundInfo {
   id: string;
@@ -55,6 +56,7 @@ export interface SyntheticPeerSpec {
   expense: number;
   riskLevel: RiskLevelName;
   goalType: GoalTypeName;
+  experienceLevel: ExperienceLevelName;
   contribution: number;
   /** How many months of plan history this peer has (>= 3). */
   monthsOfHistory: number;
@@ -149,6 +151,24 @@ function buildAllocations(rng: () => number, risk: RiskLevelName, catalog: FundI
   return chosen.map((f, i) => ({ fundId: f.id, ticker: f.ticker, weightPct: weights[i] }));
 }
 
+/**
+ * Self-reported investing experience (ASSUMPTION, DECISIONS.md #18): older people have
+ * had longer to start, so experience rises with age. `u` is a uniform draw in [0, 1).
+ * It is its own function, driven by its own per-peer random stream (see
+ * `experienceStream`), so adding the field did not change any other attribute of the
+ * existing population, and so peers created before the field existed can be given a
+ * value afterwards that matches what a fresh seed would produce.
+ */
+export function assignExperience(age: number, u: number): ExperienceLevelName {
+  const [beginner, intermediate] = age < 24 ? [0.65, 0.3] : age <= 30 ? [0.4, 0.4] : [0.25, 0.4];
+  return u < beginner ? "BEGINNER" : u < beginner + intermediate ? "INTERMEDIATE" : "EXPERIENCED";
+}
+
+/** An independent random stream for peer number `index`, used only for experience. */
+export function experienceStream(seed: number, index: number): () => number {
+  return createRng((seed ^ Math.imul(index + 1, 0x9e3779b1)) >>> 0);
+}
+
 /** Generates `count` reproducible synthetic peer specs. */
 export function generatePeerSpecs(count: number, seed: number, catalog: FundInfo[]): SyntheticPeerSpec[] {
   const rng = createRng(seed);
@@ -187,6 +207,7 @@ export function generatePeerSpecs(count: number, seed: number, catalog: FundInfo
       expense,
       riskLevel,
       goalType,
+      experienceLevel: assignExperience(age, experienceStream(seed, index)()),
       contribution,
       monthsOfHistory: 3 + Math.floor(rng() * 22), // 3..24
       allocations: buildAllocations(rng, riskLevel, catalog),
