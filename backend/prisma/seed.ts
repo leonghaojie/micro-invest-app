@@ -38,7 +38,7 @@ import { join } from "path";
 import { PrismaClient, RiskLevel } from "@prisma/client";
 import { planService } from "../src/services/plan.service";
 import { PRESET_PORTFOLIOS } from "../src/utils/presetPortfolios";
-import { FundInfo, generatePeerSpecs, SyntheticPeerSpec } from "../src/utils/syntheticPeers";
+import { assignExperience, experienceStream, FundInfo, generatePeerSpecs, SyntheticPeerSpec } from "../src/utils/syntheticPeers";
 
 const prisma = new PrismaClient();
 
@@ -134,6 +134,7 @@ async function createSyntheticPeer(spec: SyntheticPeerSpec, anchorMonth: Date): 
             monthlyIncome: spec.income,
             monthlyExpense: spec.expense,
             age: spec.age,
+            experienceLevel: spec.experienceLevel,
           },
         },
       },
@@ -262,11 +263,32 @@ async function seedFriendDemoIdentities(): Promise<void> {
   console.log(`[seed] friend demo identities: ${updated} synthetic users now have a display name, invite code (DEMO0001...) and sharing on.`);
 }
 
+/** Gives every synthetic peer an experience level (DECISIONS.md #18). Peers created before the
+ * field existed all carry the column default (BEGINNER); this sets each from the same
+ * per-peer stream a fresh seed uses, so the result is identical to re-seeding, without
+ * deleting and recreating anyone (which would drop friend links to the demo users).
+ * Safe to re-run: it always writes the value the seed would produce. */
+async function backfillSyntheticExperience(): Promise<void> {
+  const peers = await prisma.user.findMany({ where: { isSynthetic: true }, select: { id: true, email: true, profile: { select: { age: true, experienceLevel: true } } } });
+  let changed = 0;
+  for (const peer of peers) {
+    const index = Number(peer.email.match(/synthetic\+(\d+)@/)?.[1] ?? NaN);
+    if (Number.isNaN(index) || !peer.profile) continue;
+    const level = assignExperience(peer.profile.age, experienceStream(POPULATION_SEED, index)());
+    if (level !== peer.profile.experienceLevel) {
+      await prisma.userProfile.update({ where: { userId: peer.id }, data: { experienceLevel: level } });
+      changed += 1;
+    }
+  }
+  console.log(`[seed] synthetic experience levels: ${changed} updated, ${peers.length - changed} already correct.`);
+}
+
 async function main() {
   const args = parseArgs();
   await seedPresetPortfolios();
   const generated = await seedSyntheticPeers(args);
   if (!generated) await refreshSyntheticPlans();
+  await backfillSyntheticExperience();
   await seedFriendDemoIdentities();
 }
 

@@ -1,8 +1,10 @@
 /**
  * S-05 Peer Comparison — UC-05. A segmented control at the top picks the
- * comparison group (DECISIONS.md #8, #9):
- *  - "Peers": the anonymous, aggregate-only comparison (PeerDashboard —
- *    segment-aware distribution, trajectory and allocation views, NFR-03);
+ * comparison (DECISIONS.md #8, #9, #18):
+ *  - "Cohort" (default): you against investors chosen to be like you for each
+ *    metric, with the reason for the comparison stated (PeerCohort, NFR-03);
+ *  - "Explore": the anonymous, aggregate-only dashboard where you choose what
+ *    "peers" means (PeerDashboard — distribution, trajectory, allocation);
  *  - "Friends": a consent-based ranking among people the user added
  *    (FriendsComparison — the one place named individuals appear).
  *
@@ -15,19 +17,21 @@ import { useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import type { MainTabScreenProps } from "../navigation/AppNavigator";
 import { FriendsComparison } from "./FriendsComparison";
+import { PeerCohort } from "./PeerCohort";
 import { PeerDashboard } from "./PeerDashboard";
 
 type Props = MainTabScreenProps<"PeerComparison">;
 
-type Mode = "peers" | "friends";
+type Mode = "cohort" | "explore" | "friends";
 
 const MODES: { value: Mode; label: string }[] = [
-  { value: "peers", label: "Peers" },
+  { value: "cohort", label: "Cohort" },
+  { value: "explore", label: "Explore" },
   { value: "friends", label: "Friends" },
 ];
 
 export function PeerComparisonScreen({ navigation }: Props) {
-  const [mode, setMode] = useState<Mode>("peers");
+  const [mode, setMode] = useState<Mode>("cohort");
 
   return (
     <View style={styles.screen}>
@@ -43,7 +47,9 @@ export function PeerComparisonScreen({ navigation }: Props) {
         ))}
       </View>
 
-      {mode === "peers" ? (
+      {mode === "cohort" ? (
+        <PeerCohort onStartPlan={() => navigation.navigate("Contribution")} onEditProfile={() => navigation.navigate("ProfileSetup")} />
+      ) : mode === "explore" ? (
         <PeerDashboard onStartPlan={() => navigation.navigate("Contribution")} />
       ) : (
         <FriendsComparison onManage={() => navigation.navigate("Friends")} />

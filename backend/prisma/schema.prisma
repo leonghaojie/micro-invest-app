@@ -25,6 +25,15 @@ enum GoalType {
   GROWTH
 }
 
+// DECISIONS.md #18 (peer cohorts): self-reported, because beginners and experienced
+// investors behave differently even with the same finances. BEGINNER = new to
+// investing, INTERMEDIATE = 1-3 years, EXPERIENCED = more than 3 years.
+enum ExperienceLevel {
+  BEGINNER
+  INTERMEDIATE
+  EXPERIENCED
+}
+
 // ── Tables ─────────────────────────────────────────────────────────
 
 model User {
@@ -114,13 +123,15 @@ model FriendSharing {
 // range, peerGrouping.service.ts), monthlyIncome - monthlyExpense drives
 // the Savings Rate metric, both profile-level and requiring no Plan.
 model UserProfile {
-  id             String    @id @default(uuid())
-  userId         String    @unique
-  riskLevel      RiskLevel
-  goalType       GoalType
-  monthlyIncome  Decimal   @db.Decimal(10, 2)
-  monthlyExpense Decimal   @db.Decimal(10, 2)
-  age            Int
+  id              String          @id @default(uuid())
+  userId          String          @unique
+  riskLevel       RiskLevel
+  goalType        GoalType
+  monthlyIncome   Decimal         @db.Decimal(10, 2)
+  monthlyExpense  Decimal         @db.Decimal(10, 2)
+  age             Int
+  // Existing accounts default to BEGINNER until the user says otherwise.
+  experienceLevel ExperienceLevel @default(BEGINNER)
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 

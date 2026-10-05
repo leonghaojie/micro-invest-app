@@ -23,6 +23,7 @@ type Props = RootStackScreenProps<"ProfileSetup">;
 
 type RiskLevel = "LOW" | "MEDIUM" | "HIGH";
 type GoalType = "LEARN" | "HABIT" | "GROWTH";
+type ExperienceLevel = "BEGINNER" | "INTERMEDIATE" | "EXPERIENCED";
 
 interface ProfileResponse {
   riskLevel: RiskLevel;
@@ -30,6 +31,7 @@ interface ProfileResponse {
   monthlyIncome: number;
   monthlyExpense: number;
   age: number;
+  experienceLevel: ExperienceLevel;
   savingsRatePct: number;
 }
 
@@ -45,9 +47,18 @@ const GOAL_OPTIONS: { value: GoalType; label: string }[] = [
   { value: "GROWTH", label: "Grow my money" },
 ];
 
+// DECISIONS.md #18: investing experience, so the peer comparison can match beginners with
+// beginners. Self-reported; it only ever affects which peers you are compared with.
+const EXPERIENCE_OPTIONS: { value: ExperienceLevel; label: string }[] = [
+  { value: "BEGINNER", label: "New to investing" },
+  { value: "INTERMEDIATE", label: "1–3 years" },
+  { value: "EXPERIENCED", label: "More than 3 years" },
+];
+
 export function ProfileSetupScreen({ navigation }: Props) {
   const [riskLevel, setRiskLevel] = useState<RiskLevel | null>(null);
   const [goalType, setGoalType] = useState<GoalType | null>(null);
+  const [experienceLevel, setExperienceLevel] = useState<ExperienceLevel>("BEGINNER");
   const [monthlyIncome, setMonthlyIncome] = useState("");
   const [monthlyExpense, setMonthlyExpense] = useState("");
   const [age, setAge] = useState("");
@@ -64,6 +75,7 @@ export function ProfileSetupScreen({ navigation }: Props) {
         if (cancelled) return;
         setRiskLevel(profile.riskLevel);
         setGoalType(profile.goalType);
+        if (profile.experienceLevel) setExperienceLevel(profile.experienceLevel);
         setMonthlyIncome(String(profile.monthlyIncome));
         setMonthlyExpense(String(profile.monthlyExpense));
         setAge(String(profile.age));
@@ -118,6 +130,7 @@ export function ProfileSetupScreen({ navigation }: Props) {
         body: {
           riskLevel,
           goalType,
+          experienceLevel,
           monthlyIncome: Number(monthlyIncome),
           monthlyExpense: Number(monthlyExpense),
           age: Number(age),
@@ -169,6 +182,20 @@ export function ProfileSetupScreen({ navigation }: Props) {
               selected={goalType === option.value}
               disabled={submitting}
               onPress={() => setGoalType(option.value)}
+              fullWidth
+            />
+          ))}
+        </View>
+
+        <Text style={styles.label}>How long have you been investing?</Text>
+        <View style={styles.optionColumn}>
+          {EXPERIENCE_OPTIONS.map((option) => (
+            <OptionButton
+              key={option.value}
+              label={option.label}
+              selected={experienceLevel === option.value}
+              disabled={submitting}
+              onPress={() => setExperienceLevel(option.value)}
               fullWidth
             />
           ))}
