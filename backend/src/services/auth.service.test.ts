@@ -115,10 +115,10 @@ describe("AuthService", () => {
     });
   });
   describe("getCurrentUser (session check)", () => {
-    it("returns the id and email for a real account", async () => {
-      mockedPrisma.user.findUnique.mockResolvedValue({ id: "user-1", email: "u@example.com", isSynthetic: false });
+    it("returns the id, email and display name for a real account", async () => {
+      mockedPrisma.user.findUnique.mockResolvedValue({ id: "user-1", email: "u@example.com", displayName: "Hao", isSynthetic: false });
 
-      expect(await authService.getCurrentUser("user-1")).toEqual({ id: "user-1", email: "u@example.com" });
+      expect(await authService.getCurrentUser("user-1")).toEqual({ id: "user-1", email: "u@example.com", displayName: "Hao" });
       expect(mockedPrisma.user.findUnique).toHaveBeenCalledWith({ where: { id: "user-1" } });
     });
 

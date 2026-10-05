@@ -1252,6 +1252,118 @@ Implements: extends FR04 (SRS v1.13 adds FR29–FR30). Owner: `backend/prisma/fu
 (`earliestStartMonth`), mobile `FundBrowserScreen.tsx`, `PlanSetupScreen.tsx`,
 `components/charts/MixBar.tsx`.
 
+## 17. A portfolio-style dashboard, and account management (4 Oct 2026)
+
+**Problem.** The dashboard was four stand-alone cards (a contribution summary, a bar
+chart, wallet, savings rate). It didn't read as "here is your money", there was no
+view of *what you hold*, and a user had no way to change their name, email or
+password; "Log out" was a small link in a corner.
+
+**Decision.** Rebuild the dashboard in the style of a brokerage account screen, in
+four parts, and add account management.
+
+1. **Summary card.** *Total assets* (invested value + cash), *last month* (the profit
+   or loss of the latest month, in dollars and per cent), then *securities value*,
+   *unrealised P&L* (amount and per cent) and *cash balance* (with how many months of
+   expenses it covers), plus total contributed.
+2. **Your holdings.** The plan's funds, each with its asset class, currency, weight
+   and value; tap one to open that fund's history. Capped at 6 with "Show all N",
+   like the other lists. Shows the portfolio name, the monthly contribution and how
+   many months it has run, with a "Change plan" link.
+3. **Growth over time** and **Savings Rate**, as before. The separate Wallet card is
+   gone: cash balance moved into the summary.
+4. **Account.** Display name, email, password, log out; each opens its own small
+   screen (`EditAccountScreen`), so the dashboard stays a list. It is also shown
+   when there is no plan yet, so a new user can still reach it.
+
+**What the figures mean** (all computed in `dashboard.service.ts`, pure and tested):
+
+| Figure | Definition |
+|---|---|
+| Securities value | the plan's current value |
+| Unrealised P&L | value − total contributed; % of what was contributed |
+| Cash balance | the wallet: income − expense − contribution, accumulated monthly |
+| Total assets | securities value + cash balance |
+| Last month | the latest month's profit after its own contribution: V_t − V_{t−1} − C_t, as a % of V_{t−1} + C_t |
+
+Your note read "total securities value will be the total contribution" — I took
+that as the invested money, shown **both** ways: *Securities value* (what it is
+worth now) and *Contributed so far* (what went in), so the gap is the P&L. There is
+no "daily P&L" as in the screenshot, because the app works in months; "last month"
+takes its place.
+
+**Holdings are valued at their weights, with no per-fund profit — deliberately.** The
+plan engine blends the funds' returns at fixed weights every month, which is
+equivalent to rebalancing to those weights monthly. So a fund's value is
+`weight × portfolio value`, but it has no independent cost basis: showing a per-fund
+profit would invent a number the model doesn't have. The screen says so
+("rebalanced to these weights every month"), and a test asserts that the holdings
+carry no profit field.
+
+**Account management** (`/auth/*`, all behind sign-in):
+
+- *Display name* — reuses `PUT /friends/settings` (the name friends see; 1–30 chars).
+- *Email* — `PUT /auth/email {newEmail, password}`. Needs the **current password**; the
+  address is trimmed and lower-cased; 409 if another account has it; any pending
+  password-reset code is discarded (it was addressed to the old email).
+- *Password* — `POST /auth/change-password {currentPassword, newPassword}`. Needs the
+  current password; at least 8 characters; must differ from the current one; any
+  pending reset code is discarded.
+- **A wrong current password is a 403, not a 401.** The mobile client treats any
+  authenticated 401 as "your session is dead" and logs the user out (#11); a typo
+  must show "Current password is incorrect", not sign you out. A test pins it, and
+  it was confirmed in the UI.
+- **Rate limit:** 5 wrong guesses per 15 minutes per account, then 429 "Try again in N
+  minute(s)" — even for the correct password. Without it, a stolen session token
+  could be used to guess the password. The count is shared by the email and password
+  forms and resets after a correct one. It is in memory per server process, so it
+  resets on restart and is not shared across servers; fine for a single server.
+- `GET /auth/me` now also returns the display name.
+
+**Limits.**
+- **The new email is not verified** (no confirmation message to the new address), so a
+  typo would send password-reset codes to the wrong place. The screen warns about it.
+  A confirmation code (reusing the reset-code machinery) would close this; left out
+  to keep the change small.
+- **Changing the password does not sign out other devices.** Sessions are stateless
+  tokens valid for 7 days (same limitation as #10). Doing it properly needs a
+  per-user token version checked on every request.
+- Currencies are shown as "$" throughout, though funds are in SGD or USD (no
+  currency conversion anywhere, as before).
+- No account deletion, and no "forgot name" recovery — not asked for.
+- The Growth chart is still the simple bar chart; the line chart used on the fund
+  screen could replace it.
+
+**Verification.**
+- Unit tests: `buildDashboardPlan` (total assets, P&L and its percentage, no percentage
+  with nothing contributed, last-month P&L for a normal month / the first month / a
+  loss / no months, holdings valued at weight and sorted with a stable tie-break,
+  values summing to the portfolio, no per-fund profit, missing portfolio); the rate
+  limiter (window, per-account, reset); `changePassword` and `changeEmail` (hashing,
+  403 not 401, same/short password, normalisation, taken email, race, limit shared
+  between the two); route tests for auth, status mapping and that no password is
+  echoed.
+- **Live API, 21 checks:** on a user running the 5-fund All-Weather preset for 33
+  months, securities value equals the plan's final value, total assets = value +
+  cash, P&L = value − contributed, and last-month P&L matches an independent
+  calculation from the plan's months (−$492.90 for 2026-09 both ways); holdings
+  sorted with values summing to the portfolio; every account rule above, including
+  the 429 after five wrong guesses and logging in with the new email and not the old.
+- **UI (Expo web, phone size):** the summary and holdings render as designed; the
+  display-name change saves and shows on the dashboard; a wrong current password shows
+  its message **and keeps the session**; the no-plan dashboard still shows the Account
+  section; a custom 8-fund portfolio is capped at 6 with "Show all 8 funds" and
+  toggles; tapping a holding opens that fund's history.
+
+**SRS.** `Phase2_SRS_v1.14.docx` (new FR31–FR34, three terms, S-04 amended).
+
+Implements: UC-04 amended, new scope (FR31–FR34). Owner:
+`backend/src/services/dashboard.service.ts` (`buildDashboardPlan`),
+`backend/src/services/auth.service.ts` (`changePassword`, `changeEmail`),
+`backend/src/utils/attemptLimiter.ts`, `backend/src/controllers/auth.controller.ts`,
+`backend/src/routes/auth.routes.ts`, mobile `DashboardScreen.tsx`,
+`EditAccountScreen.tsx`, `navigation/AppNavigator.tsx`.
+
 ## Open items (Design Model §8, carried forward)
 
 - **`Phase2_SRS_v1.6.docx` — done, no longer open.** Produced in the same
