@@ -12,6 +12,12 @@
  *
  * On mount, GETs the existing profile to pre-fill for a returning user
  * editing their profile.
+ *
+ * DECISIONS.md #19: the same form is the "Edit profile" screen (route EditProfile), so a
+ * person can report a new job or new expenses at any time. Saving a first profile opens the
+ * account (this month's spare income becomes the opening cash); editing income or expenses
+ * re-prices only this month's cash, and past months never change. The server refuses a change
+ * that would leave cash below zero, and its message is shown here.
  */
 import { useEffect, useState } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
@@ -19,7 +25,7 @@ import { apiFetch, ApiError } from "../api/client";
 import type { RootStackScreenProps } from "../navigation/AppNavigator";
 import { KeyboardScreen } from "../components/KeyboardScreen";
 
-type Props = RootStackScreenProps<"ProfileSetup">;
+type Props = RootStackScreenProps<"ProfileSetup"> | RootStackScreenProps<"EditProfile">;
 
 type RiskLevel = "LOW" | "MEDIUM" | "HIGH";
 type GoalType = "LEARN" | "HABIT" | "GROWTH";
@@ -55,7 +61,8 @@ const EXPERIENCE_OPTIONS: { value: ExperienceLevel; label: string }[] = [
   { value: "EXPERIENCED", label: "More than 3 years" },
 ];
 
-export function ProfileSetupScreen({ navigation }: Props) {
+export function ProfileSetupScreen({ navigation, route }: Props) {
+  const isEdit = route.name === "EditProfile";
   const [riskLevel, setRiskLevel] = useState<RiskLevel | null>(null);
   const [goalType, setGoalType] = useState<GoalType | null>(null);
   const [experienceLevel, setExperienceLevel] = useState<ExperienceLevel>("BEGINNER");
@@ -136,9 +143,12 @@ export function ProfileSetupScreen({ navigation }: Props) {
           age: Number(age),
         },
       });
-      // Straight to the Contribution tab — having just set up their
-      // profile, setting up a plan is the natural next step.
-      navigation.replace("Main", { screen: "Contribution" });
+      if (isEdit) {
+        navigation.goBack();
+      } else {
+        // Straight to the Portfolios tab: with cash credited, buying something is the next step.
+        navigation.replace("Main", { screen: "Contribution" });
+      }
     } catch (err) {
       setError(describeError(err));
     } finally {
@@ -156,8 +166,12 @@ export function ProfileSetupScreen({ navigation }: Props) {
 
   return (
     <KeyboardScreen contentContainerStyle={styles.container}>
-      <Text style={styles.title}>Set up your profile</Text>
-      <Text style={styles.subtitle}>This shapes your plan and peer comparisons.</Text>
+      <Text style={styles.title}>{isEdit ? "Edit your profile" : "Set up your profile"}</Text>
+      <Text style={styles.subtitle}>
+        {isEdit
+          ? "Changes to income or expenses update this month's cash only; past months stay as they were."
+          : "Your income and expenses decide how much cash you can invest each month, and shape your peer comparisons."}
+      </Text>
 
       <View style={styles.form}>
         <Text style={styles.label}>Risk level</Text>
@@ -241,7 +255,7 @@ export function ProfileSetupScreen({ navigation }: Props) {
           onPress={handleSubmit}
           disabled={submitting}
         >
-          {submitting ? <ActivityIndicator color="#fff" /> : <Text style={styles.submitButtonText}>Continue</Text>}
+          {submitting ? <ActivityIndicator color="#fff" /> : <Text style={styles.submitButtonText}>{isEdit ? "Save changes" : "Continue"}</Text>}
         </Pressable>
       </View>
     </KeyboardScreen>

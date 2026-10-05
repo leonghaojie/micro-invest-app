@@ -31,7 +31,7 @@ const ASOF = "2026-09";
 const MONTHS = trailingMonths(ASOF, 12);
 const date = (m: string) => new Date(`${m}-01T00:00:00.000Z`);
 
-function planRow(i: number, over: { userId?: string; synthetic?: boolean; noProfile?: boolean; risk?: string; months?: number } = {}) {
+function planRow(i: number, over: { userId?: string; synthetic?: boolean; noProfile?: boolean; risk?: string; months?: number; holdingless?: boolean; positionless?: boolean } = {}) {
   const userId = over.userId ?? `user-${i}`;
   const n = over.months ?? 12;
   return {
@@ -49,16 +49,16 @@ function planRow(i: number, over: { userId?: string; synthetic?: boolean; noProf
             experienceLevel: (["BEGINNER", "INTERMEDIATE", "EXPERIENCED"] as const)[i % 3], // stored, but not used for matching
           },
     },
-    portfolio: {
-      allocations: [
-        { weightPct: "60.00", fund: { assetClass: i % 2 ? "EQUITY" : "BOND" } },
-        { weightPct: "40.00", fund: { assetClass: "REIT" } },
-      ],
-    },
+    holdings: over.holdingless
+      ? []
+      : [
+          { value: "600.00", fund: { assetClass: i % 2 ? "EQUITY" : "BOND" } },
+          { value: "400.00", fund: { assetClass: "REIT" } },
+        ],
     // newest first, as the query returns them
     months: MONTHS.slice(-n)
       .reverse()
-      .map((m, k) => ({ monthDate: date(m), endingBalance: String(5000 + i * 10 - k * 20), portfolioReturnPct: String(0.004 + ((i + k) % 7) * 0.002) })),
+      .map((m, k) => ({ monthDate: date(m), endingBalance: String(5000 + i * 10 - k * 20), portfolioReturnPct: String(0.004 + ((i + k) % 7) * 0.002), hasPosition: !over.positionless })),
   };
 }
 
@@ -127,6 +127,28 @@ describe("PeerCohortService.getCohort", () => {
     const where = db.fundMonthlyReturn.findMany.mock.calls[0][0].where;
     expect(where.fund.ticker.in.sort()).toEqual(["AGG", "VT"]);
     expect(where.monthDate.gte).toEqual(date(MONTHS[0]));
+  });
+
+  it("compares only people who have invested: an account holding just cash is left out", async () => {
+    db.plan.findMany.mockResolvedValue([...crowd(100), planRow(500, { holdingless: true, positionless: true })]);
+    const res = await peerCohortService.getCohort("user-0");
+    if (res.status !== "ok") throw new Error("expected ok");
+    expect(res.population.size).toBe(100);
+  });
+
+  it("is 'no-plan' for a user who has an account but has never invested", async () => {
+    db.plan.findMany.mockResolvedValue([planRow(0, { holdingless: true, positionless: true }), ...crowd(100).slice(1)]);
+    expect(await peerCohortService.getCohort("user-0")).toEqual({ status: "no-plan" });
+  });
+
+  it("leaves months with nothing invested out of a person's returns", async () => {
+    const own = planRow(0);
+    own.months[0] = { ...own.months[0], hasPosition: false }; // the newest month had no position
+    db.plan.findMany.mockResolvedValue([own, ...crowd(100).slice(1)]);
+    const res = await peerCohortService.getCohort("user-0");
+    if (res.status !== "ok") throw new Error("expected ok");
+    // the window can no longer reach the latest month, so the headline is unavailable
+    expect(res.report.headline).toBeNull();
   });
 
   it("skips plans whose owner has no profile", async () => {

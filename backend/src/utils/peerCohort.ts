@@ -542,7 +542,7 @@ export function buildCohortReport(pop: Population, me: Member, ctx: ReportContex
         case "investmentRate":
           return investmentRatePct(m);
         case "diversification":
-          return diversificationScore(m.holdings);
+          return m.holdings.length === 0 ? null : diversificationScore(m.holdings);
         case "return": {
           const r = n > 0 ? windowReturns(m, months) : null;
           return r ? compoundedReturnPct(r) : null;
@@ -563,7 +563,7 @@ export function buildCohortReport(pop: Population, me: Member, ctx: ReportContex
           def.key === "return" || def.key === "returnPerRisk"
             ? def.key === "returnPerRisk" && n > 0
               ? `Needs at least ${MIN_MONTHS_FOR_RISK_ADJUSTED} months of history (you have ${n}).`
-              : "Needs at least 1 month of plan history."
+              : "Needs at least 1 full month of investing history."
             : "Not available yet.",
       };
     }

@@ -1,103 +1,120 @@
 /**
- * DashboardService — FR08, rewritten for DECISIONS.md #1 third amendment
- * (25 Aug 2026): reads off the user's one active Plan (plan.service.ts)
- * instead of a history of Simulation runs — there's still no cross-run
- * aggregate to invent, but now there's also no "latest run" ambiguity to
- * resolve, since there's only ever one plan. NFR-01: target <2s load.
+ * DashboardService — FR08, reshaped for the ledger (DECISIONS.md #19, building on #17):
+ * reads the user's account (plan.service.ts) and turns it into the portfolio overview.
+ * NFR-01: target <2s load.
  *
- * ConsistencyScore/getBehaviour is removed — it measured how many distinct
- * months the user *chose* to run a simulation in, which has no meaning
- * once contributions are an automatic monthly backtest rather than
- * user-initiated runs (DECISIONS.md new metrics entry).
+ * Holdings are now real positions: each fund has a value, a cost basis (average cost of
+ * what is still held) and so its own profit. (Under the old fixed plan the holdings were
+ * the portfolio's nominal weights, so a per-fund profit would have been invented.)
  */
 import { prisma } from "../config/prisma";
 import { PlanSummary, planService, round2 } from "./plan.service";
 
-/** One fund in the user's plan, valued at its weight of the portfolio. */
 export interface DashboardHolding {
   fundId: string;
   ticker: string;
   name: string;
   assetClass: string;
   currency: string;
+  /** Share of the portfolio's current value, percent. */
   weightPct: number;
-  /** weight x the portfolio's current value. The plan rebalances to its weights every
-   * month (that is how the engine blends returns), so this is the fund's share, not a
-   * separately tracked position - there is deliberately no per-fund profit figure. */
+  /** Worth now; this month's trades are held at cost until the month's data arrives. */
   value: number;
+  /** Average cost of what is still held. */
+  costBasis: number;
+  /** value - costBasis. */
+  profit: number;
+  profitPct: number | null;
 }
 
 export interface DashboardPlan {
   planId: string;
-  portfolioName: string;
-  /** Preset portfolios are public names; a custom one is the user's own. */
-  portfolioIsPreset: boolean;
+  /** The month trades are made in now, YYYY-MM. */
+  tradeMonth: string;
+  /** The latest month with data, YYYY-MM: trades are priced at its close. */
+  latestDataMonth: string;
   startMonth: string;
+  /** Typical monthly purchase: the average bought per month over the last <= 12 months. */
   contributionAmount: number;
+  /** Months with money invested. */
   monthsRunning: number;
   /** Current value of the invested money ("securities value"). */
   finalValue: number;
-  /** Everything put in so far (the cost). */
+  /** Net invested: everything bought minus everything sold. */
   totalContributed: number;
-  /** Unrealised profit or loss: value - contributed. */
+  /** Total profit: value minus net invested (it includes what sales have already realised). */
   growth: number;
   growthPct: number | null;
-  /** Cash left over after contributing. */
+  /** Cash in the account. */
   walletBalance: number;
   /** Securities value plus cash. */
   totalAssets: number;
-  /** What the latest month added or took away, after that month's contribution. */
+  /** What the latest month added or took away, after that month's own buys and sells. */
   lastMonth: { month: string; pnl: number; pnlPct: number | null } | null;
   holdings: DashboardHolding[];
 }
 
 export interface DashboardSummary {
+  /** True once the user has an account (a profile); the cash is shown even before the first buy. */
   hasPlan: boolean;
+  /** True once something is held. */
+  hasHoldings: boolean;
   latestPlan: DashboardPlan | null;
 }
 
-interface PortfolioForSummary {
-  isPreset: boolean;
-  allocations: { fundId: string; weightPct: unknown; fund: { ticker: string; name: string; assetClass: string; currency: string } }[];
+export interface FundMeta {
+  id: string;
+  ticker: string;
+  name: string;
+  assetClass: string;
+  currency: string;
 }
 
-/** Pure. Turns the active plan (and its portfolio's funds) into the dashboard figures. */
-export function buildDashboardPlan(plan: PlanSummary, portfolio: PortfolioForSummary | null): DashboardPlan {
+/** Pure. Turns the account (and the funds it holds) into the dashboard figures. */
+export function buildDashboardPlan(plan: PlanSummary, funds: FundMeta[]): DashboardPlan {
   const months = plan.months;
   const last = months[months.length - 1];
   const prev = months[months.length - 2];
 
-  // V_t = (V_{t-1} + C_t)(1 + R_t): the month's profit is V_t - V_{t-1} - C_t.
+  // V_t = (V_{t-1} + net flow_t)(1 + R_t): the month's profit is V_t - V_{t-1} - net flow_t.
   let lastMonth: DashboardPlan["lastMonth"] = null;
-  if (last) {
+  if (last && (last.hasPosition || last.contribution !== 0)) {
     const before = prev ? prev.endingBalance : 0;
     const pnl = round2(last.endingBalance - before - last.contribution);
     const base = before + last.contribution;
     lastMonth = { month: last.monthDate.slice(0, 7), pnl, pnlPct: base > 0 ? round2((pnl / base) * 100) : null };
   }
 
-  const holdings = (portfolio?.allocations ?? [])
-    .map((a) => {
-      const weightPct = Number(a.weightPct);
+  const byId = new Map(funds.map((f) => [f.id, f]));
+  const total = plan.holdings.reduce((s, h) => s + h.value, 0);
+  const holdings = plan.holdings
+    .map((h): DashboardHolding | null => {
+      const f = byId.get(h.fundId);
+      if (!f) return null;
+      const profit = round2(h.value - h.costBasis);
       return {
-        fundId: a.fundId,
-        ticker: a.fund.ticker,
-        name: a.fund.name,
-        assetClass: a.fund.assetClass,
-        currency: a.fund.currency,
-        weightPct,
-        value: round2((weightPct / 100) * plan.finalValue),
+        fundId: f.id,
+        ticker: f.ticker,
+        name: f.name,
+        assetClass: f.assetClass,
+        currency: f.currency,
+        weightPct: total > 0 ? round2((h.value / total) * 100) : 0,
+        value: h.value,
+        costBasis: h.costBasis,
+        profit,
+        profitPct: h.costBasis > 0 ? round2((profit / h.costBasis) * 100) : null,
       };
     })
-    .sort((x, y) => y.weightPct - x.weightPct || x.ticker.localeCompare(y.ticker));
+    .filter((h): h is DashboardHolding => h !== null)
+    .sort((x, y) => y.value - x.value || x.ticker.localeCompare(y.ticker));
 
   return {
     planId: plan.planId,
-    portfolioName: plan.portfolioName,
-    portfolioIsPreset: portfolio?.isPreset ?? false,
+    tradeMonth: plan.tradeMonth,
+    latestDataMonth: plan.latestDataMonth,
     startMonth: plan.startMonth,
     contributionAmount: plan.contributionAmount,
-    monthsRunning: months.length,
+    monthsRunning: months.filter((m) => m.hasPosition).length,
     finalValue: plan.finalValue,
     totalContributed: plan.totalContributed,
     growth: plan.growth,
@@ -117,7 +134,6 @@ export interface GrowthPoint {
 
 export interface DashboardGrowth {
   planId: string | null;
-  portfolioName: string | null;
   points: GrowthPoint[];
 }
 
@@ -125,28 +141,25 @@ class DashboardService {
   async getSummary(userId: string): Promise<DashboardSummary> {
     const plan = await planService.getActivePlan(userId);
     if (!plan) {
-      return { hasPlan: false, latestPlan: null };
+      return { hasPlan: false, hasHoldings: false, latestPlan: null };
     }
-    const portfolio = await prisma.portfolio.findUnique({
-      where: { id: plan.portfolioId },
-      include: { allocations: { include: { fund: true } } },
-    });
-    return { hasPlan: true, latestPlan: buildDashboardPlan(plan, portfolio) };
+    const funds = plan.holdings.length
+      ? await prisma.fund.findMany({ where: { id: { in: plan.holdings.map((h) => h.fundId) } }, select: { id: true, ticker: true, name: true, assetClass: true, currency: true } })
+      : [];
+    return { hasPlan: true, hasHoldings: plan.holdings.length > 0, latestPlan: buildDashboardPlan(plan, funds) };
   }
 
   async getGrowth(userId: string): Promise<DashboardGrowth> {
     const plan = await planService.getActivePlan(userId);
     if (!plan) {
-      return { planId: null, portfolioName: null, points: [] };
+      return { planId: null, points: [] };
     }
+    // The chart starts when money first went in.
+    const firstInvested = plan.months.findIndex((m) => m.hasPosition || m.contribution !== 0);
+    const shown = firstInvested === -1 ? [] : plan.months.slice(firstInvested);
     return {
       planId: plan.planId,
-      portfolioName: plan.portfolioName,
-      points: plan.months.map((m) => ({
-        monthDate: m.monthDate,
-        portfolioValue: m.endingBalance,
-        walletBalance: m.walletBalance,
-      })),
+      points: shown.map((m) => ({ monthDate: m.monthDate, portfolioValue: m.endingBalance, walletBalance: m.walletBalance })),
     };
   }
 }

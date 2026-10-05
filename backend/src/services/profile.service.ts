@@ -13,7 +13,8 @@ import { ExperienceLevel, GoalType, RiskLevel } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "../config/prisma";
 import { HttpError } from "../utils/httpError";
-import { round2 } from "./plan.service";
+import { round2, spareIncome } from "../utils/ledger";
+import { advance, computeState, ensureAccount, getClock, lockPlan, monthDate } from "./ledger.service";
 
 const upsertProfileSchema = z.object({
   riskLevel: z.nativeEnum(RiskLevel),
@@ -73,15 +74,60 @@ class ProfileService {
     return toResult(profile);
   }
 
+  /**
+   * Creates the profile, or edits it (DECISIONS.md #19). Creating one opens the account,
+   * with the setup's spare income credited as the first month's cash. Editing income or
+   * expenses re-prices the CURRENT month's credit only (past months never change); it is
+   * refused if money already spent that month would then be more than the cash left.
+   * Age, risk, goal and experience have no cash effect.
+   */
   async upsertProfile(userId: string, input: unknown): Promise<ProfileResult> {
     const parsed = upsertProfileSchema.parse(input);
+    const existing = await prisma.userProfile.findUnique({ where: { userId } });
 
-    const profile = await prisma.userProfile.upsert({
-      where: { userId },
-      create: { userId, ...parsed },
-      update: { ...parsed },
-    });
+    if (!existing) {
+      const profile = await prisma.userProfile.create({ data: { userId, ...parsed } });
+      try {
+        const clock = await getClock();
+        await prisma.$transaction((tx) => ensureAccount(tx, userId, clock));
+      } catch (err) {
+        // No fund data yet: the account is opened on first use instead.
+        if (!(err instanceof HttpError && err.statusCode === 503)) throw err;
+      }
+      return toResult(profile);
+    }
 
+    const financesChanged = Number(existing.monthlyIncome) !== parsed.monthlyIncome || Number(existing.monthlyExpense) !== parsed.monthlyExpense;
+    if (!financesChanged) {
+      return toResult(await prisma.userProfile.update({ where: { userId }, data: { ...parsed } }));
+    }
+
+    const clock = await getClock();
+    const profile = await prisma.$transaction(
+      async (tx) => {
+        const plan = await ensureAccount(tx, userId, clock);
+        await lockPlan(tx, plan.id);
+        // Credit every month passed so far at the OLD figures, before the new ones apply.
+        await advance(tx, plan.id, userId, clock);
+
+        const updated = await tx.userProfile.update({ where: { userId }, data: { ...parsed } });
+        const newSpare = spareIncome(parsed.monthlyIncome, parsed.monthlyExpense);
+        const credit = await tx.cashCredit.findUnique({ where: { planId_month: { planId: plan.id, month: monthDate(clock.tradeMonth) } } });
+        if (credit) {
+          const delta = round2(newSpare - Number(credit.amount));
+          const state = await computeState(tx, plan.id, clock);
+          if (state.cash + delta < -0.005) {
+            throw new HttpError(
+              422,
+              `This change would lower this month's cash by $${Math.abs(delta).toFixed(2)}, but you have only $${state.cash.toFixed(2)} left after your purchases. Sell something first, or make the change next month.`
+            );
+          }
+          await tx.cashCredit.update({ where: { id: credit.id }, data: { amount: newSpare } });
+        }
+        return updated;
+      },
+      { timeout: 20_000, maxWait: 10_000 }
+    );
     return toResult(profile);
   }
 }

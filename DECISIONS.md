@@ -1300,6 +1300,9 @@ profit would invent a number the model doesn't have. The screen says so
 ("rebalanced to these weights every month"), and a test asserts that the holdings
 carry no profit field.
 
+*Superseded in part by #19:* holdings are now real positions with their own cost basis and
+profit, and they are no longer rebalanced to fixed weights.
+
 **Account management** (`/auth/*`, all behind sign-in):
 
 - *Display name* — reuses `PUT /friends/settings` (the name friends see; 1–30 chars).
@@ -1491,10 +1494,13 @@ Implements: UC-05 amended (FR35–FR37). Owner: `backend/src/utils/peerCohort.ts
 `backend/prisma/schema.prisma` (`ExperienceLevel`), `backend/src/utils/syntheticPeers.ts`,
 mobile `PeerCohort.tsx`, `PeerComparisonScreen.tsx`, `ProfileSetupScreen.tsx`.
 
-## 19. Buy, sell and recurring buys: a ledger replaces the fixed monthly plan (5 Oct 2026) — design agreed, not yet built
+## 19. Buy, sell and recurring buys: a ledger replaces the fixed monthly plan (5 Oct 2026) — PR 2 built; recurring-buy screens are PR 3
 
 **Status.** Design agreed on 5 Oct 2026 (the four questions at the end were answered
-"go with the recommendations"). Nothing in this section is implemented yet. It supersedes the
+"go with the recommendations"). **PR 2 is built** (see "What was built", below): the
+ledger, buy/sell, profile edit, migration, and the recurring-buy table and monthly
+runner. **PR 3 is not**: the screens to set up, pause and resume a recurring buy, and the
+consistency card. Where the build differs from the design it is said in "What was built". It supersedes the
 "one plan, one portfolio, one fixed monthly contribution" model of #1 (third amendment),
 and with it #6/#7's wallet arithmetic. Build order is in "Phasing" below.
 
@@ -1533,9 +1539,10 @@ becomes Nov, and November's cash arrives.
 - **Each later trade month** credits (income − expense) as of the profile at that moment.
 - Cash = credits + sale proceeds − purchases. **A buy cannot exceed cash**, and **a sell
   cannot exceed what is held**. No margin, no negative cash for new trades.
-- Credits are **stored as ledger rows**, created when a new trade month is first seen (on
-  the user's next request, and for everyone right after each monthly data update). Because
-  a stored credit never changes afterwards, a later salary change cannot rewrite the past.
+- Credits are **stored rows** (`cash_credits`, one per account per month), created when a
+  new trade month is first seen (on the user's next request, and for everyone right after
+  each monthly data update). Because a stored credit never changes afterwards, a later
+  salary change cannot rewrite the past.
 
 ### 3. Profile changes (your new requirement)
 
@@ -1672,6 +1679,73 @@ Two honest consequences:
   accounts, the largest difference in final value reported.
 - Concurrency: two simultaneous buys that together exceed cash — exactly one succeeds.
 - UI (phone size): buy, sell, basket buy, refusal messages, edit profile, activity list.
+
+### 12. What was built (PR 2)
+
+**Where the build differs from the design above.**
+- **Credits are their own table.** `cash_credits` (unique per account and month) instead of
+  CREDIT rows in the ledger: it makes "one credit per month" a database guarantee, so
+  catching up is idempotent. `ledger_entries` therefore holds only BUY and SELL.
+- **Within a month, buys are applied before sells.** A sell can use what was bought the same
+  month, and the order two quick taps arrive in cannot change a result. The sell limit is
+  the holding's current value including this month's buys.
+- **Minimum trade is $1** (a "sell everything" may be less); a trade is rejected if it
+  would spend more cash, or sell more of a fund, than there is, to the cent.
+- **Recurring buys.** `recurring_rules` and `recurring_runs` exist and a runner executes due
+  rules whenever an account is caught up (each read, each trade, and for every account after
+  each monthly data update): BOUGHT when the month's cash covers it, otherwise a SKIPPED
+  run, never silently dropped. There is no way to create or pause a rule from the app yet
+  (PR 3); every migrated account has one active rule.
+- **Derived tables.** `plan_months` (one snapshot per month with data, plus `hasPosition`:
+  false for a month with nothing invested, whose "return" of 0 is not a return),
+  `plan_holdings` (what is held now, with cost basis) and `plan.contributionAmount` (the
+  typical monthly buy). Everything is recomputed from the facts on read.
+- **Friends and peers.** Reading another person's account never changes it or opens one.
+  Only accounts that have invested count as peers (cash alone is not an investment). A
+  friend's holdings are shown as shares of value, and there is no portfolio name to show.
+- **API.** `POST /trades/buy`, `POST /trades/sell`, `GET /trades` (activity); `POST /plan` is
+  gone. Creating the profile opens the account.
+- **Screens.** The Contribution tab is now **Portfolios** (buy a ready-made mix); a fund's
+  screen has a **Your position** card with Buy / Sell; a **Trade** screen (amount, quick
+  amounts, the pricing note, the result); **Activity**; the dashboard shows cash before the
+  first buy and each holding's profit; **Edit profile** is reached from the dashboard's
+  Account section and is the same form as first-time setup.
+
+**Migration (measured on the 300 synthetic accounts).** Cash and net invested match the old
+figures exactly for all 300. All 66 single-fund plans match to the cent. For the 234
+multi-fund plans the final value moves by 0.20% on average and at most 1.23%, because
+holdings now drift instead of being rebalanced every month. Backfill is
+`npm run backfill-ledger`; the seed uses the same path for synthetic peers.
+
+**Verification.**
+- 645 backend tests pass (26 new for the engine, 22 ledger service, 18 trade service, the
+  profile re-pricing rules, the dashboard and the rewritten friends and cohort cases).
+- **Live API (36 checks):** a new account opens with the right cash; buying a fund and a
+  portfolio (legs add up to the amount exactly); refusals (over-spend, under $1, selling
+  what is not held or more than held); **three simultaneous buys that together exceed cash:
+  exactly one succeeds**; sells; cash and net invested equal an independent tally of the
+  activity list; a raise adds the difference to this month's cash, a cut that would make
+  cash negative is refused and changes nothing, an edit never adds a second credit; the
+  dashboard, the five Explore metrics, the allocation panel, the cohort view, insights and
+  friends all still respond.
+- **Month rollover, on a throwaway database** (never the dev one): data rolled back a month,
+  an account bought VT and had a recurring AGG buy, the data was loaded again and every
+  account refreshed. The September buys earned September's return to the cent against an
+  independent calculation, October's recurring buy was bought at cost, the monthly credit
+  appeared, the stored time-weighted return matched, 300 synthetic accounts each got their
+  October credit and recurring buy, and refreshing again changed nothing.
+- **UI (Expo web, phone size):** dashboard with holdings and profit; sell with the
+  over-limit message, then a 25% sell; a portfolio buy ($100.01 split to the cent); the
+  Portfolios tab; Activity; Edit profile (a refused change shows the server's reason; a
+  raise adds $1,000 to cash and returns to the dashboard).
+
+**Limits.**
+- Legacy accounts whose old contribution exceeded their spare income keep negative cash from
+  the old model. Nothing blocks that history; only new trades must fit within cash.
+- A buy shows at cost until its month's data arrives; there is no "pending" state.
+- Until PR 3, a recurring buy can only be changed by the database. Migrated accounts keep
+  buying their old monthly amount.
+- `earliestStartMonth` on portfolios is no longer used by any screen (trades are live).
 
 **Decisions on the open questions** (all taken as recommended):
 1. Profile edits re-price the **current month's** credit, guarded against negative cash.

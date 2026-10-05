@@ -21,6 +21,7 @@ import { readFileSync } from "fs";
 import { join } from "path";
 import { prisma } from "../config/prisma";
 import { deriveMonthlyReturns, DerivedReturn, findGaps, lastCompleteMonth, monthKey, monthsBetween, RawRow } from "../utils/fundIngest";
+import { oldestLatestMonth } from "./fundClock";
 import { planService } from "./plan.service";
 
 export const DATA_DIR = join(__dirname, "..", "..", "prisma", "yfinance-data");
@@ -56,15 +57,7 @@ export interface UpdateSummary {
   error?: string;
 }
 
-/** The month the laggard fund has data to: min over funds of their newest month. */
-export async function oldestLatestMonth(): Promise<string | null> {
-  const funds = await prisma.fund.findMany({
-    select: { monthlyReturns: { orderBy: { monthDate: "desc" }, take: 1, select: { monthDate: true } } },
-  });
-  const latest = funds.map((f) => (f.monthlyReturns[0] ? monthKey(f.monthlyReturns[0].monthDate) : null));
-  if (latest.length === 0 || latest.some((m) => m === null)) return null;
-  return (latest as string[]).reduce((min, m) => (m < min ? m : min));
-}
+export { oldestLatestMonth };
 
 /** Reads the raw files the Python step wrote and applies them. Safe to re-run:
  * existing months are only touched if a value actually changed. */

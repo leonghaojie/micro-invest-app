@@ -81,7 +81,7 @@ describe("PeerGroupingService.resolveSegment", () => {
     const result = await peerGroupingService.resolveSegment("u", ["startMonth"]);
 
     expect(result.filters?.startMonth).toEqual(start);
-    expect(db.userProfile.count.mock.calls[0][0].where.user).toEqual({ plan: { months: { some: {} }, startMonth: start } });
+    expect(db.userProfile.count.mock.calls[0][0].where.user).toEqual({ plan: { months: { some: { hasPosition: true } }, startMonth: start } });
   });
 
   it("400s for a start-month comparison when the user has no plan", async () => {

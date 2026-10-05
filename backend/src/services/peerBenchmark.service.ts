@@ -71,6 +71,7 @@ class PeerBenchmarkService {
               SELECT DISTINCT ON (p."userId") p."userId" AS "userId", pm."endingBalance", pm."walletBalance"
               FROM plans p
               JOIN plan_months pm ON pm."planId" = p.id
+              WHERE p.id IN (SELECT "planId" FROM plan_months WHERE "hasPosition")
               ORDER BY p."userId", pm."monthDate" DESC
             ),
             peers AS (
@@ -97,6 +98,7 @@ class PeerBenchmarkService {
               SELECT DISTINCT ON (p."userId") p."userId" AS "userId", pm."endingBalance", pm."walletBalance"
               FROM plans p
               JOIN plan_months pm ON pm."planId" = p.id
+              WHERE p.id IN (SELECT "planId" FROM plan_months WHERE "hasPosition")
               ORDER BY p."userId", pm."monthDate" DESC
             ),
             peers AS (
@@ -138,12 +140,14 @@ class PeerBenchmarkService {
       orderBy: { monthDate: "desc" },
     });
 
+    // Cash alone is not an investment: no value to compare until something has been bought.
+    const invested = latestMonth ? await prisma.planMonth.count({ where: { plan: { userId }, hasPosition: true } }) : 0;
     if (!latestMonth) {
       return { finalValue: null, savingsRatePct, emergencyBuffer: null };
     }
 
     return {
-      finalValue: Number(latestMonth.endingBalance),
+      finalValue: invested > 0 ? Number(latestMonth.endingBalance) : null,
       savingsRatePct,
       emergencyBuffer: expense > 0 ? Number(latestMonth.walletBalance) / expense : null,
     };

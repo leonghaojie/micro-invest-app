@@ -162,6 +162,9 @@ model Fund {
 
   monthlyReturns FundMonthlyReturn[]
   allocations    PortfolioAllocation[]
+  ledgerEntries  LedgerEntry[]
+  holdings       PlanHolding[]
+  rules          RecurringRule[]
 
   @@unique([ticker, exchange])
   @@map("funds")
@@ -205,6 +208,7 @@ model Portfolio {
   user        User?                 @relation(fields: [userId], references: [id], onDelete: Cascade)
   allocations PortfolioAllocation[]
   plans       Plan[]
+  rules       RecurringRule[]
 
   @@map("portfolios")
 }
@@ -232,17 +236,27 @@ model PortfolioAllocation {
 // call. startMonth is user-chosen (e.g. 2026-01-01); the plan always runs
 // through to the real current month — there is no storable "end month" or
 // duration, months are (re)computed on every read (plan.service.ts).
+// DECISIONS.md #19: a Plan row is now the user's investment ACCOUNT (one per user). What
+// they hold is derived from ledger_entries + cash_credits; the columns below are either
+// derived (contributionAmount, startMonth) or legacy (portfolioId, emptied by the backfill).
 model Plan {
   id                 String   @id @default(uuid())
   userId             String   @unique
-  portfolioId        String
-  contributionAmount Decimal  @db.Decimal(10, 2)
+  // Legacy: the one portfolio of the old fixed plan. Null once the ledger backfill has run.
+  portfolioId        String?
+  // Derived: average dollars bought per month over the last <= 12 months.
+  contributionAmount Decimal  @default(0) @db.Decimal(10, 2)
+  // The account's first month; moved to the first month with a buy once there is one.
   startMonth         DateTime // first-of-month
   createdAt          DateTime @default(now())
 
-  user      User        @relation(fields: [userId], references: [id], onDelete: Cascade)
-  portfolio Portfolio   @relation(fields: [portfolioId], references: [id])
+  user      User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  portfolio Portfolio?      @relation(fields: [portfolioId], references: [id])
   months    PlanMonth[]
+  entries   LedgerEntry[]
+  credits   CashCredit[]
+  holdings  PlanHolding[]
+  rules     RecurringRule[]
 
   @@map("plans")
 }
@@ -265,11 +279,125 @@ model PlanMonth {
   // Cumulative (monthlyIncome - monthlyExpense - contribution) through this
   // month — feeds the Emergency Buffer metric (walletBalance / monthlyExpense).
   walletBalance      Decimal  @db.Decimal(12, 2)
+  // False when nothing was held during the month: portfolioReturnPct is then 0 and is not
+  // a real return (DECISIONS.md #19).
+  hasPosition        Boolean  @default(true)
 
   plan Plan @relation(fields: [planId], references: [id], onDelete: Cascade)
 
   @@unique([planId, monthDate])
   @@map("plan_months")
+}
+
+enum TradeSide {
+  BUY
+  SELL
+}
+
+enum TradeSource {
+  MANUAL
+  RECURRING
+  MIGRATED
+}
+
+enum CreditSource {
+  SETUP
+  MONTHLY
+  MIGRATED
+}
+
+// DECISIONS.md #19: the facts. Every buy and sell, in the order they happened. Holdings,
+// value and profit are derived from these (and the fund returns), never stored as truth.
+model LedgerEntry {
+  id        String      @id @default(uuid())
+  planId    String
+  // The trade month, first-of-month: the month after the latest data month when it was made.
+  month     DateTime
+  side      TradeSide
+  fundId    String
+  amount    Decimal     @db.Decimal(14, 2)
+  source    TradeSource
+  // Groups the legs of one basket (portfolio) buy.
+  batchId   String?
+  createdAt DateTime    @default(now())
+
+  plan Plan @relation(fields: [planId], references: [id], onDelete: Cascade)
+  fund Fund @relation(fields: [fundId], references: [id])
+
+  @@index([planId, month])
+  @@map("ledger_entries")
+}
+
+// One credit of spare income (income - expense) per account per month. Stored, so a later
+// salary change cannot rewrite the past; unique per month, so catching up is idempotent.
+model CashCredit {
+  id        String       @id @default(uuid())
+  planId    String
+  month     DateTime
+  amount    Decimal      @db.Decimal(12, 2)
+  source    CreditSource
+  createdAt DateTime     @default(now())
+
+  plan Plan @relation(fields: [planId], references: [id], onDelete: Cascade)
+
+  @@unique([planId, month])
+  @@map("cash_credits")
+}
+
+// Derived, latest only: what the account holds now (including the trade month at cost).
+model PlanHolding {
+  planId    String
+  fundId    String
+  value     Decimal @db.Decimal(14, 2)
+  costBasis Decimal @db.Decimal(14, 2)
+
+  plan Plan @relation(fields: [planId], references: [id], onDelete: Cascade)
+  fund Fund @relation(fields: [fundId], references: [id])
+
+  @@id([planId, fundId])
+  @@map("plan_holdings")
+}
+
+// A monthly buy: exactly one of fundId / portfolioId is set. Pausing ends the rule
+// (endMonth); resuming makes a new one, so past rules stay as history. Runs each trade month.
+model RecurringRule {
+  id          String    @id @default(uuid())
+  planId      String
+  fundId      String?
+  portfolioId String?
+  amount      Decimal   @db.Decimal(10, 2)
+  startMonth  DateTime
+  // Last month the rule runs in, inclusive; null while active.
+  endMonth    DateTime?
+  createdAt   DateTime  @default(now())
+
+  plan      Plan           @relation(fields: [planId], references: [id], onDelete: Cascade)
+  fund      Fund?          @relation(fields: [fundId], references: [id])
+  portfolio Portfolio?     @relation(fields: [portfolioId], references: [id])
+  runs      RecurringRun[]
+
+  @@index([planId])
+  @@map("recurring_rules")
+}
+
+enum RunStatus {
+  BOUGHT
+  SKIPPED
+}
+
+// What a rule did in a month. A SKIPPED run (not enough cash) is kept, so a missed month is
+// visible and counts against consistency. Unique per rule and month: running is idempotent.
+model RecurringRun {
+  id        String    @id @default(uuid())
+  ruleId    String
+  month     DateTime
+  status    RunStatus
+  createdAt DateTime  @default(now())
+
+  rule RecurringRule @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+
+  @@unique([ruleId, month])
+  @@map("recurring_runs")
 }
 
 // DECISIONS.md #10 (password reset): at most one outstanding reset code per

@@ -14,14 +14,14 @@ jest.mock("../config/prisma", () => ({
   prisma: {
     $queryRaw: jest.fn(),
     userProfile: { findUnique: jest.fn() },
-    planMonth: { findFirst: jest.fn() },
+    planMonth: { findFirst: jest.fn(), count: jest.fn() },
   },
 }));
 
 const mockedPrisma = prisma as unknown as {
   $queryRaw: jest.Mock;
   userProfile: { findUnique: jest.Mock };
-  planMonth: { findFirst: jest.Mock };
+  planMonth: { findFirst: jest.Mock; count: jest.Mock };
 };
 
 const BAND: PeerGroupAssignment = { bandPct: 10, lo: 3600, hi: 4400, memberCount: 12 };
@@ -98,10 +98,21 @@ describe("PeerBenchmarkService", () => {
     it("derives finalValue and Emergency Buffer from the latest plan month", async () => {
       mockedPrisma.userProfile.findUnique.mockResolvedValue({ monthlyIncome: "4000.00", monthlyExpense: "2000.00" });
       mockedPrisma.planMonth.findFirst.mockResolvedValue({ endingBalance: "1333.37", walletBalance: "3000.00" });
+      mockedPrisma.planMonth.count.mockResolvedValue(3);
 
       const result = await peerBenchmarkService.getMyMetrics("user-1");
 
       expect(result).toEqual({ finalValue: 1333.37, savingsRatePct: 50, emergencyBuffer: 1.5 });
+    });
+
+    it("has no value to compare while the account holds only cash (nothing bought yet)", async () => {
+      mockedPrisma.userProfile.findUnique.mockResolvedValue({ monthlyIncome: "4000.00", monthlyExpense: "2000.00" });
+      mockedPrisma.planMonth.findFirst.mockResolvedValue({ endingBalance: "0.00", walletBalance: "3000.00" });
+      mockedPrisma.planMonth.count.mockResolvedValue(0);
+
+      const result = await peerBenchmarkService.getMyMetrics("user-1");
+
+      expect(result).toEqual({ finalValue: null, savingsRatePct: 50, emergencyBuffer: 1.5 });
     });
   });
 });

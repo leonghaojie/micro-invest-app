@@ -13,7 +13,7 @@ import { DashboardScreen } from "../screens/DashboardScreen";
 import { FundBrowserScreen } from "../screens/FundBrowserScreen";
 import { InsightsScreen } from "../screens/InsightsScreen";
 import { PeerComparisonScreen } from "../screens/PeerComparisonScreen";
-import { PlanSetupScreen } from "../screens/PlanSetupScreen";
+import { PortfoliosScreen } from "../screens/PortfoliosScreen";
 import type { MainTabParamList } from "./AppNavigator";
 
 const Tab = createBottomTabNavigator<MainTabParamList>();
@@ -42,7 +42,7 @@ export function MainTabNavigator() {
     <Tab.Navigator screenOptions={screenOptions}>
       <Tab.Screen name="Dashboard" component={DashboardScreen} options={{ title: "Dashboard" }} />
       <Tab.Screen name="Funds" component={FundBrowserScreen} options={{ title: "Funds" }} />
-      <Tab.Screen name="Contribution" component={PlanSetupScreen} options={{ title: "Contribution" }} />
+      <Tab.Screen name="Contribution" component={PortfoliosScreen} options={{ title: "Portfolios" }} />
       <Tab.Screen name="PeerComparison" component={PeerComparisonScreen} options={{ title: "Peers" }} />
       <Tab.Screen name="Insights" component={InsightsScreen} options={{ title: "Insights" }} />
     </Tab.Navigator>
