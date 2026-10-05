@@ -51,7 +51,8 @@ export interface TradeResult {
 }
 
 export interface ActivityItem {
-  kind: "BUY" | "SELL" | "CREDIT";
+  /** SKIPPED: a monthly buy that did not run because the month's cash did not cover it. */
+  kind: "BUY" | "SELL" | "CREDIT" | "SKIPPED";
   month: string;
   amount: number;
   source: string;
@@ -146,9 +147,15 @@ class TradeService {
   async history(userId: string, limit = 50): Promise<ActivityItem[]> {
     const plan = await prisma.plan.findUnique({ where: { userId }, select: { id: true } });
     if (!plan) return [];
-    const [entries, credits] = await Promise.all([
+    const [entries, credits, skipped] = await Promise.all([
       prisma.ledgerEntry.findMany({ where: { planId: plan.id }, include: { fund: { select: { ticker: true, name: true } } }, orderBy: [{ createdAt: "desc" }, { id: "desc" }], take: limit }),
       prisma.cashCredit.findMany({ where: { planId: plan.id }, orderBy: { month: "desc" }, take: limit }),
+      prisma.recurringRun.findMany({
+        where: { status: "SKIPPED", rule: { planId: plan.id } },
+        include: { rule: { select: { amount: true, fund: { select: { ticker: true, name: true } }, portfolio: { select: { name: true } } } } },
+        orderBy: { month: "desc" },
+        take: limit,
+      }),
     ]);
     const items: ActivityItem[] = [
       ...entries.map((e) => ({
@@ -174,6 +181,19 @@ class TradeService {
         at: c.createdAt.toISOString(),
       })),
     ];
+    items.push(
+      ...skipped.map((r) => ({
+        kind: "SKIPPED" as const,
+        month: monthKey(r.month),
+        amount: Number(r.rule.amount),
+        source: "RECURRING",
+        fundId: null,
+        ticker: r.rule.fund?.ticker ?? null,
+        name: r.rule.fund?.name ?? r.rule.portfolio?.name ?? null,
+        batchId: null,
+        at: r.createdAt.toISOString(),
+      }))
+    );
     // Migrated rows were all written at once; order by month first, then by when they were written.
     items.sort((a, b) => (a.month < b.month ? 1 : a.month > b.month ? -1 : a.at < b.at ? 1 : a.at > b.at ? -1 : 0));
     return items.slice(0, limit);

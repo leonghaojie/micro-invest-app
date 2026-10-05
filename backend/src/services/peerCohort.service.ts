@@ -15,6 +15,7 @@
  */
 import { env } from "../config/env";
 import { prisma } from "../config/prisma";
+import { contributionConsistency, tradeMonthAfter } from "../utils/ledger";
 import { buildCohortReport, buildPopulation, CohortReport, Member, Risk, trailingMonths } from "../utils/peerCohort";
 import { oldestLatestMonth } from "./fundDataUpdate.service";
 import { planService } from "./plan.service";
@@ -54,6 +55,16 @@ class PeerCohortService {
       },
     });
 
+    // Months in which each account bought something, for contribution consistency.
+    const buyRows = await prisma.ledgerEntry.groupBy({ by: ["planId", "month"], where: { side: "BUY" } });
+    const buyMonthsByPlan = new Map<string, string[]>();
+    for (const r of buyRows) {
+      const list = buyMonthsByPlan.get(r.planId) ?? [];
+      list.push(monthKey(r.month));
+      buyMonthsByPlan.set(r.planId, list);
+    }
+    const tradeMonth = tradeMonthAfter(asOf);
+
     const members: Member[] = [];
     let simulated = 0;
     for (const plan of plans) {
@@ -70,6 +81,7 @@ class PeerCohortService {
         expense: Number(p.monthlyExpense),
         risk: p.riskLevel as Risk,
         contribution: Number(plan.contributionAmount),
+        consistencyPct: contributionConsistency(buyMonthsByPlan.get(plan.id) ?? [], tradeMonth)?.pct ?? null,
         holdings: plan.holdings.map((h) => ({ assetClass: h.fund.assetClass, weight: heldTotal > 0 ? Number(h.value) / heldTotal : 0 })),
         // Months with nothing invested have no return and are left out.
         monthlyReturns: Object.fromEntries(plan.months.filter((m) => m.hasPosition).map((m) => [monthKey(m.monthDate), Number(m.portfolioReturnPct)])),

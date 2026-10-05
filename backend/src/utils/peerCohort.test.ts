@@ -48,6 +48,7 @@ function member(id: string, over: Partial<Member> = {}): Member {
     expense: 2400,
     risk: "MEDIUM",
     contribution: 400,
+    consistencyPct: 100,
     holdings: [
       { assetClass: "EQUITY", weight: 0.6 },
       { assetClass: "BOND", weight: 0.4 },
@@ -69,6 +70,7 @@ function population(n: number, seed = 7): Member[] {
       expense: Math.round(income * (0.4 + rng() * 0.45)),
       risk: risks[Math.floor(rng() * 3)],
       contribution: Math.round(income * (0.03 + rng() * 0.12)),
+      consistencyPct: Math.round(40 + rng() * 60),
       monthlyReturns: Object.fromEntries(MONTHS12.map((m) => [m, (rng() - 0.45) * 0.06])),
     });
   });
@@ -532,11 +534,11 @@ describe("buildCohortReport", () => {
   const me = members[0];
   const pop = buildPopulation(members);
 
-  it("gives four cards, an identity, a group, and a headline with a benchmark", () => {
+  it("gives five cards, an identity, a group, and a headline with a benchmark", () => {
     const r = buildCohortReport(pop, me, ctx);
     expect(r.suppressed).toBe(false);
     expect(r.identity).toHaveLength(4);
-    expect(r.cards.map((c) => c.key)).toEqual(["investmentRate", "diversification", "return", "returnPerRisk"]);
+    expect(r.cards.map((c) => c.key)).toEqual(["investmentRate", "consistency", "diversification", "return", "returnPerRisk"]);
     expect(r.cards.every((c) => c.status === "ok")).toBe(true);
     expect(r.group!.size).toBeGreaterThan(0);
     expect(r.headline).toMatchObject({ windowMonths: 12 });
@@ -648,10 +650,57 @@ describe("buildCohortReport", () => {
   });
 });
 
+describe("contribution consistency card (DECISIONS.md #19)", () => {
+  const members = population(120, 21);
+  const pop = buildPopulation(members);
+  const me = members[0];
+  const ctx = { asOf: AS_OF, fundReturns: { VT: Object.fromEntries(MONTHS12.map((m) => [m, 0.01])), AGG: Object.fromEntries(MONTHS12.map((m) => [m, 0.003])) }, minGroup: 10 };
+
+  it("compares the user's consistency with peers matched on income, capacity and life stage", () => {
+    const card = buildCohortReport(pop, me, ctx).cards.find((c) => c.key === "consistency")!;
+    expect(card.status).toBe("ok");
+    expect(card.unit).toBe("%");
+    expect(card.you).toBe(me.consistencyPct);
+    expect(card.basis).toBe("similar income, investment capacity and life stage");
+    expect(card.filter).toBeNull(); // no hard risk filter: it is behaviour, not return
+    expect(card.cohortSize).toBeGreaterThan(0);
+  });
+
+  it("uses the same weights as the investment rate, and none that depend on outcomes", () => {
+    expect(METRIC_WEIGHTS.consistency).toEqual(METRIC_WEIGHTS.investmentRate);
+  });
+
+  it("is unavailable, with the reason, for a user with too little history", () => {
+    const young = members.map((m, i) => (i === 0 ? { ...m, consistencyPct: null } : m));
+    const card = buildCohortReport(buildPopulation(young), young[0], ctx).cards.find((c) => c.key === "consistency")!;
+    expect(card.status).toBe("unavailable");
+    expect(card.message).toMatch(/at least 3 months/);
+  });
+
+  it("leaves people without enough history out of the peers rather than counting them as 0", () => {
+    const some = members.map((m, i) => (i % 2 === 1 ? { ...m, consistencyPct: null } : m));
+    const sel = selectPeers(buildPopulation(some), some[0], METRIC_WEIGHTS.consistency, { hardRisk: false, eligible: (m) => m.consistencyPct !== null, minGroup: 10 });
+    expect(sel.peers.every((p) => p.consistencyPct !== null)).toBe(true);
+  });
+
+  it("does not move who is a peer: consistency is not a matching feature", () => {
+    const a = selectPeers(pop, me, METRIC_WEIGHTS.investmentRate, { hardRisk: false, eligible: () => true, minGroup: 10 }).peers.map((p) => p.id);
+    const changed = members.map((m) => ({ ...m, consistencyPct: 50 }));
+    const b = selectPeers(buildPopulation(changed), changed[0], METRIC_WEIGHTS.investmentRate, { hardRisk: false, eligible: () => true, minGroup: 10 }).peers.map((p) => p.id);
+    expect(b).toEqual(a);
+  });
+});
+
 describe("buildObservation", () => {
   const card = (key: Card["key"], percentile: number, extra: Partial<Card> = {}): Card => ({
     key,
-    label: { investmentRate: "Monthly investment rate", diversification: "Diversification score", return: "Portfolio return", returnPerRisk: "Return per unit of risk" }[key],
+    label: {
+      investmentRate: "Monthly investment rate",
+      consistency: "Contribution consistency",
+      diversification: "Diversification score",
+      return: "Portfolio return",
+      returnPerRisk: "Return per unit of risk",
+    }[key],
     unit: "%",
     status: "ok",
     percentile,

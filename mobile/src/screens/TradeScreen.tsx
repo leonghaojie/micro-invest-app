@@ -6,6 +6,10 @@
  * priced at the latest month-end, and start earning from the trade month's return once that
  * month's data arrives; until then they are valued at cost. The screen says so, because it is
  * the one thing that is not like a live brokerage.
+ *
+ * A buy can be made once or "every month" (a monthly buy: POST /recurring). A monthly buy makes
+ * its first purchase now if the cash is there, then runs at the start of each month; a month
+ * without enough cash is skipped and shown as skipped.
  */
 import { useCallback, useState } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
@@ -32,6 +36,12 @@ interface PortfolioSummary {
   allocations: { ticker: string; weightPct: number }[];
 }
 
+interface MonthlyResult {
+  rule: { amount: number; targetName: string };
+  firstRun: "BOUGHT" | "SKIPPED" | null;
+  cash: number;
+}
+
 interface TradeResult {
   side: "BUY" | "SELL";
   tradeMonth: string;
@@ -47,6 +57,8 @@ const longMonth = (m: string) => `${MONTH_NAMES[Number(m.split("-")[1]) - 1]} ${
 export function TradeScreen({ route, navigation }: Props) {
   const { mode, name, fundId, portfolioId } = route.params;
   const isBuy = mode === "buy";
+  const [monthly, setMonthly] = useState(Boolean(route.params.monthly));
+  const [monthlyResult, setMonthlyResult] = useState<MonthlyResult | null>(null);
 
   const [summary, setSummary] = useState<Summary | null>(null);
   const [portfolio, setPortfolio] = useState<PortfolioSummary | null>(null);
@@ -122,7 +134,9 @@ export function TradeScreen({ route, navigation }: Props) {
 
   function validate(): string | null {
     if (!amount.trim() || !Number.isFinite(parsed) || parsed <= 0) return "Enter an amount.";
-    if (parsed < 1) return "The smallest trade is $1.";
+    if (parsed < 1) return isBuy && monthly ? "The smallest monthly buy is $1." : "The smallest trade is $1.";
+    // A monthly buy may be more than today's cash (months without enough are skipped); the server caps it.
+    if (isBuy && monthly) return parsed > 100000 ? "The largest monthly buy is $100,000." : null;
     if (Math.round(parsed * 100) > Math.round(limit * 100)) {
       return isBuy ? `You only have ${formatCurrency(cash)} in cash.` : `You hold ${formatCurrency(held)} of this fund.`;
     }
@@ -138,6 +152,11 @@ export function TradeScreen({ route, navigation }: Props) {
     setError(null);
     setSubmitting(true);
     try {
+      if (isBuy && monthly) {
+        const res = await apiFetch<MonthlyResult>("/recurring", { method: "POST", body: { ...(fundId ? { fundId } : { portfolioId }), amount: parsed } });
+        setMonthlyResult(res);
+        return;
+      }
       const res = await apiFetch<TradeResult>(isBuy ? "/trades/buy" : "/trades/sell", {
         method: "POST",
         body: isBuy
@@ -152,6 +171,37 @@ export function TradeScreen({ route, navigation }: Props) {
     } finally {
       setSubmitting(false);
     }
+  }
+
+  if (monthlyResult) {
+    return (
+      <View style={styles.container}>
+        <Text style={styles.title}>Monthly buy set up</Text>
+        <View style={styles.card}>
+          <View style={styles.row}>
+            <Text style={styles.rowLabel}>{monthlyResult.rule.targetName}</Text>
+            <Text style={styles.rowValue}>{formatCurrency(monthlyResult.rule.amount)} a month</Text>
+          </View>
+          <View style={[styles.row, styles.rowTop]}>
+            <Text style={styles.rowLabel}>This month</Text>
+            <Text style={styles.rowValue}>{monthlyResult.firstRun === "BOUGHT" ? "Bought now" : "Skipped: not enough cash"}</Text>
+          </View>
+          <View style={styles.row}>
+            <Text style={styles.rowLabel}>Cash now</Text>
+            <Text style={styles.rowValue}>{formatCurrency(monthlyResult.cash)}</Text>
+          </View>
+        </View>
+        <Text style={styles.note}>
+          It buys again at the start of each month. A month without enough cash is skipped and shown as skipped. You can change the amount or pause it any time.
+        </Text>
+        <Pressable style={styles.submitButton} onPress={() => navigation.replace("Recurring")}>
+          <Text style={styles.submitButtonText}>See monthly buys</Text>
+        </Pressable>
+        <Pressable style={styles.secondaryButton} onPress={() => navigation.goBack()}>
+          <Text style={styles.secondaryButtonText}>Done</Text>
+        </Pressable>
+      </View>
+    );
   }
 
   if (result) {
@@ -218,11 +268,23 @@ export function TradeScreen({ route, navigation }: Props) {
 
       {!isBuy && held <= 0 ? (
         <Text style={styles.subtitle}>You don't hold this fund.</Text>
-      ) : isBuy && cash < 1 ? (
+      ) : isBuy && !monthly && cash < 1 ? (
         <Text style={styles.subtitle}>You have no cash to invest right now. New cash arrives each month.</Text>
       ) : (
         <View style={styles.form}>
-          <Text style={styles.label}>Amount (dollars)</Text>
+          {isBuy && (
+            <View style={styles.segmentRow}>
+              {[
+                { label: "Buy once", value: false },
+                { label: "Every month", value: true },
+              ].map((o) => (
+                <Pressable key={o.label} style={[styles.segment, monthly === o.value && styles.segmentSelected]} onPress={() => setMonthly(o.value)} disabled={submitting} accessibilityRole="button">
+                  <Text style={[styles.segmentText, monthly === o.value && styles.segmentTextSelected]}>{o.label}</Text>
+                </Pressable>
+              ))}
+            </View>
+          )}
+          <Text style={styles.label}>{monthly ? "Amount each month (dollars)" : "Amount (dollars)"}</Text>
           <TextInput
             style={styles.input}
             placeholder="e.g. 100"
@@ -245,14 +307,16 @@ export function TradeScreen({ route, navigation }: Props) {
 
           <Text style={styles.note}>
             {isBuy
-              ? `Priced at the close of ${longMonth(plan.latestDataMonth)}. It earns ${longMonth(plan.tradeMonth)}'s return once that month's data is in, and shows at cost until then.`
+              ? monthly
+                ? `The first buy is made now if you have the cash, then again at the start of each month. If a month's cash does not cover it, that month is skipped. Priced at the close of ${longMonth(plan.latestDataMonth)}.`
+                : `Priced at the close of ${longMonth(plan.latestDataMonth)}. It earns ${longMonth(plan.tradeMonth)}'s return once that month's data is in, and shows at cost until then.`
               : `Sold at the close of ${longMonth(plan.latestDataMonth)}; the money goes to your cash straight away.`}
           </Text>
 
           {error && <Text style={styles.error}>{error}</Text>}
 
           <Pressable style={[styles.submitButton, submitting && styles.disabled]} onPress={() => submit(false)} disabled={submitting}>
-            {submitting ? <ActivityIndicator color="#fff" /> : <Text style={styles.submitButtonText}>{isBuy ? "Confirm buy" : "Confirm sell"}</Text>}
+            {submitting ? <ActivityIndicator color="#fff" /> : <Text style={styles.submitButtonText}>{!isBuy ? "Confirm sell" : monthly ? "Set up monthly buy" : "Confirm buy"}</Text>}
           </Pressable>
           {!isBuy && (
             <Pressable style={styles.secondaryButton} onPress={() => submit(true)} disabled={submitting}>
@@ -287,6 +351,11 @@ const styles = StyleSheet.create({
   form: { width: "100%", maxWidth: 360, gap: 8 },
   label: { fontSize: 14, fontWeight: "600" },
   input: { borderWidth: 1, borderColor: "#ccc", borderRadius: 8, paddingHorizontal: 14, paddingVertical: 12, fontSize: 18 },
+  segmentRow: { flexDirection: "row", borderWidth: 1, borderColor: "#2e6fdb", borderRadius: 8, overflow: "hidden" },
+  segment: { flex: 1, paddingVertical: 10, alignItems: "center", backgroundColor: "#fff" },
+  segmentSelected: { backgroundColor: "#2e6fdb" },
+  segmentText: { color: "#2e6fdb", fontWeight: "600" },
+  segmentTextSelected: { color: "#fff" },
   chipRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   chip: { borderWidth: 1, borderColor: "#2e6fdb", borderRadius: 16, paddingVertical: 6, paddingHorizontal: 12, backgroundColor: "#fff" },
   chipText: { color: "#2e6fdb", fontWeight: "600", fontSize: 13 },

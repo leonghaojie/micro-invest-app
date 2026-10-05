@@ -24,7 +24,8 @@
  *                                filter for a future feature
  *   goal / goal horizon          NOT used: the app has a goal type but no goal amount or
  *                                horizon, so "goal progress" cannot be computed honestly
- *   investment consistency       NOT shown yet: needs recurring buys to mean anything
+ *   investment consistency       the share of the last 12 months (since the first buy) with a
+ *                                buy, now that buying is the user's own act (DECISIONS.md #19)
  *
  * Statistics are medians, quartiles and the user's mid-rank percentile within the
  * selected peers, and a peer set smaller than the privacy floor is withheld entirely.
@@ -43,13 +44,18 @@ export interface Member {
   risk: Risk;
   /** Monthly contribution. A compared outcome, not a matching feature. */
   contribution: number;
+  /**
+   * Share of the last 12 months (since their first buy) in which they bought something, or
+   * null with too little history (utils/ledger.ts). A compared outcome, not a matching feature.
+   */
+  consistencyPct: number | null;
   /** One entry per fund: its asset class and weight as a fraction (the weights sum to 1). */
   holdings: { assetClass: string; weight: number }[];
   /** The portfolio's monthly return (a fraction) by month, "YYYY-MM". Recent months only. */
   monthlyReturns: Record<string, number>;
 }
 
-export type MetricKey = "investmentRate" | "diversification" | "return" | "returnPerRisk";
+export type MetricKey = "investmentRate" | "consistency" | "diversification" | "return" | "returnPerRisk";
 
 type Feature = "income" | "capacity" | "life" | "risk";
 export type Weights = Partial<Record<Feature, number>>;
@@ -62,6 +68,8 @@ export const GENERAL_WEIGHTS: Weights = { income: 0.35, capacity: 0.35, life: 0.
 export const METRIC_WEIGHTS: Record<MetricKey, Weights> = {
   // Contribution / saving behaviour: financial resources matter, risk barely does.
   investmentRate: { income: 0.4, capacity: 0.4, life: 0.2 },
+  // How regularly someone invests is behaviour like how much: the same financial position matters.
+  consistency: { income: 0.4, capacity: 0.4, life: 0.2 },
   // Diversification: how widely someone spreads money follows their risk appetite and means.
   diversification: { risk: 0.4, capacity: 0.3, income: 0.15, life: 0.15 },
   // Returns: compare mainly among people taking similar risk; with the hard same-risk
@@ -71,7 +79,7 @@ export const METRIC_WEIGHTS: Record<MetricKey, Weights> = {
 };
 
 /** Return comparisons are only meaningful among people taking similar risk (framework §2). */
-const HARD_RISK: Record<MetricKey, boolean> = { investmentRate: false, diversification: false, return: true, returnPerRisk: true };
+const HARD_RISK: Record<MetricKey, boolean> = { investmentRate: false, consistency: false, diversification: false, return: true, returnPerRisk: true };
 
 /** An age gap of this many years counts as "completely different" for life stage. */
 export const LIFE_STAGE_SPAN_YEARS = 15;
@@ -514,6 +522,7 @@ interface MetricDef {
 
 const CARD_DEFS: MetricDef[] = [
   { key: "investmentRate", label: "Monthly investment rate", unit: "%" },
+  { key: "consistency", label: "Contribution consistency", unit: "%" },
   { key: "diversification", label: "Diversification score", unit: "score" },
   { key: "return", label: "Portfolio return", unit: "%" },
   { key: "returnPerRisk", label: "Return per unit of risk", unit: "ratio" },
@@ -541,6 +550,8 @@ export function buildCohortReport(pop: Population, me: Member, ctx: ReportContex
       switch (def.key) {
         case "investmentRate":
           return investmentRatePct(m);
+        case "consistency":
+          return m.consistencyPct;
         case "diversification":
           return m.holdings.length === 0 ? null : diversificationScore(m.holdings);
         case "return": {
@@ -564,7 +575,9 @@ export function buildCohortReport(pop: Population, me: Member, ctx: ReportContex
             ? def.key === "returnPerRisk" && n > 0
               ? `Needs at least ${MIN_MONTHS_FOR_RISK_ADJUSTED} months of history (you have ${n}).`
               : "Needs at least 1 full month of investing history."
-            : "Not available yet.",
+            : def.key === "consistency"
+              ? "Needs at least 3 months of investing to show how regularly you invest."
+              : "Not available yet.",
       };
     }
 

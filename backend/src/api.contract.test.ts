@@ -24,6 +24,7 @@ import { peerCohortService } from "./services/peerCohort.service";
 import { peerGroupingService } from "./services/peerGrouping.service";
 import { peerInsightsService } from "./services/peerInsights.service";
 import { planService } from "./services/plan.service";
+import { recurringService } from "./services/recurring.service";
 import { tradeService } from "./services/trade.service";
 import { portfolioService } from "./services/portfolio.service";
 import { profileService } from "./services/profile.service";
@@ -61,6 +62,7 @@ jest.mock("./services/peerInsights.service", () => ({
   peerInsightsService: { getDashboard: jest.fn() },
 }));
 jest.mock("./services/plan.service", () => ({ planService: { getActivePlan: jest.fn() } }));
+jest.mock("./services/recurring.service", () => ({ recurringService: { list: jest.fn(), create: jest.fn(), pause: jest.fn(), resume: jest.fn(), changeAmount: jest.fn() } }));
 jest.mock("./services/trade.service", () => ({ tradeService: { buy: jest.fn(), sell: jest.fn(), history: jest.fn() } }));
 jest.mock("./services/portfolio.service", () => ({
   portfolioService: { listFunds: jest.fn(), getFundDetail: jest.fn(), listPortfolios: jest.fn(), createPortfolio: jest.fn() },
@@ -99,6 +101,11 @@ const protectedRoutes: RouteCase[] = [
   { name: "GET /portfolio/portfolios", method: "get", path: "/portfolio/portfolios", fn: portfolioService.listPortfolios as jest.Mock, returns: [], status: 200, args: [USER_ID] },
   { name: "POST /portfolio/portfolios", method: "post", path: "/portfolio/portfolios", body, fn: portfolioService.createPortfolio as jest.Mock, returns: { id: "pf" }, status: 201, args: [USER_ID, body] },
   { name: "POST /trades/buy", method: "post", path: "/trades/buy", body, fn: tradeService.buy as jest.Mock, returns: { side: "BUY" }, status: 201, args: [USER_ID, body] },
+  { name: "GET /recurring", method: "get", path: "/recurring", fn: recurringService.list as jest.Mock, returns: { rules: [] }, status: 200, args: [USER_ID] },
+  { name: "POST /recurring", method: "post", path: "/recurring", body, fn: recurringService.create as jest.Mock, returns: { rule: {} }, status: 201, args: [USER_ID, body] },
+  { name: "POST /recurring/:id/pause", method: "post", path: "/recurring/r1/pause", fn: recurringService.pause as jest.Mock, returns: { id: "r1" }, status: 200, args: [USER_ID, "r1"] },
+  { name: "POST /recurring/:id/resume", method: "post", path: "/recurring/r1/resume", fn: recurringService.resume as jest.Mock, returns: { rule: {} }, status: 200, args: [USER_ID, "r1"] },
+  { name: "PUT /recurring/:id", method: "put", path: "/recurring/r1", body, fn: recurringService.changeAmount as jest.Mock, returns: { id: "r2" }, status: 200, args: [USER_ID, "r1", body] },
   { name: "POST /trades/sell", method: "post", path: "/trades/sell", body, fn: tradeService.sell as jest.Mock, returns: { side: "SELL" }, status: 201, args: [USER_ID, body] },
   { name: "GET /plan", method: "get", path: "/plan", fn: planService.getActivePlan as jest.Mock, returns: { planId: "pl" }, status: 200, args: [USER_ID] },
   { name: "GET /dashboard/summary", method: "get", path: "/dashboard/summary", fn: dashboardService.getSummary as jest.Mock, returns: {}, status: 200, args: [USER_ID] },

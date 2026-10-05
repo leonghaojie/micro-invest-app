@@ -1449,7 +1449,8 @@ level: Low 20/80, Balanced 60/40, High 100% stocks.
 - **Left out of the MVP:** *investment consistency* (every plan contributes
   automatically, so everyone scores full marks and it would say nothing) and *goal
   progress* (a goal here is a category, with no target amount or horizon to progress
-  towards). Both would need new inputs.
+  towards). Both would need new inputs. (*Consistency* was added later, once buying became
+  the user's own act: see #19, PR 3. Goal progress is still left out.)
 - **Constants:** K = 50, relax below 30, window 12 months, age cap 15 years. All are
   named constants in one place.
 - The PDF's "min 50–100 peers" is not reachable with ~310 investors for every
@@ -1494,13 +1495,14 @@ Implements: UC-05 amended (FR35–FR37). Owner: `backend/src/utils/peerCohort.ts
 `backend/prisma/schema.prisma` (`ExperienceLevel`), `backend/src/utils/syntheticPeers.ts`,
 mobile `PeerCohort.tsx`, `PeerComparisonScreen.tsx`, `ProfileSetupScreen.tsx`.
 
-## 19. Buy, sell and recurring buys: a ledger replaces the fixed monthly plan (5 Oct 2026) — PR 2 built; recurring-buy screens are PR 3
+## 19. Buy, sell and recurring buys: a ledger replaces the fixed monthly plan (5 Oct 2026) — built (PR 2 and PR 3)
 
 **Status.** Design agreed on 5 Oct 2026 (the four questions at the end were answered
-"go with the recommendations"). **PR 2 is built** (see "What was built", below): the
+"go with the recommendations"). **PR 2 is built** (see "What was built (PR 2)"): the
 ledger, buy/sell, profile edit, migration, and the recurring-buy table and monthly
-runner. **PR 3 is not**: the screens to set up, pause and resume a recurring buy, and the
-consistency card. Where the build differs from the design it is said in "What was built". It supersedes the
+runner. **PR 3 is built** (see "What was built (PR 3)"): the screens to set up, change,
+pause and resume a monthly buy, skipped months made visible, and the contribution
+consistency measure and card. Where the build differs from the design it is said there. It supersedes the
 "one plan, one portfolio, one fixed monthly contribution" model of #1 (third amendment),
 and with it #6/#7's wallet arithmetic. Build order is in "Phasing" below.
 
@@ -1743,9 +1745,74 @@ holdings now drift instead of being rebalanced every month. Backfill is
 - Legacy accounts whose old contribution exceeded their spare income keep negative cash from
   the old model. Nothing blocks that history; only new trades must fit within cash.
 - A buy shows at cost until its month's data arrives; there is no "pending" state.
-- Until PR 3, a recurring buy can only be changed by the database. Migrated accounts keep
-  buying their old monthly amount.
+- Migrated accounts keep buying their old monthly amount until the user changes or pauses it
+  (PR 3 added the screens for that).
 - `earliestStartMonth` on portfolios is no longer used by any screen (trades are live).
+
+### 13. What was built (PR 3): monthly buys you can manage, and contribution consistency
+
+**Monthly buys** (`recurring.service.ts`, `/recurring`, mobile "Monthly buys" screen). A rule buys
+a fixed dollar amount of one fund or one portfolio at the start of each trade month.
+
+| Action | Rule |
+|---|---|
+| Set up | from a fund's or a portfolio's Buy screen, "Every month". Amount $1 to $100,000. The first buy happens now if the cash is there; otherwise that month is recorded as skipped. At most 10 running; a second running one for the same target is refused (409) |
+| Pause | ends the rule this month (it has already run this month), so it stops from next month |
+| Resume | if it was paused this very month, the same rule is reopened (so it cannot buy twice in a month); otherwise a new rule starts this month and buys now |
+| Change amount | ends the rule this month and starts a new one with the new amount **next month**; nothing extra is bought this month |
+
+Rules are history, never edited: the list shows the newest rule per target with its last six
+runs. A run is BOUGHT, or SKIPPED when the month's cash did not cover it. A skipped month is
+shown on the Monthly buys screen and in Activity ("Monthly buy skipped", "not bought"), never
+hidden. Someone else's rule id is a 404, the same as a missing one.
+
+**Contribution consistency** = the share of months, from the first buy and within the last 12,
+in which the user bought something. The open trade month counts only once it has a buy (an
+empty one is not yet a miss). Shown from 3 counted months. A skipped monthly buy is a month
+with no buy, so it counts against. This was left out of #18 because every automatic plan
+contributed every month; with buying now the user's own act it is meaningful.
+
+- It is a **fifth card** in the cohort view, "Contribution consistency", with the same
+  peer matching as the investment rate (income 40, capacity 40, life stage 20; no risk
+  filter). Like every other outcome it is compared, never matched on (a test checks that
+  changing everyone's consistency does not change who the peers are).
+- It also appears at the top of the Monthly buys screen.
+
+**Simulated peers now invest irregularly.** Without it every simulated peer would show 100%
+and the card would say nothing. About half buy every month, three in ten miss the odd month
+(a 0.80 to 0.95 chance of buying in a month) and two in ten are sporadic (0.40 to 0.70);
+these rates are an assumption (`assignBuyRate`), drawn from their own random stream so the
+rest of the population is unchanged. The irregular ones are manual buyers with no monthly buy
+going forward. Existing databases need `--reset-synthetic` to pick this up.
+
+**Verification.**
+- 714 backend tests pass (30 suites): the consistency measure (empty, a missed month, an open
+  month, the 12-month window, fewer than 3 months, duplicates), the cohort card and its
+  eligibility, the rule history rules (24 cases), activity with skipped months, the backfill
+  options (new suite) and the synthetic rates.
+- **Live API (24 checks):** set up with a first buy; a second rule for the same fund refused;
+  a monthly buy the cash cannot cover accepted with its first run skipped and nothing taken;
+  pause, a second pause refused, resume in the same month reopens it and does **not** buy a
+  second time; change amount starts next month and leaves this month's cash alone; another
+  user's rule is a 404; bad amounts refused.
+- **Month rollover on a throwaway database** (data rolled back two months, three accounts set
+  up, data loaded again, every account refreshed): a changed amount bought 300, then 150 and
+  150 in the next two months; a rule paused in the first month bought nothing after, and a
+  manual buy in the last month gave consistency 2 of 3 (66.7%); a monthly buy the cash could
+  never cover was skipped in all three months with cash untouched and the skips listed in
+  Activity; 157 of the 300 simulated peers at 100% and 143 below; refreshing again changed
+  nothing.
+- **UI (Expo web, phone size):** Monthly buys with the consistency figure (75% = 6 of 8
+  months) and the run chips; change amount ("Starts Nov 2026"); pause and resume; "Every
+  month" from a portfolio with an amount above the cash, showing "Skipped: not enough cash";
+  the new card in the cohort view.
+
+**Limits.**
+- Irregular simulated peers stop buying after the seed's last month (they have no monthly buy),
+  so over several months their consistency drifts down until the seed is rerun.
+- A changed amount's old rule is not shown (only the newest per target); this month's buy at
+  the old amount is in Activity.
+- The 12-month window and the 3-month minimum are constants in `utils/ledger.ts`.
 
 **Decisions on the open questions** (all taken as recommended):
 1. Profile edits re-price the **current month's** credit, guarded against negative cash.

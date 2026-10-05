@@ -242,3 +242,38 @@ export function averageMonthlyBuy(entries: LedgerEntry[], tradeMonth: string): n
   const total = buys.filter((b) => b.month >= from && b.month <= tradeMonth).reduce((s, b) => s + toCents(b.amount), 0);
   return round2(total / 100 / window.length);
 }
+
+// ── Contribution consistency ─────────────────────────────────────────────
+
+/** Months looked back over, the same window as the peer return comparison. */
+export const CONSISTENCY_WINDOW = 12;
+/** Fewer counted months than this and the measure says too little to show. */
+export const MIN_CONSISTENCY_MONTHS = 3;
+
+export interface Consistency {
+  /** Counted months in which at least one buy was made. */
+  monthsWithBuy: number;
+  /** Months counted: from the first buy (or 12 months back, if later) to the trade month. */
+  monthsCounted: number;
+  /** monthsWithBuy / monthsCounted, as a percent with one decimal. */
+  pct: number;
+}
+
+/**
+ * How regularly the user invests: the share of months, since their first buy and within the
+ * last 12, in which they bought something (DECISIONS.md #19). A month a monthly buy was
+ * skipped for lack of cash is a month with no buy, so it counts against. The trade month
+ * counts only once it has a buy (it is still open, so an empty one is not yet a miss).
+ * null with no buys, or with fewer than MIN_CONSISTENCY_MONTHS counted.
+ */
+export function contributionConsistency(buyMonths: Iterable<string>, tradeMonth: string): Consistency | null {
+  const withBuy = new Set(buyMonths);
+  if (withBuy.size === 0) return null;
+  const first = [...withBuy].sort()[0];
+  const windowStart = addMonths(tradeMonth, -(CONSISTENCY_WINDOW - 1));
+  const from = first > windowStart ? first : windowStart;
+  const counted = monthRange(from, tradeMonth).filter((m) => m !== tradeMonth || withBuy.has(m));
+  if (counted.length < MIN_CONSISTENCY_MONTHS) return null;
+  const hits = counted.filter((m) => withBuy.has(m)).length;
+  return { monthsWithBuy: hits, monthsCounted: counted.length, pct: Math.round((hits / counted.length) * 1000) / 10 };
+}

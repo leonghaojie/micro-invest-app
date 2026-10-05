@@ -16,7 +16,7 @@ import { apiFetch, ApiError } from "../api/client";
 type Risk = "LOW" | "MEDIUM" | "HIGH";
 
 interface Card {
-  key: "investmentRate" | "diversification" | "return" | "returnPerRisk";
+  key: "investmentRate" | "consistency" | "diversification" | "return" | "returnPerRisk";
   label: string;
   unit: "%" | "score" | "ratio";
   status: "ok" | "unavailable" | "withheld";

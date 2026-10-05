@@ -14,6 +14,7 @@ jest.mock("../config/prisma", () => ({
     userProfile: { findUnique: jest.fn() },
     plan: { findMany: jest.fn() },
     fundMonthlyReturn: { findMany: jest.fn() },
+    ledgerEntry: { groupBy: jest.fn() },
   },
 }));
 jest.mock("./plan.service", () => ({ planService: { getActivePlan: jest.fn() } }));
@@ -23,6 +24,7 @@ const db = prisma as unknown as {
   userProfile: { findUnique: jest.Mock };
   plan: { findMany: jest.Mock };
   fundMonthlyReturn: { findMany: jest.Mock };
+  ledgerEntry: { groupBy: jest.Mock };
 };
 const plans = planService as unknown as { getActivePlan: jest.Mock };
 const latest = oldestLatestMonth as unknown as jest.Mock;
@@ -35,6 +37,7 @@ function planRow(i: number, over: { userId?: string; synthetic?: boolean; noProf
   const userId = over.userId ?? `user-${i}`;
   const n = over.months ?? 12;
   return {
+    id: `plan-${userId}`,
     userId,
     contributionAmount: String(200 + (i % 10) * 40),
     user: {
@@ -62,6 +65,10 @@ function planRow(i: number, over: { userId?: string; synthetic?: boolean; noProf
   };
 }
 
+/** One row per plan per month, as the groupBy returns them. */
+const buyRowsFor = (n: number, months = MONTHS.slice(-6), missing: (i: number, m: string) => boolean = () => false) =>
+  Array.from({ length: n }, (_, i) => months.filter((m) => !missing(i, m)).map((m) => ({ planId: `plan-user-${i}`, month: date(m) }))).flat();
+
 const crowd = (n: number) => Array.from({ length: n }, (_, i) => planRow(i));
 
 beforeEach(() => {
@@ -70,6 +77,8 @@ beforeEach(() => {
   plans.getActivePlan.mockResolvedValue({ planId: "p" });
   latest.mockResolvedValue(ASOF);
   db.plan.findMany.mockResolvedValue(crowd(120));
+  // everyone bought in each of the last six months
+  db.ledgerEntry.groupBy.mockImplementation(() => Promise.resolve(buyRowsFor(120)));
   db.fundMonthlyReturn.findMany.mockResolvedValue([
     ...MONTHS.map((m) => ({ monthDate: date(m), returnPct: "0.010000", fund: { ticker: "VT" } })),
     ...MONTHS.map((m) => ({ monthDate: date(m), returnPct: "0.003000", fund: { ticker: "AGG" } })),
@@ -101,7 +110,7 @@ describe("PeerCohortService.getCohort", () => {
     expect(plans.getActivePlan.mock.invocationCallOrder[0]).toBeLessThan(db.plan.findMany.mock.invocationCallOrder[0]);
   });
 
-  it("returns a full report: identity, group, a headline with a benchmark, and four cards", async () => {
+  it("returns a full report: identity, group, a headline with a benchmark, and five cards", async () => {
     const res = await peerCohortService.getCohort("user-0");
 
     if (res.status !== "ok") throw new Error("expected ok");
@@ -109,9 +118,27 @@ describe("PeerCohortService.getCohort", () => {
     expect(res.report.suppressed).toBe(false);
     expect(res.report.identity).toHaveLength(4);
     expect(res.report.group!.size).toBeGreaterThan(0);
-    expect(res.report.cards.map((c) => c.key)).toEqual(["investmentRate", "diversification", "return", "returnPerRisk"]);
+    expect(res.report.cards.map((c) => c.key)).toEqual(["investmentRate", "consistency", "diversification", "return", "returnPerRisk"]);
     expect(res.report.headline).toMatchObject({ windowMonths: 12 });
     expect(res.report.headline!.benchmark).not.toBeNull();
+  });
+
+  it("works out contribution consistency from the months each account bought in", async () => {
+    // user-0 missed two of the last six months; everyone else bought in all six
+    db.ledgerEntry.groupBy.mockResolvedValue(buyRowsFor(120, MONTHS.slice(-6), (i, m) => i === 0 && (m === MONTHS[7] || m === MONTHS[9])));
+    const res = await peerCohortService.getCohort("user-0");
+    if (res.status !== "ok") throw new Error("expected ok");
+    const card = res.report.cards.find((c) => c.key === "consistency")!;
+    expect(card.status).toBe("ok");
+    expect(card.you).toBeLessThan(100);
+    expect(card.median).toBe(100);
+  });
+
+  it("a user with fewer than 3 months of buying has no consistency figure yet", async () => {
+    db.ledgerEntry.groupBy.mockResolvedValue(buyRowsFor(120, MONTHS.slice(-2)));
+    const res = await peerCohortService.getCohort("user-0");
+    if (res.status !== "ok") throw new Error("expected ok");
+    expect(res.report.cards.find((c) => c.key === "consistency")!.status).toBe("unavailable");
   });
 
   it("reports how much of the population is simulated", async () => {
