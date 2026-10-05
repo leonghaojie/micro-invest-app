@@ -1829,6 +1829,58 @@ profile history and recurring buys (SRS v1.16). Owner (planned):
 `trade.service.ts`, `profile.service.ts`, `plan.service.ts` (reduced to derived reads),
 mobile `PortfolioScreen`, `FundDetailScreen`, `EditProfileScreen`.
 
+## 20. The cohort comparison as a table you can open (6 Oct 2026)
+
+**Problem.** The Cohort view showed a card for each measure. A user is unlikely to know what
+"investment rate", "contribution consistency" or "return per unit of risk" mean, and a card
+gave no way to find out; the only explanation was the one line saying who the peers were.
+
+**Decision.** The measures are one **table**, one row per measure with your figure, the
+peers' median and your position (as in the mock-up you sent), and **each row opens an
+explanation** under it.
+
+| Column | Shows |
+|---|---|
+| Metric | the measure's name, with "What's this?" |
+| You | your figure in its own unit (%, score out of 100, ratio) |
+| Peer median | the median of your peers on it |
+| Position | "Top X%" at or above the median, otherwise "Above Y%" |
+
+A measure that cannot be shown (not enough history, or too few peers to show privately) keeps
+its row with dashes, and opening it says why. Only one row is open at a time. The headline,
+the cohort labels and "Your peer group" above the table, and "What stands out" below it, are
+unchanged.
+
+**What the explanation says** (`utils/metricInfo.ts`; written for someone who has not met the
+terms, and never advising):
+- **What it is**, **how it is worked out**, and **what the numbers mean**, fixed text per
+  measure. For example, diversification is "how widely your money is spread", worked out as
+  60% across kinds of assets and 40% across funds, with the plain warning that one broad
+  fund still scores 0 and that it is not a measure of risk or performance.
+- **Your result**, from the card's own numbers: your figure, the median, the middle half of
+  peers, and where you stand ("in the top 28%" or "above about 28%").
+- For diversification, **your largest holding against the median investor's**; any
+  **caveat** the server attached; and **who you were compared with** (how many, and what they
+  were matched on, including a risk filter or a relaxation of it).
+
+**Where it lives.** Mobile only: `components/MetricsTable.tsx`, `utils/metricInfo.ts`,
+`utils/cohortTypes.ts`; `PeerCohort.tsx` uses the table instead of the per-measure cards. No
+backend change; the figures are exactly those the server already returned.
+
+**Verification.** Typechecked; in the Expo web preview (phone size) the table shows the five
+rows with the right figures and positions, opening Diversification shows its five parts with
+the user's real numbers (48/100 against a median of 49, middle half 22 to 64, largest holding
+72% against 53%), and opening Contribution consistency closes the first and shows its own
+(75% against a median of 100%, "above about 28%"). The mobile app has no automated tests, so
+the wording is checked by reading it.
+
+**Limits.**
+- The explanations are fixed text; they describe the measure, not the user's situation.
+- The Explore view (chosen peers) is unchanged here and keeps its own layout.
+
+Implements: UC-05 amended (FR49, FR50). Owner: mobile `MetricsTable.tsx`, `metricInfo.ts`,
+`PeerCohort.tsx`.
+
 ## Open items (Design Model §8, carried forward)
 
 - **`Phase2_SRS_v1.6.docx` — done, no longer open.** Produced in the same
