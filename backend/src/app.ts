@@ -15,6 +15,7 @@ import { peersRouter } from "./routes/peers.routes";
 import { planRouter } from "./routes/plan.routes";
 import { portfolioRouter } from "./routes/portfolio.routes";
 import { profileRouter } from "./routes/profile.routes";
+import { recurringRouter } from "./routes/recurring.routes";
 import { tradeRouter } from "./routes/trade.routes";
 
 export function createApp(): Express {
@@ -36,6 +37,7 @@ export function createApp(): Express {
   app.use("/portfolio", portfolioRouter);
   app.use("/plan", planRouter);
   app.use("/trades", tradeRouter);
+  app.use("/recurring", recurringRouter);
   app.use("/dashboard", dashboardRouter);
   app.use("/peers", peersRouter);
   app.use("/friends", friendsRouter);

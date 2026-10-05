@@ -18,6 +18,7 @@ jest.mock("../config/prisma", () => ({
     plan: { findUnique: jest.fn() },
     ledgerEntry: { findMany: jest.fn() },
     cashCredit: { findMany: jest.fn() },
+    recurringRun: { findMany: jest.fn() },
   },
 }));
 jest.mock("./ledger.service", () => ({
@@ -36,6 +37,7 @@ const db = prisma as unknown as {
   plan: { findUnique: jest.Mock };
   ledgerEntry: { findMany: jest.Mock };
   cashCredit: { findMany: jest.Mock };
+  recurringRun: { findMany: jest.Mock };
 };
 const ledger = { advance, computeState, ensureAccount, getClock, lockPlan, persistDerived } as unknown as Record<string, jest.Mock>;
 
@@ -58,6 +60,7 @@ beforeEach(() => {
     Promise.resolve(where.id.in.map((id) => ({ id, ticker: id === FUND_A ? "AAA" : "BBB", name: id === FUND_A ? "Fund A" : "Fund B" })))
   );
   ledger.computeState.mockResolvedValue(stateWith(1000));
+  db.recurringRun.findMany.mockResolvedValue([]);
 });
 
 describe("buy a fund", () => {
@@ -217,6 +220,25 @@ describe("history", () => {
       ["BUY", "2026-09", 50],
     ]);
     expect(items[2]).toMatchObject({ fundId: null, ticker: null });
+  });
+
+  it("shows a monthly buy that was skipped for lack of cash, so a missed month is visible", async () => {
+    db.plan.findUnique.mockResolvedValue({ id: "plan-1" });
+    db.ledgerEntry.findMany.mockResolvedValue([]);
+    db.cashCredit.findMany.mockResolvedValue([{ month: new Date("2026-10-01"), amount: "1600", source: "MONTHLY", createdAt: new Date("2026-10-01T00:00:00Z") }]);
+    db.recurringRun.findMany.mockResolvedValue([
+      { month: new Date("2026-10-01"), createdAt: new Date("2026-10-02T00:00:00Z"), rule: { amount: "300.00", fund: { ticker: "AAA", name: "Fund A" }, portfolio: null } },
+      { month: new Date("2026-09-01"), createdAt: new Date("2026-09-02T00:00:00Z"), rule: { amount: "50.00", fund: null, portfolio: { name: "Balanced mix" } } },
+    ]);
+
+    const items = await tradeService.history("u");
+
+    expect(db.recurringRun.findMany.mock.calls[0][0].where).toEqual({ status: "SKIPPED", rule: { planId: "plan-1" } });
+    expect(items.map((i) => [i.kind, i.month, i.amount, i.ticker ?? i.name])).toEqual([
+      ["SKIPPED", "2026-10", 300, "AAA"],
+      ["CREDIT", "2026-10", 1600, null],
+      ["SKIPPED", "2026-09", 50, "Balanced mix"],
+    ]);
   });
 
   it("respects the limit", async () => {

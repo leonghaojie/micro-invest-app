@@ -4,7 +4,10 @@
  * consistent) are tested directly rather than trusted.
  */
 import {
+  assignBuyRate,
   assignExperience,
+  buyRateStream,
+  buysInMonth,
   experienceStream, createRng, FundInfo, generatePeerSpecs, INCOME_ANCHOR } from "./syntheticPeers";
 
 const CATALOG: FundInfo[] = [
@@ -168,5 +171,45 @@ describe("experience level (DECISIONS.md #18)", () => {
     const b = generatePeerSpecs(50, 42, catalog).map(({ experienceLevel: _e, ...rest }) => rest);
     expect(a).toEqual(b);
     expect(a[0].age).toBeGreaterThanOrEqual(21);
+  });
+});
+
+describe("how regularly peers invest (DECISIONS.md #19)", () => {
+  it("assignBuyRate: about half always buy, the rest skip months, in the stated bands", () => {
+    expect(assignBuyRate(0.1, 0.9)).toBe(1);
+    expect(assignBuyRate(0.49, 0.5)).toBe(1);
+    expect(assignBuyRate(0.5, 0)).toBe(0.8);
+    expect(assignBuyRate(0.79, 1)).toBe(0.95);
+    expect(assignBuyRate(0.8, 0)).toBe(0.4);
+    expect(assignBuyRate(0.99, 1)).toBe(0.7);
+  });
+
+  it("every peer has a rate in [0.4, 1], and a population mixes regular and irregular investors", () => {
+    const specs = generatePeerSpecs(300, 99, CATALOG);
+    expect(specs.every((p) => p.buyRate >= 0.4 && p.buyRate <= 1)).toBe(true);
+    const regular = specs.filter((p) => p.buyRate === 1).length;
+    expect(regular).toBeGreaterThan(110);
+    expect(regular).toBeLessThan(190);
+    expect(specs.filter((p) => p.buyRate < 0.7).length).toBeGreaterThan(20);
+  });
+
+  it("is deterministic per seed and peer, and adding it changed nothing else", () => {
+    expect(generatePeerSpecs(30, 5, CATALOG)).toEqual(generatePeerSpecs(30, 5, CATALOG));
+    const a = buyRateStream(5, 3);
+    const b = buyRateStream(5, 3);
+    expect([a(), a()]).toEqual([b(), b()]);
+    expect(buyRateStream(5, 3)()).not.toBe(buyRateStream(5, 4)());
+    // ages and incomes of the original population are untouched
+    const specs = generatePeerSpecs(5, 20261003, CATALOG);
+    expect(specs.map((p) => p.income).every((v) => v >= 1200)).toBe(true);
+  });
+
+  it("buysInMonth: a peer with rate 1 always buys; others buy about their rate of months, repeatably", () => {
+    expect(buysInMonth(1, 1, 1, "2026-01")).toBe(true);
+    const months = Array.from({ length: 2000 }, (_, i) => `${2000 + Math.floor(i / 12)}-${String((i % 12) + 1).padStart(2, "0")}`);
+    const share = months.filter((m) => buysInMonth(7, 4, 0.6, m)).length / months.length;
+    expect(share).toBeGreaterThan(0.55);
+    expect(share).toBeLessThan(0.65);
+    expect(months.map((m) => buysInMonth(7, 4, 0.6, m))).toEqual(months.map((m) => buysInMonth(7, 4, 0.6, m)));
   });
 });

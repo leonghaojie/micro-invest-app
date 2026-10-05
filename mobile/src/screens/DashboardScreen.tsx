@@ -336,12 +336,13 @@ function AccountSection({
 }: {
   me: Me["user"] | null;
   onEdit: (kind: "name" | "email" | "password") => void;
-  onOpen: (screen: "Activity" | "EditProfile") => void;
+  onOpen: (screen: "Activity" | "EditProfile" | "Recurring") => void;
   onLogout: () => void;
 }) {
   return (
     <View style={styles.card}>
       <Text style={styles.cardHeading}>Account</Text>
+      <AccountRow label="Monthly buys" value="Set up, pause" onPress={() => onOpen("Recurring")} />
       <AccountRow label="Activity" value="Buys, sells, cash" onPress={() => onOpen("Activity")} />
       <AccountRow label="Profile" value="Income, expenses, risk" onPress={() => onOpen("EditProfile")} />
       <AccountRow label="Display name" value={me?.displayName ?? "Not set"} onPress={() => onEdit("name")} />

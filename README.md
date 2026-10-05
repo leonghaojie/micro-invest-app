@@ -25,8 +25,10 @@ month's return once its data arrives (shown at cost until then). Holdings are re
 positions that drift with the market, each with its own cost and profit. You can change
 income, expenses, risk and the rest of your profile at any time: past months never
 change, only the current month's cash is re-priced. Monthly buys are stored and run by
-the server (existing plans became monthly buys of their portfolio); screens to set up and
-pause them, and a contribution-consistency measure, are the next release.
+the server (existing plans became monthly buys of their portfolio), and you can set up a
+monthly buy of a fund or portfolio, change its amount (from next month), pause and resume it;
+a month the cash does not cover is skipped and shown as skipped. How regularly you invest
+(the share of recent months with a buy) is a fifth card in the peer cohort view.
 
 **Plan engine — superseded by the ledger above, kept for its history** (`plan.service.ts`, formerly "simulation engine" —
 `DECISIONS.md` #1 and its three dated amendments): a user picks a
@@ -382,6 +384,11 @@ original Word documents, each superseding the last within its phase:
   editing the profile, activity, monthly buys run by the server), UC-04 and S-02/S-03/S-04
   amended, new screens S-11 Trade and S-12 Activity, new terms. New scope, not a reopened
   TBD (`DECISIONS.md` #19). Kept alongside v1.15, not replacing it.
+- `Phase2_SRS_v1.17.docx` — Phase 4 addition (5 Oct 2026): **monthly buys you can manage,
+  and contribution consistency** — new FR44–FR48 (set up, change the amount, pause and
+  resume, skipped months shown, consistency), new screen S-13 Monthly buys, S-05/S-11/S-12
+  amended, new terms. New scope, not a reopened TBD (`DECISIONS.md` #19). Kept alongside v1.16,
+  not replacing it.
 - `FYP Roadmap.docx` — the full Phase 0–9 plan mapped to the Lab #1–#5
   sequence and semester timeline.
 - `FYP_SRS_UseCase_UI_Lab1Style.docx` — an earlier Lab #1-formatted SRS
@@ -413,13 +420,13 @@ income-based/monthly-backtest rewrite (`DECISIONS.md` #1 third amendment,
 | — | More funds and presets (new scope) | FR29–30 | ✅ Done — 23 funds (15 added, gap-checked), 10 presets (7 diversified; originals untouched), search + asset-class filters, earliest start month per portfolio; every preset verified live (DECISIONS.md #16, SRS v1.13) |
 | — | Portfolio dashboard + account management (new scope) | FR31–34 | ✅ Done — total assets / securities value / unrealised P&L / cash / last-month P&L, holdings that open each fund, and an Account section (name, email, password, log out) with current-password checks and a 5-guess limit (DECISIONS.md #17, SRS v1.14). Email unverified; other devices stay signed in after a password change |
 | — | Peer cohort comparison (new scope) | FR35–37 | ✅ Done — default Peers view: headline vs similar investors and a benchmark, cohort labels, peer group, four per-metric cards with reasons; weighted-distance nearest neighbours per metric, same-risk filter for returns; experience stored for a future filter; verified against an independent implementation (DECISIONS.md #18, SRS v1.15). 97% of peers are simulated; consistency and goal-progress metrics left out |
-| — | Buy, sell and a ledger (new scope) | FR38–43 | ✅ Done (PR 2 of 3) — buy a fund or a portfolio, sell, cash credited monthly (opening credit at sign-up), profile editable any time (past months never change), real holdings with cost and profit, activity list, monthly buys stored and run by the server; existing plans and the 300 synthetic peers migrated (single-fund plans identical to the cent, multi-fund within 1.23%). Verified live, including a month rollover on a throwaway database (DECISIONS.md #19, SRS v1.16). Next: recurring-buy screens and the consistency measure |
+| — | Buy, sell and a ledger (new scope) | FR38–43 | ✅ Done (PR 2 and PR 3) — buy a fund or a portfolio, sell, cash credited monthly (opening credit at sign-up), profile editable any time (past months never change), real holdings with cost and profit, activity list, monthly buys you can set up, change, pause and resume, with skipped months shown, and contribution consistency in the cohort view; existing plans and the 300 synthetic peers migrated (single-fund plans identical to the cent, multi-fund within 1.23%). Verified live, including a month rollover on a throwaway database (DECISIONS.md #19, SRS v1.16). Recurring-buy screens and the consistency measure followed in PR 3 (DECISIONS.md #19) |
 | 7 | History, polish, NFRs | FR13 | ✅ Done — `GET /plan` returns the one active plan directly (trivial now that there's only ever one) |
-| 8 | Testing (Lab #4) | — | 🟡 In progress — 645 backend tests (28 suites, ~95% line coverage): per-service unit tests (basis-path coverage of the peer-grouping widening/floor branches, equivalence-class/boundary coverage of the monthly engine, reset-code limits) plus a black-box HTTP suite (`src/api.contract.test.ts`) driving every route through the real Express app — auth gate, status codes, error mapping. That suite found a real bug (malformed JSON returned 500, now 400). Still to do: package as the formal Lab #4 deliverable (documented FR-traced results, reflection report) and the coding-agent exercises |
+| 8 | Testing (Lab #4) | — | 🟡 In progress — 714 backend tests (30 suites, ~95% line coverage): per-service unit tests (basis-path coverage of the peer-grouping widening/floor branches, equivalence-class/boundary coverage of the monthly engine, reset-code limits) plus a black-box HTTP suite (`src/api.contract.test.ts`) driving every route through the real Express app — auth gate, status codes, error mapping. That suite found a real bug (malformed JSON returned 500, now 400). Still to do: package as the formal Lab #4 deliverable (documented FR-traced results, reflection report) and the coding-agent exercises |
 | 9 | Demo prep & submission | — | ⬜ Not started |
 
 There is no remaining functional gap against the SRS as of this pass —
-`Phase2_SRS_v1.6.docx`, `v1.7.docx`, `v1.8.docx`, `v1.9.docx`, `v1.10.docx`, `v1.11.docx`, `v1.12.docx`, `v1.13.docx`, `v1.14.docx`, `v1.15.docx` and `v1.16.docx` each land in the same
+`Phase2_SRS_v1.6.docx`, `v1.7.docx`, `v1.8.docx`, `v1.9.docx`, `v1.10.docx`, `v1.11.docx`, `v1.12.docx`, `v1.13.docx`, `v1.14.docx`, `v1.15.docx`, `v1.16.docx` and `v1.17.docx` each land in the same
 pass as the code, matching every prior amendment.
 
 The old "Budget band (B1–B4) thresholds" gap is moot, not resolved:

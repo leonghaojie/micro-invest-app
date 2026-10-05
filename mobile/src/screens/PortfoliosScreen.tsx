@@ -111,9 +111,19 @@ export function PortfoliosScreen({ navigation }: Props) {
           >
             <Text style={styles.buyButtonText}>Buy</Text>
           </Pressable>
+          <Pressable
+            onPress={() => navigation.getParent()?.navigate("Trade", { mode: "buy", name: p.name, portfolioId: p.id, monthly: true })}
+            accessibilityRole="button"
+            accessibilityLabel={`Buy ${p.name} every month`}
+          >
+            <Text style={styles.monthlyLink}>Or buy it every month</Text>
+          </Pressable>
         </View>
       ))}
 
+      <Pressable style={styles.secondaryButton} onPress={() => navigation.getParent()?.navigate("Recurring")}>
+        <Text style={styles.secondaryButtonText}>Manage your monthly buys →</Text>
+      </Pressable>
       <Pressable style={styles.secondaryButton} onPress={() => navigation.navigate("Funds")}>
         <Text style={styles.secondaryButtonText}>Want a single fund, or your own mix? Open the Funds tab →</Text>
       </Pressable>
@@ -144,6 +154,7 @@ const styles = StyleSheet.create({
   risk: { fontSize: 12, color: "#777" },
   meta: { fontSize: 12, color: "#777" },
   buyButton: { backgroundColor: "#2e6fdb", borderRadius: 8, paddingVertical: 10, alignItems: "center", marginTop: 4 },
+  monthlyLink: { color: "#2e6fdb", fontWeight: "600", textAlign: "center", fontSize: 13 },
   buyButtonText: { color: "#fff", fontWeight: "600", fontSize: 15 },
   secondaryButton: { paddingVertical: 10, paddingHorizontal: 16, alignItems: "center" },
   secondaryButtonText: { color: "#2e6fdb", fontWeight: "600", textAlign: "center" },

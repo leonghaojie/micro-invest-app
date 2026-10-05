@@ -37,6 +37,7 @@ import { readFileSync } from "fs";
 import { join } from "path";
 import { PrismaClient, RiskLevel } from "@prisma/client";
 import { backfillLegacyPlans } from "../src/services/ledgerBackfill.service";
+import { buysInMonth } from "../src/utils/syntheticPeers";
 import { planService } from "../src/services/plan.service";
 import { PRESET_PORTFOLIOS } from "../src/utils/presetPortfolios";
 import { assignExperience, experienceStream, FundInfo, generatePeerSpecs, SyntheticPeerSpec } from "../src/utils/syntheticPeers";
@@ -120,7 +121,8 @@ async function latestCommonDataMonth(): Promise<Date | null> {
   return months.reduce((min, d) => (d < min ? d : min));
 }
 
-async function createSyntheticPeer(spec: SyntheticPeerSpec, anchorMonth: Date): Promise<boolean> {
+/** Creates one synthetic peer in the old fixed-plan form; returns the new user's id, or null on failure. */
+async function createSyntheticPeer(spec: SyntheticPeerSpec, anchorMonth: Date): Promise<string | null> {
   const email = `synthetic+${spec.index}@seed.local`;
   try {
     const user = await prisma.user.create({
@@ -156,10 +158,10 @@ async function createSyntheticPeer(spec: SyntheticPeerSpec, anchorMonth: Date): 
     // Written in the old fixed-plan form; backfillLegacyPlans turns it into ledger rows
     // (a recurring buy since its start month), the same path real accounts took.
     await prisma.plan.create({ data: { userId: user.id, portfolioId: portfolio.id, contributionAmount: spec.contribution, startMonth } });
-    return true;
+    return user.id;
   } catch (err) {
     console.warn(`[seed] synthetic peer ${email}: failed (${(err as Error).message}).`);
-    return false;
+    return null;
   }
 }
 
@@ -186,12 +188,25 @@ async function seedSyntheticPeers({ resetSynthetic, peerCount }: { resetSyntheti
 
   const specs = generatePeerSpecs(peerCount, POPULATION_SEED, catalog);
   let created = 0;
+  const specByUser = new Map<string, SyntheticPeerSpec>();
   await inChunks(specs, CONCURRENCY, async (spec) => {
-    if (await createSyntheticPeer(spec, anchorMonth)) created += 1;
+    const userId = await createSyntheticPeer(spec, anchorMonth);
+    if (userId) {
+      created += 1;
+      specByUser.set(userId, spec);
+    }
     if (created % 50 === 0 && created > 0) console.log(`[seed]   ...${created}/${specs.length}`);
   });
 
-  const { migrated } = await backfillLegacyPlans();
+  // Some peers invest irregularly (DECISIONS.md #19): they skip months, and, being manual buyers,
+  // have no monthly buy going forward. Their later months are not simulated.
+  const { migrated } = await backfillLegacyPlans({
+    buys: (userId, month) => {
+      const spec = specByUser.get(userId);
+      return spec ? buysInMonth(POPULATION_SEED, spec.index, spec.buyRate, month) : true;
+    },
+    recurring: (userId) => (specByUser.get(userId)?.buyRate ?? 1) >= 1,
+  });
   console.log(`[seed] synthetic peers: ${created}/${specs.length} created (seed ${POPULATION_SEED}, history ends ${anchorMonth.toISOString().slice(0, 7)}); ${migrated} turned into ledger accounts.`);
   return true;
 }

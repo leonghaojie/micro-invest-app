@@ -58,6 +58,8 @@ export interface SyntheticPeerSpec {
   goalType: GoalTypeName;
   experienceLevel: ExperienceLevelName;
   contribution: number;
+  /** Chance of buying in any given month, 0..1 (ASSUMPTION, see assignBuyRate). */
+  buyRate: number;
   /** How many months of plan history this peer has (>= 3). */
   monthsOfHistory: number;
   allocations: SyntheticAllocation[];
@@ -169,6 +171,31 @@ export function experienceStream(seed: number, index: number): () => number {
   return createRng((seed ^ Math.imul(index + 1, 0x9e3779b1)) >>> 0);
 }
 
+/**
+ * How regularly a synthetic peer invests (ASSUMPTION, DECISIONS.md #19): about half buy every
+ * month, three in ten miss the odd month (a 0.80 to 0.95 chance of buying in a month), and
+ * two in ten are sporadic (0.40 to 0.70). Without this every simulated peer would show 100%
+ * consistency and the measure would say nothing. `u` and `v` are uniform draws in [0, 1).
+ */
+export function assignBuyRate(u: number, v: number): number {
+  if (u < 0.5) return 1;
+  if (u < 0.8) return Math.round((0.8 + v * 0.15) * 100) / 100;
+  return Math.round((0.4 + v * 0.3) * 100) / 100;
+}
+
+/** Its own random stream per peer (like `experienceStream`), so adding it changed nothing else. */
+export function buyRateStream(seed: number, index: number): () => number {
+  return createRng((seed ^ Math.imul(index + 1, 0x85ebca6b) ^ 0x5bd1e995) >>> 0);
+}
+
+/** Whether peer `index`, buying with chance `rate`, buys in `month` ("YYYY-MM"). Deterministic. */
+export function buysInMonth(seed: number, index: number, rate: number, month: string): boolean {
+  if (rate >= 1) return true;
+  let h = (seed ^ Math.imul(index + 1, 0x9e3779b1)) >>> 0;
+  for (let i = 0; i < month.length; i++) h = Math.imul(h ^ month.charCodeAt(i), 0x01000193) >>> 0;
+  return createRng(h)() < rate;
+}
+
 /** Generates `count` reproducible synthetic peer specs. */
 export function generatePeerSpecs(count: number, seed: number, catalog: FundInfo[]): SyntheticPeerSpec[] {
   const rng = createRng(seed);
@@ -209,6 +236,10 @@ export function generatePeerSpecs(count: number, seed: number, catalog: FundInfo
       goalType,
       experienceLevel: assignExperience(age, experienceStream(seed, index)()),
       contribution,
+      buyRate: (() => {
+        const r = buyRateStream(seed, index);
+        return assignBuyRate(r(), r());
+      })(),
       monthsOfHistory: 3 + Math.floor(rng() * 22), // 3..24
       allocations: buildAllocations(rng, riskLevel, catalog),
     });

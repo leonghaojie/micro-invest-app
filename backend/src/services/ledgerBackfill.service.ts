@@ -22,7 +22,18 @@ export interface BackfillResult {
   skipped: number;
 }
 
-async function migrateOne(tx: Tx, planId: string, clock: { latestDataMonth: string; tradeMonth: string }): Promise<boolean> {
+/** Says whether the account of `userId` buys in `month`. Real accounts always do (their old plan did). */
+export type BuysInMonth = (userId: string, month: string) => boolean;
+
+export interface BackfillOptions {
+  /** Which months get a buy. Default: every month, as the old plan did. */
+  buys?: BuysInMonth;
+  /** Whether the account keeps a monthly buy going forward. Default: yes. The seed leaves it off for irregular synthetic peers. */
+  recurring?: (userId: string) => boolean;
+}
+
+async function migrateOne(tx: Tx, planId: string, clock: { latestDataMonth: string; tradeMonth: string }, options: BackfillOptions): Promise<boolean> {
+  const buys = options.buys ?? (() => true);
   const plan = await tx.plan.findUnique({
     where: { id: planId },
     include: { portfolio: { include: { allocations: true } }, user: { include: { profile: true } } },
@@ -43,10 +54,10 @@ async function migrateOne(tx: Tx, planId: string, clock: { latestDataMonth: stri
     });
     const legs = splitByWeights(contribution, weights);
     await tx.ledgerEntry.createMany({
-      data: months.flatMap((m) => legs.map((l) => ({ planId, month: monthDate(m), side: "BUY" as const, fundId: l.fundId, amount: l.amount, source: "MIGRATED" as const }))),
+      data: months.filter((m) => buys(plan.userId, m)).flatMap((m) => legs.map((l) => ({ planId, month: monthDate(m), side: "BUY" as const, fundId: l.fundId, amount: l.amount, source: "MIGRATED" as const }))),
     });
   }
-  if (contribution > 0) {
+  if (contribution > 0 && (options.recurring?.(plan.userId) ?? true)) {
     await tx.recurringRule.create({
       data: { planId, portfolioId: plan.portfolioId, amount: contribution, startMonth: monthDate(clock.tradeMonth) },
     });
@@ -56,7 +67,7 @@ async function migrateOne(tx: Tx, planId: string, clock: { latestDataMonth: stri
 }
 
 /** Migrates every legacy plan, then derives each account's state. */
-export async function backfillLegacyPlans(): Promise<BackfillResult> {
+export async function backfillLegacyPlans(options: BackfillOptions = {}): Promise<BackfillResult> {
   const legacy = await prisma.plan.findMany({ where: { portfolioId: { not: null } }, select: { id: true, userId: true } });
   if (legacy.length === 0) return { migrated: 0, skipped: 0 };
   const clock = await getClock();
@@ -64,7 +75,7 @@ export async function backfillLegacyPlans(): Promise<BackfillResult> {
   let migrated = 0;
   let skipped = 0;
   for (const p of legacy) {
-    const done = await prisma.$transaction((tx) => migrateOne(tx, p.id, clock), { timeout: 30_000 });
+    const done = await prisma.$transaction((tx) => migrateOne(tx, p.id, clock, options), { timeout: 30_000 });
     if (done) migrated += 1;
     else skipped += 1;
   }

@@ -35,6 +35,7 @@ import { ForgotPasswordScreen } from "../screens/ForgotPasswordScreen";
 import { FriendsScreen } from "../screens/FriendsScreen";
 import { ActivityScreen } from "../screens/ActivityScreen";
 import { ProfileSetupScreen } from "../screens/ProfileSetupScreen";
+import { RecurringScreen } from "../screens/RecurringScreen";
 import { TradeScreen } from "../screens/TradeScreen";
 import { WelcomeLoginScreen } from "../screens/WelcomeLoginScreen";
 import { MainTabNavigator } from "./MainTabNavigator";
@@ -57,7 +58,9 @@ export type RootStackParamList = {
   // DECISIONS.md #19: the same form, to change income, expenses, risk... later in life.
   EditProfile: undefined;
   // DECISIONS.md #19: buy or sell. Exactly one of fundId / portfolioId for a buy; fundId for a sell.
-  Trade: { mode: "buy" | "sell"; name: string; fundId?: string; portfolioId?: string };
+  Trade: { mode: "buy" | "sell"; name: string; fundId?: string; portfolioId?: string; monthly?: boolean };
+  // DECISIONS.md #19: monthly buys: set up, change the amount, pause, resume.
+  Recurring: undefined;
   // DECISIONS.md #19: buys, sells and monthly cash credits.
   Activity: undefined;
   Main: NavigatorScreenParams<MainTabParamList> | undefined;
@@ -146,6 +149,7 @@ export function AppNavigator() {
       <Stack.Screen name="Main" component={MainTabNavigator} options={{ headerShown: false }} />
       <Stack.Screen name="Trade" component={TradeScreen} options={({ route }) => ({ title: route.params.mode === "buy" ? "Buy" : "Sell" })} />
       <Stack.Screen name="Activity" component={ActivityScreen} options={{ title: "Activity" }} />
+      <Stack.Screen name="Recurring" component={RecurringScreen} options={{ title: "Monthly buys" }} />
       <Stack.Screen name="Friends" component={FriendsScreen} options={{ title: "Friends" }} />
       <Stack.Screen
         name="FriendHoldings"

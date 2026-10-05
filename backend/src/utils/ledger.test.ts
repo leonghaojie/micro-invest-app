@@ -2,7 +2,7 @@
  * The ledger engine (DECISIONS.md #19): months, money helpers and the replay that turns
  * credits, buys and sells into holdings, cash and monthly snapshots.
  */
-import { addMonths, averageMonthlyBuy, LedgerEntry, monthRange, monthsBetween, replay, spareIncome, splitByWeights, tradeMonthAfter } from "./ledger";
+import { addMonths, averageMonthlyBuy, contributionConsistency, LedgerEntry, monthRange, monthsBetween, replay, spareIncome, splitByWeights, tradeMonthAfter } from "./ledger";
 
 const buy = (month: string, fundId: string, amount: number): LedgerEntry => ({ month, side: "BUY", fundId, amount });
 const sell = (month: string, fundId: string, amount: number): LedgerEntry => ({ month, side: "SELL", fundId, amount });
@@ -271,5 +271,53 @@ describe("averageMonthlyBuy", () => {
 
   it("counts only buys, not sells", () => {
     expect(averageMonthlyBuy([buy("2026-10", "A", 100), sell("2026-10", "A", 40)], "2026-10")).toBe(100);
+  });
+});
+
+describe("contributionConsistency", () => {
+  const months = (from: string, n: number) => monthRange(from, addMonths(from, n - 1));
+
+  it("is null with no buys", () => {
+    expect(contributionConsistency([], "2026-10")).toBeNull();
+  });
+
+  it("is 100% when every month since the first buy has one", () => {
+    expect(contributionConsistency(months("2026-05", 6), "2026-10")).toEqual({ monthsWithBuy: 6, monthsCounted: 6, pct: 100 });
+  });
+
+  it("counts a month without a buy against, e.g. a skipped monthly buy", () => {
+    // Jun, Jul, (Aug missed), Sep, Oct
+    const r = contributionConsistency(["2026-06", "2026-07", "2026-09", "2026-10"], "2026-10")!;
+    expect(r).toEqual({ monthsWithBuy: 4, monthsCounted: 5, pct: 80 });
+  });
+
+  it("does not count months before the first buy", () => {
+    expect(contributionConsistency(["2026-08", "2026-09", "2026-10"], "2026-10")!.monthsCounted).toBe(3);
+  });
+
+  it("an open trade month with no buy yet is not a miss", () => {
+    // bought Jul, Aug, Sep; October has just begun
+    expect(contributionConsistency(["2026-07", "2026-08", "2026-09"], "2026-10")).toEqual({ monthsWithBuy: 3, monthsCounted: 3, pct: 100 });
+  });
+
+  it("but a trade month with a buy counts", () => {
+    expect(contributionConsistency(["2026-08", "2026-09", "2026-10"], "2026-10")).toEqual({ monthsWithBuy: 3, monthsCounted: 3, pct: 100 });
+  });
+
+  it("looks back at most 12 months", () => {
+    // first buy in 2024, then only the last two months: the old gap is outside the window
+    const r = contributionConsistency(["2024-01", "2026-09", "2026-10"], "2026-10")!;
+    expect(r.monthsCounted).toBe(12);
+    expect(r.monthsWithBuy).toBe(2);
+    expect(r.pct).toBe(16.7);
+  });
+
+  it("is null with fewer than 3 months to judge", () => {
+    expect(contributionConsistency(["2026-09", "2026-10"], "2026-10")).toBeNull();
+    expect(contributionConsistency(["2026-10"], "2026-10")).toBeNull();
+  });
+
+  it("ignores duplicates (several buys in a month are one month with a buy)", () => {
+    expect(contributionConsistency(["2026-08", "2026-08", "2026-09", "2026-10"], "2026-10")!.monthsWithBuy).toBe(3);
   });
 });

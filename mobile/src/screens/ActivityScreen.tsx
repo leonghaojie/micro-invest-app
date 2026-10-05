@@ -9,7 +9,7 @@ import { apiFetch, ApiError } from "../api/client";
 import { formatCurrency } from "../utils/peerFormat";
 
 interface Item {
-  kind: "BUY" | "SELL" | "CREDIT";
+  kind: "BUY" | "SELL" | "CREDIT" | "SKIPPED";
   month: string;
   amount: number;
   source: string;
@@ -74,7 +74,7 @@ export function ActivityScreen() {
   const rows: { key: string; kind: Item["kind"]; month: string; title: string; note: string; amount: number }[] = [];
   const seenGroup = new Map<string, number>();
   items.forEach((it, i) => {
-    const group = it.kind === "CREDIT" ? null : (it.batchId ?? (it.source === "MIGRATED" ? `${it.kind}-${it.month}-migrated` : null));
+    const group = it.kind === "CREDIT" || it.kind === "SKIPPED" ? null : (it.batchId ?? (it.source === "MIGRATED" ? `${it.kind}-${it.month}-migrated` : null));
     if (group && seenGroup.has(group)) {
       const row = rows[seenGroup.get(group)!];
       row.amount += it.amount;
@@ -86,8 +86,13 @@ export function ActivityScreen() {
       key: `${i}-${it.at}`,
       kind: it.kind,
       month: it.month,
-      title: it.kind === "CREDIT" ? "Cash added" : `${it.kind === "BUY" ? "Bought" : "Sold"} ${it.ticker}`,
-      note: SOURCE_NOTE[it.source] ?? "",
+      title:
+        it.kind === "CREDIT"
+          ? "Cash added"
+          : it.kind === "SKIPPED"
+            ? `Monthly buy skipped: ${it.ticker ?? it.name ?? ""}`.trim()
+            : `${it.kind === "BUY" ? "Bought" : "Sold"} ${it.ticker}`,
+      note: it.kind === "SKIPPED" ? "not enough cash that month" : (SOURCE_NOTE[it.source] ?? ""),
       amount: it.amount,
     });
   });
@@ -104,10 +109,14 @@ export function ActivityScreen() {
                 {r.note ? ` · ${r.note}` : ""}
               </Text>
             </View>
-            <Text style={[styles.amount, r.kind === "BUY" ? styles.out : styles.in]}>
-              {r.kind === "BUY" ? "-" : "+"}
-              {formatCurrency(r.amount)}
-            </Text>
+            {r.kind === "SKIPPED" ? (
+              <Text style={styles.skipped}>{formatCurrency(r.amount)} not bought</Text>
+            ) : (
+              <Text style={[styles.amount, r.kind === "BUY" ? styles.out : styles.in]}>
+                {r.kind === "BUY" ? "-" : "+"}
+                {formatCurrency(r.amount)}
+              </Text>
+            )}
           </View>
         ))}
       </View>
@@ -128,6 +137,7 @@ const styles = StyleSheet.create({
   rowTitle: { fontWeight: "600", color: "#333" },
   rowMeta: { fontSize: 12, color: "#777" },
   amount: { fontWeight: "700" },
+  skipped: { fontSize: 12, color: "#b9770e", fontWeight: "600" },
   out: { color: "#c0392b" },
   in: { color: "#1a8f4c" },
   foot: { fontSize: 11, color: "#999", textAlign: "center", maxWidth: 340 },
