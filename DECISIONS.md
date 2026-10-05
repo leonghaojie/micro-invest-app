@@ -1491,6 +1491,203 @@ Implements: UC-05 amended (FR35–FR37). Owner: `backend/src/utils/peerCohort.ts
 `backend/prisma/schema.prisma` (`ExperienceLevel`), `backend/src/utils/syntheticPeers.ts`,
 mobile `PeerCohort.tsx`, `PeerComparisonScreen.tsx`, `ProfileSetupScreen.tsx`.
 
+## 19. Buy, sell and recurring buys: a ledger replaces the fixed monthly plan (5 Oct 2026) — design agreed, not yet built
+
+**Status.** Design agreed on 5 Oct 2026 (the four questions at the end were answered
+"go with the recommendations"). Nothing in this section is implemented yet. It supersedes the
+"one plan, one portfolio, one fixed monthly contribution" model of #1 (third amendment),
+and with it #6/#7's wallet arithmetic. Build order is in "Phasing" below.
+
+**Problem.** The app asks a user to pick one portfolio and one monthly amount and then runs
+that for ever. Nobody micro-invests like that: people pick a fund, buy when they have
+money, sometimes sell, and set up (or stop) a monthly buy. The fixed plan also makes the
+"consistency" metric meaningless (every plan contributes every month) and lets income
+change history (see "Profile changes").
+
+**Decision.** The user's money is described by **facts**, not by a plan: a ledger of cash
+credits, buys and sells. Everything else (holdings, value, profit, cash, monthly
+snapshots) is derived from the ledger and the fund return data. Agreed with you already:
+live paper trading, cash that accrues from income minus expenses, and an opening credit at
+sign-up.
+
+### 1. Time: one "trade month"
+
+Fund data is monthly and runs to the **latest data month** `L` (today: 2026-09). The
+**trade month** is `T = L + 1` (today: 2026-10), derived from the data, not the clock, so a
+stalled data update does not let trades jump ahead of the data.
+
+- Every trade is stamped with `T` and **priced at the close of `L`**. It earns `T`'s return
+  once `T`'s data arrives (the monthly auto-update, #15). Until then it is valued at cost.
+- This matches the existing engine's convention (`V_t = (V_{t-1} + flow_t) × (1 + R_t)`:
+  money added in a month earns that month's return), so no return arithmetic changes.
+- When new data arrives, `T` moves on by one month and a new month's cash is credited.
+
+Example (today is 5 Oct, `L` = Sep): buy $200 of VT now → entry month Oct, shows $200
+until Oct's data arrives around 1 Nov; then it becomes $200 × (1 + VT's Oct return), `T`
+becomes Nov, and November's cash arrives.
+
+### 2. Cash
+
+- **Opening credit.** When setup is finished, (income − expense) from the setup form is
+  credited immediately as that month's cash (your decision).
+- **Each later trade month** credits (income − expense) as of the profile at that moment.
+- Cash = credits + sale proceeds − purchases. **A buy cannot exceed cash**, and **a sell
+  cannot exceed what is held**. No margin, no negative cash for new trades.
+- Credits are **stored as ledger rows**, created when a new trade month is first seen (on
+  the user's next request, and for everyone right after each monthly data update). Because
+  a stored credit never changes afterwards, a later salary change cannot rewrite the past.
+
+### 3. Profile changes (your new requirement)
+
+Income, expense, age, risk, goal and experience can be edited at any time from an
+**Edit profile** screen in the dashboard's Account section (today only first-time setup
+reaches the profile form).
+
+- **Past months never change.** Credits already made stay as they were.
+- **Income/expense edits apply from the current month's credit onward**: the current
+  month's credit is re-priced to the new figures, so fixing a typo at sign-up or reporting
+  a promotion works straight away. Refused with a clear message if re-pricing would leave
+  cash below zero (money already spent can't be un-credited).
+- Age, risk, goal, experience have no cash effect. They move the user's peer cohort and
+  benchmark **from then on**; peers are always matched on the current profile.
+- Before applying any edit, the server first brings credits up to date, so an edit can
+  never retroactively change months that passed before it.
+
+### 4. Ledger and derived data
+
+`ledger_entries` (the only source of truth): plan/account, `month` (trade month), `type`
+(CREDIT, BUY, SELL), `fundId` (null for credits), `amount` (positive dollars), `source`
+(SETUP, SYSTEM, MANUAL, RECURRING, MIGRATED), `batchId` (groups the legs of one basket
+buy), `createdAt`. Unique per (account, month) for CREDIT, so credits are idempotent.
+
+Derived, recomputed on read and after each data update (the same pattern as today's
+`PlanMonth`):
+
+- **Per fund, per month:** `V_f,t = (V_f,t-1 + buys − sells) × (1 + r_f,t)`. Holdings now
+  **drift** with the market; they are no longer rebalanced to fixed weights every month
+  (a real change: see "Migration").
+- **`plan_months`** (kept, derived): portfolio value, the month's time-weighted return
+  `V_t / (V_{t-1} + net flow) − 1` (undefined in a month with nothing invested),
+  net flow (the old `contribution` column), cumulative net invested (old `totalInvested`)
+  and cash after the month (old `walletBalance`). So every existing consumer of these
+  columns keeps working.
+- **`plan_holdings`** (new, derived, latest only): fund, current value, cost basis. Cost
+  basis uses average cost: a sell removes cost in proportion to what is sold.
+- **Dashboard figures:** securities value (including the current month at cost), net
+  invested (buys − sells), total profit (value − net invested), cash, total assets. For
+  the first time **each holding can show its own profit** (value − cost basis), which #17
+  deliberately did not, because holdings were synthetic weights.
+
+### 5. What the user can do
+
+| Action | Rule |
+|---|---|
+| Buy a fund | amount ≤ cash, minimum $1, fund must have data through `L` |
+| Buy a portfolio (preset or saved basket) | the amount is split by the portfolio's weights into one BUY per fund (same `batchId`); rounding cents go to the largest leg |
+| Sell a fund | amount ≤ current value; "sell all" supported; proceeds go to cash |
+| Recurring buy: set up / pause / resume | **Phase 3**; see below |
+
+Trades are validated server-side inside a transaction that locks the user's account row, so
+two quick taps cannot overspend. Responses return the new cash and holding.
+
+API (replaces `POST /plan`): `GET /account` (cash, holdings, totals, trade month),
+`POST /trades`, `GET /trades` (history). `GET /plan` stays as the same summary shape for
+the existing screens until they are moved over. Mobile: the **Contribution tab becomes
+"Portfolios"** (presets and saved baskets, each with Buy); **Buy / Sell buttons on the
+fund screen**; a trade confirmation sheet showing cash before/after and the pricing note;
+an **Activity** list on the dashboard.
+
+### 6. Recurring buys (Phase 3, designed now so Phase 2 does not paint us into a corner)
+
+- A rule is `{target: fund or portfolio, amount, startMonth, endMonth?}`. **Pause** ends
+  the rule (sets `endMonth`); **resume** creates a new rule. Past rules are history.
+- Each new trade month, due rules run in order, **before** that month's manual trades. A
+  rule with enough cash writes a RECURRING buy; otherwise it writes a **skipped** record
+  (so a missed month is visible, never silently dropped). Idempotent per (rule, month).
+- **Contribution consistency** = months with at least one buy ÷ months since the first buy
+  (my proposed definition). A skipped recurring buy counts as a missed month.
+- Phase 2 carries the rule table and the monthly runner (backend only) so that existing
+  users' monthly contributions keep going between the two releases; Phase 3 adds the
+  screens, pause/resume and the consistency card.
+
+### 7. Effect on the peer comparison (#18)
+
+Banding is untouched (profile only). The *metrics* change meaning slightly:
+
+- **Investment rate** = average monthly purchases over the last ≤ 12 months ÷ income (was:
+  the fixed monthly amount ÷ income). Stored as the derived `contributionAmount` figure so
+  the Explore dashboard, Friends and Insights keep working unchanged.
+- **Diversification** and **largest holding** use the user's actual current holdings
+  (value-weighted), not a portfolio's nominal weights.
+- **Return** and **return per risk** use the monthly time-weighted returns above, so
+  buying and selling do not distort them. Months with nothing invested have no return and
+  break the comparison window, as for a young plan today.
+- "No plan" becomes "nothing invested yet": a user with cash but no holdings sees the
+  prompt to make a first buy.
+
+### 8. Migration of existing accounts and synthetic peers
+
+Every existing plan becomes ledger rows: a SETUP credit in its start month and a credit
+for each month since (its current income/expense, exactly the old wallet arithmetic), plus
+one MIGRATED BUY per fund per month (the monthly contribution split by the portfolio
+weights), plus an active recurring rule for its portfolio. Synthetic peers go through the
+same path, so seeding writes ledger rows and the engine derives the rest.
+
+Two honest consequences:
+1. **Historical values will shift slightly for multi-fund plans**, because the old engine
+   rebalanced to fixed weights every month and the new one lets holdings drift. A
+   single-fund plan is identical. I will report the largest difference found.
+2. **Legacy accounts whose contribution exceeded their spare income have negative cash**
+   in the old model. Migrated rows are kept as they were, so such an account shows
+   negative cash until it catches up; only *new* trades are blocked from going negative.
+
+### 9. Phasing
+
+- **PR 2.** Ledger and derivations, trade-month logic and credits, profile edit with
+  re-pricing, buy / sell / buy-portfolio (API + screens), migration and seed, the rule
+  table and monthly runner (no UI), and moving every consumer of plan data over
+  (dashboard, friends' holdings, insights, Explore, cohort, fund data update).
+- **PR 3.** Recurring-buy screens (set up, pause, resume), skipped-month display, and the
+  consistency card in the cohort view.
+
+### 10. Limits
+
+- Month-level pricing only: no intraday price, no fees, no tax, no dividends beyond the
+  fund's total return, and no currency conversion (as before).
+- A buy in the current month shows at cost until its month's data arrives; there is no
+  "pending" state beyond that.
+- Sells are priced at the last close, so a user cannot react to news inside the month.
+- Rebalancing is gone: a portfolio bought once will drift, as in a real account.
+
+### 11. Verification plan
+
+- Unit tests: trade-month derivation (including stale data), cash (credits, buys, sells,
+  limits, re-pricing and its negative-cash refusal), the replay (a single fund against a
+  hand calculation; two funds with a sell; a month with nothing invested), average-cost
+  basis, basket split rounding (sums exactly to the amount), idempotent credits, and that
+  an edit never changes a past credit.
+- An independent replay written from this document with plain loops, compared with the API
+  for the test accounts and a sample of synthetic peers.
+- Migration check: single-fund accounts identical to the old values; for multi-fund
+  accounts, the largest difference in final value reported.
+- Concurrency: two simultaneous buys that together exceed cash — exactly one succeeds.
+- UI (phone size): buy, sell, basket buy, refusal messages, edit profile, activity list.
+
+**Decisions on the open questions** (all taken as recommended):
+1. Profile edits re-price the **current month's** credit, guarded against negative cash.
+2. Multi-fund history shifting slightly (no rebalancing) and legacy negative cash being
+   kept as is are accepted.
+3. The rule table and monthly runner go in **PR 2**, so existing users' monthly
+   contributions continue between the two releases.
+4. The Contribution tab is renamed **"Portfolios"**, with Buy / Sell on the fund and
+   portfolio screens.
+
+Implements (when built): UC-03 rewritten, UC-04/UC-05 amended; new FRs for trading,
+profile history and recurring buys (SRS v1.16). Owner (planned):
+`backend/src/services/ledger.service.ts` (+ pure replay in `utils/ledger.ts`),
+`trade.service.ts`, `profile.service.ts`, `plan.service.ts` (reduced to derived reads),
+mobile `PortfolioScreen`, `FundDetailScreen`, `EditProfileScreen`.
+
 ## Open items (Design Model §8, carried forward)
 
 - **`Phase2_SRS_v1.6.docx` — done, no longer open.** Produced in the same
