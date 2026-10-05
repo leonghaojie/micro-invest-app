@@ -141,6 +141,8 @@ const LATEST = Prisma.sql`
       pm."endingBalance", pm."totalInvested", pm."walletBalance"
     FROM plans p
     JOIN plan_months pm ON pm."planId" = p.id
+    -- only accounts that have invested (DECISIONS.md #19): an account holding only cash is not a peer
+    WHERE p.id IN (SELECT "planId" FROM plan_months WHERE "hasPosition")
     ORDER BY p."userId", pm."monthDate" DESC
   )`;
 
@@ -163,6 +165,18 @@ function peersCte(userId: string, group: PeerGroupAssignment): Prisma.Sql {
     FROM latest l
     JOIN user_profiles up ON up."userId" = l."userId"
     WHERE ${Prisma.join(conds, " AND ")}
+  )`;
+}
+
+/** `peer_holdings`: what each peer holds now, each fund as a percent of that peer's value
+ * (accounts hold real positions, not a portfolio's nominal weights). */
+function holdingsCte(userId: string, group: PeerGroupAssignment): Prisma.Sql {
+  return Prisma.sql`${peersCte(userId, group)},
+  peer_holdings AS (
+    SELECT peers."userId", ph."fundId",
+           ph.value / NULLIF(SUM(ph.value) OVER (PARTITION BY ph."planId"), 0) * 100 AS "weightPct"
+    FROM peers
+    JOIN plan_holdings ph ON ph."planId" = peers.plan_id
   )`;
 }
 
@@ -305,39 +319,36 @@ class PeerInsightsService {
   private async allocation(userId: string, group: PeerGroupAssignment): Promise<Allocation> {
     const [mixRows, fundRows, holdingRows, myPlan] = await Promise.all([
       prisma.$queryRaw<{ assetClass: string; avg_weight: unknown }[]>`
-        WITH ${peersCte(userId, group)}
-        SELECT f."assetClass", SUM(pa."weightPct") / (SELECT COUNT(*) FROM peers) AS avg_weight
-        FROM peers
-        JOIN portfolio_allocations pa ON pa."portfolioId" = peers."portfolioId"
-        JOIN funds f ON f.id = pa."fundId"
+        WITH ${holdingsCte(userId, group)}
+        SELECT f."assetClass", SUM(ph."weightPct") / NULLIF((SELECT COUNT(DISTINCT "userId") FROM peer_holdings), 0) AS avg_weight
+        FROM peer_holdings ph
+        JOIN funds f ON f.id = ph."fundId"
         GROUP BY f."assetClass"
         ORDER BY avg_weight DESC`,
       prisma.$queryRaw<{ ticker: string; name: string; holders: number; n: number }[]>`
-        WITH ${peersCte(userId, group)}
-        SELECT f.ticker, f.name, COUNT(DISTINCT peers."userId")::int AS holders, (SELECT COUNT(*)::int FROM peers) AS n
-        FROM peers
-        JOIN portfolio_allocations pa ON pa."portfolioId" = peers."portfolioId"
-        JOIN funds f ON f.id = pa."fundId"
+        WITH ${holdingsCte(userId, group)}
+        SELECT f.ticker, f.name, COUNT(DISTINCT ph."userId")::int AS holders, (SELECT COUNT(DISTINCT "userId")::int FROM peer_holdings) AS n
+        FROM peer_holdings ph
+        JOIN funds f ON f.id = ph."fundId"
         GROUP BY f.id, f.ticker, f.name
-        HAVING COUNT(DISTINCT peers."userId") >= ${MIN_CELL_COUNT}
+        HAVING COUNT(DISTINCT ph."userId") >= ${MIN_CELL_COUNT}
         ORDER BY holders DESC, f.ticker
         LIMIT ${TOP_FUNDS}`,
       prisma.$queryRaw<{ avg_holdings: unknown }[]>`
-        WITH ${peersCte(userId, group)}
+        WITH ${holdingsCte(userId, group)}
         SELECT AVG(c)::float AS avg_holdings FROM (
-          SELECT COUNT(*) AS c FROM peers
-          JOIN portfolio_allocations pa ON pa."portfolioId" = peers."portfolioId"
-          GROUP BY peers."userId"
+          SELECT COUNT(*) AS c FROM peer_holdings GROUP BY "userId"
         ) x`,
       prisma.plan.findUnique({
         where: { userId },
-        include: { portfolio: { include: { allocations: { include: { fund: { select: { assetClass: true } } } } } } },
+        include: { holdings: { select: { value: true, fund: { select: { assetClass: true } } } } },
       }),
     ]);
 
+    const myHeld = (myPlan?.holdings ?? []).reduce((sum, h) => sum + Number(h.value), 0);
     const myTotals = new Map<string, number>();
-    for (const a of myPlan?.portfolio.allocations ?? []) {
-      myTotals.set(a.fund.assetClass, (myTotals.get(a.fund.assetClass) ?? 0) + Number(a.weightPct));
+    for (const h of myPlan?.holdings ?? []) {
+      myTotals.set(h.fund.assetClass, (myTotals.get(h.fund.assetClass) ?? 0) + (myHeld > 0 ? (Number(h.value) / myHeld) * 100 : 0));
     }
 
     return {

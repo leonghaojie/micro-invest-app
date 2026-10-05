@@ -139,7 +139,7 @@ const DIST_ROW = {
 
 beforeEach(() => {
   db.plan.findUnique.mockResolvedValue({
-    portfolio: { allocations: [{ weightPct: "60", fund: { assetClass: "EQUITY" } }, { weightPct: "40", fund: { assetClass: "BOND" } }] },
+    holdings: [{ value: "600.00", fund: { assetClass: "EQUITY" } }, { value: "400.00", fund: { assetClass: "BOND" } }],
   });
 });
 

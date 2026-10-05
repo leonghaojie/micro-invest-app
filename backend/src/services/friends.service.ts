@@ -74,6 +74,18 @@ const NO_SHARING: SharingSettings = {
 
 export const MAX_FRIENDS = 50;
 
+const HOLDINGS_SELECT = { select: { value: true, fund: { select: { ticker: true, name: true, assetClass: true } } } } as const;
+
+/** Pure. An account's holdings as shares of its value (percent), for the holdings views. */
+export function snapshotOf(holdings: { value: unknown; fund: { ticker: string; name: string; assetClass: string } }[]): PortfolioSnapshot {
+  const total = holdings.reduce((s, h) => s + Number(h.value), 0);
+  return {
+    name: null,
+    isPreset: false,
+    allocations: holdings.map((h) => ({ weightPct: total > 0 ? Math.round((Number(h.value) / total) * 10000) / 100 : 0, fund: h.fund })),
+  };
+}
+
 interface PlanFigures {
   contributionAmount: number;
   finalValue: number;
@@ -223,12 +235,14 @@ export interface HoldingsOverview {
 }
 
 export interface PortfolioSnapshot {
-  name: string;
+  /** A preset's name, or null. Accounts no longer have one portfolio (DECISIONS.md #19), so this is null. */
+  name: string | null;
   isPreset: boolean;
+  /** weightPct is each fund's share of the account's value. */
   allocations: { weightPct: number; fund: { ticker: string; name: string; assetClass: string } }[];
 }
 
-/** Pure. Turns a plan's portfolio into a member's holdings, largest first.
+/** Pure. Turns what an account holds into a member's holdings, largest first.
  * `viewerTickers` marks the funds the viewer also holds. */
 export function toMemberHoldings(displayName: string, portfolio: PortfolioSnapshot, viewerTickers: Set<string>): MemberHoldings {
   return {
@@ -495,7 +509,7 @@ class FriendsService {
 
     // Recompute-on-read per member so a stale PlanMonth never gets ranked.
     // Friend count is capped (MAX_FRIENDS), so this stays cheap.
-    const plans = await Promise.all(allIds.map((id) => planService.getActivePlan(id).catch(() => null)));
+    const plans = await Promise.all(allIds.map((id) => planService.getActivePlan(id, { advance: id === userId }).catch(() => null)));
     const planById = new Map(allIds.map((id, i) => [id, plans[i]]));
 
     const metricsFor = (id: string): MemberMetrics => {
@@ -529,20 +543,10 @@ class FriendsService {
     return buildComparison({ displayName: me?.displayName ?? "You", metrics: metricsFor(userId) }, friends);
   }
 
-  private async planPortfolio(userId: string) {
-    return prisma.plan.findUnique({
-      where: { userId },
-      select: {
-        userId: true,
-        portfolio: {
-          select: {
-            name: true,
-            isPreset: true,
-            allocations: { select: { weightPct: true, fund: { select: { ticker: true, name: true, assetClass: true } } } },
-          },
-        },
-      },
-    });
+  /** What an account holds now, as value shares: the account's holdings, or null with nothing held. */
+  private async accountHoldings(userId: string) {
+    const plan = await prisma.plan.findUnique({ where: { userId }, select: { userId: true, holdings: HOLDINGS_SELECT } });
+    return plan && plan.holdings.length > 0 ? plan : null;
   }
 
   /** The friends list for the Holdings view: who shares, and a one-line
@@ -565,30 +569,14 @@ class FriendsService {
       : [];
     const sharers = friendUsers.filter((u) => u.sharing?.shareHoldings === true);
 
-    const planSelect = {
-      userId: true,
-      portfolio: {
-        select: {
-          name: true,
-          isPreset: true,
-          allocations: { select: { weightPct: true, fund: { select: { ticker: true, name: true, assetClass: true } } } },
-        },
-      },
-    } as const;
     const [myPlan, sharerPlans, meUser] = await Promise.all([
-      this.planPortfolio(userId),
-      sharers.length ? prisma.plan.findMany({ where: { userId: { in: sharers.map((u) => u.id) } }, select: planSelect }) : [],
+      this.accountHoldings(userId),
+      sharers.length ? prisma.plan.findMany({ where: { userId: { in: sharers.map((u) => u.id) } }, select: { userId: true, holdings: HOLDINGS_SELECT } }) : [],
       prisma.user.findUnique({ where: { id: userId }, select: { displayName: true } }),
     ]);
 
-    const snapshot = (p: NonNullable<typeof myPlan>["portfolio"]): PortfolioSnapshot => ({
-      name: p.name,
-      isPreset: p.isPreset,
-      allocations: p.allocations.map((a) => ({ weightPct: Number(a.weightPct), fund: a.fund })),
-    });
-
-    const viewerTickers = new Set(myPlan ? myPlan.portfolio.allocations.map((a) => a.fund.ticker) : []);
-    const planByUser = new Map(sharerPlans.map((p) => [p.userId, p]));
+    const viewerTickers = new Set(myPlan ? myPlan.holdings.map((h) => h.fund.ticker) : []);
+    const planByUser = new Map(sharerPlans.filter((p) => p.holdings.length > 0).map((p) => [p.userId, p]));
 
     const friends: HoldingsSummary[] = [];
     let noPlanCount = 0;
@@ -599,14 +587,14 @@ class FriendsService {
         continue;
       }
       friends.push(
-        summarizeHoldings(toMemberHoldings(u.displayName ?? FALLBACK_NAME, snapshot(plan.portfolio), viewerTickers), linkByFriend.get(u.id)!)
+        summarizeHoldings(toMemberHoldings(u.displayName ?? FALLBACK_NAME, snapshotOf(plan.holdings), viewerTickers), linkByFriend.get(u.id)!)
       );
     }
     friends.sort((a, b) => a.displayName.localeCompare(b.displayName));
 
     return {
       friendCount: friendIds.length,
-      me: myPlan ? summarizeHoldings(toMemberHoldings(meUser?.displayName ?? "You", snapshot(myPlan.portfolio), viewerTickers), null) : null,
+      me: myPlan ? summarizeHoldings(toMemberHoldings(meUser?.displayName ?? "You", snapshotOf(myPlan.holdings), viewerTickers), null) : null,
       friends,
       hiddenCount: friendUsers.length - sharers.length,
       noPlanCount,
@@ -620,18 +608,13 @@ class FriendsService {
   async getHoldingsDetail(userId: string, id: string): Promise<MemberHoldings> {
     const NOT_AVAILABLE = new HttpError(404, "Holdings not available");
 
-    const myPlan = await this.planPortfolio(userId);
-    const viewerTickers = new Set(myPlan ? myPlan.portfolio.allocations.map((a) => a.fund.ticker) : []);
-    const snapshot = (p: NonNullable<typeof myPlan>["portfolio"]): PortfolioSnapshot => ({
-      name: p.name,
-      isPreset: p.isPreset,
-      allocations: p.allocations.map((a) => ({ weightPct: Number(a.weightPct), fund: a.fund })),
-    });
+    const myPlan = await this.accountHoldings(userId);
+    const viewerTickers = new Set(myPlan ? myPlan.holdings.map((h) => h.fund.ticker) : []);
 
     if (id === "me") {
       if (!myPlan) throw NOT_AVAILABLE;
       const me = await prisma.user.findUnique({ where: { id: userId }, select: { displayName: true } });
-      return toMemberHoldings(me?.displayName ?? "You", snapshot(myPlan.portfolio), viewerTickers);
+      return toMemberHoldings(me?.displayName ?? "You", snapshotOf(myPlan.holdings), viewerTickers);
     }
 
     const link = await prisma.friendship.findUnique({ where: { id }, select: { requesterId: true, addresseeId: true, status: true } });
@@ -646,10 +629,10 @@ class FriendsService {
     });
     if (friend?.sharing?.shareHoldings !== true) throw NOT_AVAILABLE;
 
-    const friendPlan = await this.planPortfolio(friendId);
+    const friendPlan = await this.accountHoldings(friendId);
     if (!friendPlan) throw NOT_AVAILABLE;
 
-    return toMemberHoldings(friend.displayName ?? FALLBACK_NAME, snapshot(friendPlan.portfolio), viewerTickers);
+    return toMemberHoldings(friend.displayName ?? FALLBACK_NAME, snapshotOf(friendPlan.holdings), viewerTickers);
   }
 }
 

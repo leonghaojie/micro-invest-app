@@ -36,6 +36,7 @@
 import { readFileSync } from "fs";
 import { join } from "path";
 import { PrismaClient, RiskLevel } from "@prisma/client";
+import { backfillLegacyPlans } from "../src/services/ledgerBackfill.service";
 import { planService } from "../src/services/plan.service";
 import { PRESET_PORTFOLIOS } from "../src/utils/presetPortfolios";
 import { assignExperience, experienceStream, FundInfo, generatePeerSpecs, SyntheticPeerSpec } from "../src/utils/syntheticPeers";
@@ -152,11 +153,9 @@ async function createSyntheticPeer(spec: SyntheticPeerSpec, anchorMonth: Date): 
 
     // monthsOfHistory months ending at the latest month all funds have.
     const startMonth = new Date(Date.UTC(anchorMonth.getUTCFullYear(), anchorMonth.getUTCMonth() - (spec.monthsOfHistory - 1), 1));
-    await planService.startPlan(user.id, {
-      portfolioId: portfolio.id,
-      contributionAmount: spec.contribution,
-      startMonth: startMonth.toISOString(),
-    });
+    // Written in the old fixed-plan form; backfillLegacyPlans turns it into ledger rows
+    // (a recurring buy since its start month), the same path real accounts took.
+    await prisma.plan.create({ data: { userId: user.id, portfolioId: portfolio.id, contributionAmount: spec.contribution, startMonth } });
     return true;
   } catch (err) {
     console.warn(`[seed] synthetic peer ${email}: failed (${(err as Error).message}).`);
@@ -192,7 +191,8 @@ async function seedSyntheticPeers({ resetSynthetic, peerCount }: { resetSyntheti
     if (created % 50 === 0 && created > 0) console.log(`[seed]   ...${created}/${specs.length}`);
   });
 
-  console.log(`[seed] synthetic peers: ${created}/${specs.length} created (seed ${POPULATION_SEED}, history ends ${anchorMonth.toISOString().slice(0, 7)}).`);
+  const { migrated } = await backfillLegacyPlans();
+  console.log(`[seed] synthetic peers: ${created}/${specs.length} created (seed ${POPULATION_SEED}, history ends ${anchorMonth.toISOString().slice(0, 7)}); ${migrated} turned into ledger accounts.`);
   return true;
 }
 

@@ -607,11 +607,10 @@ describe("summarizeHoldings", () => {
 });
 
 describe("FriendsService.getHoldings (friends list)", () => {
-  const dbPortfolio = (name: string, isPreset: boolean, rows: [string, string, number][]) => ({
-    name,
-    isPreset,
-    allocations: rows.map(([ticker, assetClass, w]) => ({ weightPct: String(w), fund: fund(ticker, assetClass) })),
-  });
+  // An account's holdings (DECISIONS.md #19): one row per fund, with its current value. The
+  // name/preset arguments are what the old fixed plan carried; accounts no longer have them.
+  const dbPortfolio = (_name: string, _isPreset: boolean, rows: [string, string, number][]) =>
+    rows.map(([ticker, assetClass, w]) => ({ value: String(w), fund: fund(ticker, assetClass) }));
 
   function arrange(opts: { sharing: Record<string, boolean | null>; plans: Record<string, ReturnType<typeof dbPortfolio> | null> }) {
     const ids = Object.keys(opts.sharing);
@@ -624,9 +623,9 @@ describe("FriendsService.getHoldings (friends list)", () => {
       }))
     );
     db.user.findUnique.mockResolvedValue({ displayName: "Me" });
-    db.plan.findUnique.mockResolvedValue(opts.plans.me ? { userId: "me", portfolio: opts.plans.me } : null);
+    db.plan.findUnique.mockResolvedValue(opts.plans.me ? { userId: "me", holdings: opts.plans.me } : null);
     db.plan.findMany.mockImplementation(({ where }: { where: { userId: { in: string[] } } }) =>
-      Promise.resolve(where.userId.in.filter((id) => opts.plans[id]).map((id) => ({ userId: id, portfolio: opts.plans[id] })))
+      Promise.resolve(where.userId.in.filter((id) => opts.plans[id]).map((id) => ({ userId: id, holdings: opts.plans[id] })))
     );
   }
 
@@ -670,7 +669,7 @@ describe("FriendsService.getHoldings (friends list)", () => {
     expect(ann).toEqual({
       friendshipId: "fs-0",
       displayName: "Ann",
-      portfolioName: "Balanced",
+      portfolioName: null,
       fundCount: 2,
       sharedFundCount: 1,
       mix: [
@@ -685,7 +684,7 @@ describe("FriendsService.getHoldings (friends list)", () => {
 
     const result = await friendsService.getHoldings("me");
 
-    expect(result.me).toMatchObject({ displayName: "Me", portfolioName: "Growth", friendshipId: null, fundCount: 1 });
+    expect(result.me).toMatchObject({ displayName: "Me", portfolioName: null, friendshipId: null, fundCount: 1 });
     expect(result.friends).toEqual([]);
     expect(result.hiddenCount).toBe(1);
     expect(db.plan.findMany).not.toHaveBeenCalled(); // nobody shared, so no friend plans are read
@@ -743,11 +742,8 @@ describe("FriendsService.getHoldings (friends list)", () => {
 });
 
 describe("FriendsService.getHoldingsDetail", () => {
-  const portfolioRow = (rows: [string, string, number][], name = "Balanced", isPreset = true) => ({
-    name,
-    isPreset,
-    allocations: rows.map(([ticker, assetClass, w]) => ({ weightPct: String(w), fund: fund(ticker, assetClass) })),
-  });
+  const portfolioRow = (rows: [string, string, number][], _name = "Balanced", _isPreset = true) =>
+    rows.map(([ticker, assetClass, w]) => ({ value: String(w), fund: fund(ticker, assetClass) }));
 
   function arrange(over: {
     link?: { requesterId: string; addresseeId: string; status: "ACCEPTED" | "PENDING" } | null;
@@ -765,7 +761,7 @@ describe("FriendsService.getHoldingsDetail", () => {
     );
     db.plan.findUnique.mockImplementation(({ where }: { where: { userId: string } }) => {
       const p = where.userId === "me" ? ("myPlan" in over ? over.myPlan : portfolioRow([["ES3", "EQUITY", 100]], "Growth")) : "friendPlan" in over ? over.friendPlan : portfolioRow([["ES3", "EQUITY", 60], ["A35", "BOND", 40]]);
-      return Promise.resolve(p ? { userId: where.userId, portfolio: p } : null);
+      return Promise.resolve(p ? { userId: where.userId, holdings: p } : null);
     });
   }
 
@@ -777,7 +773,7 @@ describe("FriendsService.getHoldingsDetail", () => {
     const result = await friendsService.getHoldingsDetail("me", "fs-1");
 
     expect(result.displayName).toBe("Ann");
-    expect(result.portfolioName).toBe("Balanced");
+    expect(result.portfolioName).toBeNull(); // an account has no single portfolio any more
     expect(result.holdings.map((h) => [h.ticker, h.weightPct, h.youHold])).toEqual([
       ["ES3", 60, true],
       ["A35", 40, false],
@@ -789,11 +785,11 @@ describe("FriendsService.getHoldingsDetail", () => {
     await expect(friendsService.getHoldingsDetail("me", "fs-1")).resolves.toMatchObject({ displayName: "Ann" });
   });
 
-  it("never exposes a custom portfolio's name", async () => {
-    arrange({ friendPlan: portfolioRow([["ES3", "EQUITY", 100]], "Baby's college fund", false) });
+  it("shows each fund's share of the account's value, not amounts", async () => {
+    arrange({ friendPlan: portfolioRow([["ES3", "EQUITY", 3000], ["A35", "BOND", 1000]]) });
     const result = await friendsService.getHoldingsDetail("me", "fs-1");
-    expect(result.portfolioName).toBeNull();
-    expect(JSON.stringify(result)).not.toContain("college");
+    expect(result.holdings.map((h) => [h.ticker, h.weightPct])).toEqual([["ES3", 75], ["A35", 25]]);
+    expect(JSON.stringify(result)).not.toContain("3000");
   });
 
   it.each([
@@ -803,6 +799,7 @@ describe("FriendsService.getHoldingsDetail", () => {
     ["the friend keeps holdings private", { friendSharing: { shareHoldings: false } }],
     ["the friend has never set sharing", { friendSharing: null }],
     ["the friend has no plan", { friendPlan: null }],
+    ["the friend has an account but holds nothing", { friendPlan: [] }],
   ])("gives the same 404 when %s, so it cannot be used to probe", async (_label, over) => {
     arrange(over);
     await expect(friendsService.getHoldingsDetail("me", "fs-1")).rejects.toMatchObject(NOT_AVAILABLE);
@@ -817,7 +814,7 @@ describe("FriendsService.getHoldingsDetail", () => {
   it('opens the viewer\'s own holdings as "me", with no sharing needed', async () => {
     arrange({});
     const result = await friendsService.getHoldingsDetail("me", "me");
-    expect(result).toMatchObject({ displayName: "Me", portfolioName: "Growth" });
+    expect(result).toMatchObject({ displayName: "Me", portfolioName: null });
     expect(db.friendship.findUnique).not.toHaveBeenCalled();
   });
 

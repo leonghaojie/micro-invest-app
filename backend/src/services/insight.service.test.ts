@@ -29,8 +29,9 @@ const GROUP = { bandPct: 10, lo: 3600, hi: 4400, memberCount: 12 };
 function mockActivePlan(finalValue: number, contributionAmount = 50) {
   mockedPlan.getActivePlan.mockResolvedValue({
     planId: "plan-1",
-    portfolioId: "pf-1",
-    portfolioName: "Growth",
+    tradeMonth: "2026-10",
+    latestDataMonth: "2026-09",
+    holdings: [{ fundId: "f1", value: finalValue, costBasis: finalValue }],
     contributionAmount,
     startMonth: "2026-01-01",
     finalValue,
@@ -65,12 +66,21 @@ describe("InsightService", () => {
     mockedGrouping.assignPeerGroup.mockResolvedValue(GROUP);
   });
 
-  it("returns a single no-plan card when the user hasn't started one", async () => {
+  it("returns a single no-plan card when the user has no profile (so no account)", async () => {
     mockedPlan.getActivePlan.mockResolvedValue(null);
 
     const cards = await insightService.generate("user-1");
 
     expect(cards).toEqual([expect.objectContaining({ id: "no-plan" })]);
+  });
+
+  it("returns the same card for an account that holds nothing yet (cash alone is not an investment)", async () => {
+    mockActivePlan(0);
+    mockedPlan.getActivePlan.mockResolvedValue({ ...(await mockedPlan.getActivePlan()), holdings: [], finalValue: 0 });
+
+    const cards = await insightService.generate("user-1");
+
+    expect(cards).toEqual([expect.objectContaining({ id: "no-plan", title: "Make your first investment" })]);
   });
 
   it("returns a no-peer-data card when the peer group has no members yet", async () => {

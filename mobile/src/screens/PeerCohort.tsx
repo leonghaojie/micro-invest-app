@@ -109,10 +109,10 @@ export function PeerCohort({ onStartPlan, onEditProfile }: { onStartPlan: () => 
         <Text style={styles.body}>
           {needsProfile
             ? "Set up your profile so we can find investors like you."
-            : "Start a plan so we can compare your portfolio with similar investors."}
+            : "Make your first investment so we can compare your portfolio with similar investors."}
         </Text>
         <Pressable style={styles.submitButton} onPress={needsProfile ? onEditProfile : onStartPlan}>
-          <Text style={styles.submitButtonText}>{needsProfile ? "Set up profile" : "Start a plan"}</Text>
+          <Text style={styles.submitButtonText}>{needsProfile ? "Set up profile" : "Browse portfolios"}</Text>
         </Pressable>
       </View>
     );

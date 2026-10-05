@@ -321,7 +321,7 @@ function HoldingsList({ overview }: { overview: HoldingsOverview }) {
       {overview.noPlanCount > 0 && (
         <Text style={styles.panelNote}>
           {overview.noPlanCount} friend{overview.noPlanCount === 1 ? " shares" : "s share"} holdings but{" "}
-          {overview.noPlanCount === 1 ? "hasn't" : "haven't"} started a plan yet.
+          {overview.noPlanCount === 1 ? "hasn't" : "haven't"} invested yet.
         </Text>
       )}
       <Text style={styles.panelNote}>Friends see your holdings only if you turn on “Holdings” in your sharing settings.</Text>

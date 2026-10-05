@@ -86,7 +86,7 @@ async function countPeers(userId: string, filters: PeerGroupFilters, income?: { 
       ...(filters.age ? { age: { gte: filters.age.lo, lte: filters.age.hi } } : {}),
       ...(filters.riskLevel ? { riskLevel: filters.riskLevel } : {}),
       ...(filters.goalType ? { goalType: filters.goalType } : {}),
-      user: { plan: { months: { some: {} }, ...(filters.startMonth ? { startMonth: filters.startMonth } : {}) } },
+      user: { plan: { months: { some: { hasPosition: true } }, ...(filters.startMonth ? { startMonth: filters.startMonth } : {}) } },
     },
   });
 }
@@ -125,7 +125,7 @@ class PeerGroupingService {
     if (dims.includes("goal")) filters.goalType = profile.goalType;
     if (dims.includes("startMonth")) {
       const plan = await prisma.plan.findUnique({ where: { userId }, select: { startMonth: true } });
-      if (!plan) throw new HttpError(400, "Start a plan before comparing by start month");
+      if (!plan) throw new HttpError(400, "Make your first buy before comparing by start month");
       filters.startMonth = plan.startMonth;
     }
 

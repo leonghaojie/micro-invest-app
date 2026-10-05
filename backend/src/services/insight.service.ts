@@ -88,13 +88,13 @@ class InsightService {
   async generate(userId: string): Promise<InsightCard[]> {
     const plan = await planService.getActivePlan(userId);
 
-    if (!plan) {
+    if (!plan || plan.holdings.length === 0) {
       return [
         {
           id: "no-plan",
           tone: "neutral",
-          title: "Start your first plan",
-          body: "Once you've started a plan, you'll get personalized insights comparing you to peers with a similar income.",
+          title: "Make your first investment",
+          body: "Once you've bought a fund, you'll get personalized insights comparing you to peers with a similar income.",
           showAdjustPlanAction: true,
         },
       ];

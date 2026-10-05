@@ -65,8 +65,9 @@ const RANGE_LABELS: Record<RangeKey, string> = { "1y": "1Y", "3y": "3Y", "5y": "
 const GAIN = "#1e8449";
 const LOSS = "#c0392b";
 
-export function FundDetailScreen({ route }: Props) {
+export function FundDetailScreen({ route, navigation }: Props) {
   const { fundId } = route.params;
+  const [position, setPosition] = useState<{ cash: number; held: { value: number; costBasis: number } | null } | null>(null);
 
   const [range, setRange] = useState<RangeKey | null>(null); // null = let the server pick its default
   const [data, setData] = useState<FundDetail | null>(null);
@@ -99,6 +100,25 @@ export function FundDetailScreen({ route }: Props) {
   }, [fundId, range]);
 
   useFocusEffect(load);
+
+  // The user's position in this fund and their cash, for the Buy / Sell buttons (DECISIONS.md #19).
+  useFocusEffect(
+    useCallback(() => {
+      let cancelled = false;
+      apiFetch<{ latestPlan: { walletBalance: number; holdings: { fundId: string; value: number; costBasis: number }[] } | null }>("/dashboard/summary")
+        .then((s) => {
+          if (cancelled || !s.latestPlan) return;
+          const h = s.latestPlan.holdings.find((x) => x.fundId === fundId);
+          setPosition({ cash: s.latestPlan.walletBalance, held: h ? { value: h.value, costBasis: h.costBasis } : null });
+        })
+        .catch(() => {
+          /* the trade buttons just stay hidden */
+        });
+      return () => {
+        cancelled = true;
+      };
+    }, [fundId])
+  );
 
   const points = useMemo(() => (data ? data.series.map((p) => ({ label: p.month, value: p.growth })) : []), [data]);
 
@@ -139,6 +159,41 @@ export function FundDetailScreen({ route }: Props) {
           Latest price {data.latestPrice.toFixed(2)} {fund.currency} · history from {longMonth(fund.earliestMonth)} ({fund.monthsAvailable} months)
         </Text>
       </View>
+
+      {position && (
+        <View style={styles.card}>
+          <Text style={styles.cardHeading}>Your position</Text>
+          {position.held ? (
+            <Text style={styles.sub}>
+              You hold ${position.held.value.toFixed(2)} of {fund.ticker}, {position.held.value - position.held.costBasis >= 0 ? "up" : "down"} $
+              {Math.abs(position.held.value - position.held.costBasis).toFixed(2)} on what you paid.
+            </Text>
+          ) : (
+            <Text style={styles.sub}>You don't hold {fund.ticker}.</Text>
+          )}
+          <Text style={styles.sub}>Cash available: ${position.cash.toFixed(2)}</Text>
+          <View style={styles.tradeRow}>
+            <Pressable
+              style={styles.buyButton}
+              onPress={() => navigation.navigate("Trade", { mode: "buy", name: fund.ticker, fundId: fund.id })}
+              accessibilityRole="button"
+              accessibilityLabel={`Buy ${fund.ticker}`}
+            >
+              <Text style={styles.buyText}>Buy</Text>
+            </Pressable>
+            {position.held && (
+              <Pressable
+                style={styles.sellButton}
+                onPress={() => navigation.navigate("Trade", { mode: "sell", name: fund.ticker, fundId: fund.id })}
+                accessibilityRole="button"
+                accessibilityLabel={`Sell ${fund.ticker}`}
+              >
+                <Text style={styles.sellText}>Sell</Text>
+              </Pressable>
+            )}
+          </View>
+        </View>
+      )}
 
       <View style={styles.rangeRow}>
         {data.availableRanges.map((r) => (
@@ -249,6 +304,11 @@ function describeError(err: unknown): string {
 }
 
 const styles = StyleSheet.create({
+  tradeRow: { flexDirection: "row", gap: 10, marginTop: 4 },
+  buyButton: { flex: 1, backgroundColor: "#2e6fdb", borderRadius: 8, paddingVertical: 12, alignItems: "center" },
+  buyText: { color: "#fff", fontWeight: "700", fontSize: 15 },
+  sellButton: { flex: 1, borderWidth: 1, borderColor: "#c0392b", borderRadius: 8, paddingVertical: 12, alignItems: "center", backgroundColor: "#fff" },
+  sellText: { color: "#c0392b", fontWeight: "700", fontSize: 15 },
   center: { flex: 1, alignItems: "center", justifyContent: "center", padding: 24, gap: 12 },
   container: { alignItems: "center", padding: 24, gap: 12 },
   error: { color: "#c0392b", textAlign: "center" },

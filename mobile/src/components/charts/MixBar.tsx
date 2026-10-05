@@ -31,7 +31,7 @@ export function MixBar({ label, entries }: { label?: string; entries: MixEntry[]
     <View style={styles.block}>
       {label ? <Text style={styles.label}>{label}</Text> : null}
       {entries.length === 0 ? (
-        <Text style={styles.empty}>No plan yet</Text>
+        <Text style={styles.empty}>Nothing held yet</Text>
       ) : (
         <View style={styles.bar}>
           {entries.map((e) => (

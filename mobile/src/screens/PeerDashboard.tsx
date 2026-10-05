@@ -175,9 +175,9 @@ export function PeerDashboard({ onStartPlan }: { onStartPlan: () => void }) {
             <Text style={styles.cardHeading}>Where you stand</Text>
             {me.value === null ? (
               <>
-                <Text style={styles.body}>Start a plan to see how you compare.</Text>
+                <Text style={styles.body}>Make your first investment to see how you compare.</Text>
                 <Pressable style={styles.submitButton} onPress={onStartPlan}>
-                  <Text style={styles.submitButtonText}>Start a plan</Text>
+                  <Text style={styles.submitButtonText}>Browse portfolios</Text>
                 </Pressable>
               </>
             ) : (

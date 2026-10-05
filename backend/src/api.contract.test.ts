@@ -24,6 +24,7 @@ import { peerCohortService } from "./services/peerCohort.service";
 import { peerGroupingService } from "./services/peerGrouping.service";
 import { peerInsightsService } from "./services/peerInsights.service";
 import { planService } from "./services/plan.service";
+import { tradeService } from "./services/trade.service";
 import { portfolioService } from "./services/portfolio.service";
 import { profileService } from "./services/profile.service";
 import { HttpError } from "./utils/httpError";
@@ -59,7 +60,8 @@ jest.mock("./services/peerInsights.service", () => ({
   ...jest.requireActual("./services/peerInsights.service"),
   peerInsightsService: { getDashboard: jest.fn() },
 }));
-jest.mock("./services/plan.service", () => ({ planService: { startPlan: jest.fn(), getActivePlan: jest.fn() } }));
+jest.mock("./services/plan.service", () => ({ planService: { getActivePlan: jest.fn() } }));
+jest.mock("./services/trade.service", () => ({ tradeService: { buy: jest.fn(), sell: jest.fn(), history: jest.fn() } }));
 jest.mock("./services/portfolio.service", () => ({
   portfolioService: { listFunds: jest.fn(), getFundDetail: jest.fn(), listPortfolios: jest.fn(), createPortfolio: jest.fn() },
 }));
@@ -96,7 +98,8 @@ const protectedRoutes: RouteCase[] = [
   { name: "GET /portfolio/funds/:id", method: "get", path: "/portfolio/funds/abc", fn: portfolioService.getFundDetail as jest.Mock, returns: {}, status: 200, args: ["abc", undefined] },
   { name: "GET /portfolio/portfolios", method: "get", path: "/portfolio/portfolios", fn: portfolioService.listPortfolios as jest.Mock, returns: [], status: 200, args: [USER_ID] },
   { name: "POST /portfolio/portfolios", method: "post", path: "/portfolio/portfolios", body, fn: portfolioService.createPortfolio as jest.Mock, returns: { id: "pf" }, status: 201, args: [USER_ID, body] },
-  { name: "POST /plan", method: "post", path: "/plan", body, fn: planService.startPlan as jest.Mock, returns: { planId: "pl" }, status: 201, args: [USER_ID, body] },
+  { name: "POST /trades/buy", method: "post", path: "/trades/buy", body, fn: tradeService.buy as jest.Mock, returns: { side: "BUY" }, status: 201, args: [USER_ID, body] },
+  { name: "POST /trades/sell", method: "post", path: "/trades/sell", body, fn: tradeService.sell as jest.Mock, returns: { side: "SELL" }, status: 201, args: [USER_ID, body] },
   { name: "GET /plan", method: "get", path: "/plan", fn: planService.getActivePlan as jest.Mock, returns: { planId: "pl" }, status: 200, args: [USER_ID] },
   { name: "GET /dashboard/summary", method: "get", path: "/dashboard/summary", fn: dashboardService.getSummary as jest.Mock, returns: {}, status: 200, args: [USER_ID] },
   { name: "GET /dashboard/growth", method: "get", path: "/dashboard/growth", fn: dashboardService.getGrowth as jest.Mock, returns: [], status: 200, args: [USER_ID] },
@@ -175,12 +178,34 @@ describe("authenticated routes delegate with the token's user id", () => {
   });
 });
 
+describe("GET /trades (activity)", () => {
+  it("returns the account's activity, with the limit clamped", async () => {
+    (tradeService.history as jest.Mock).mockResolvedValue([{ kind: "BUY" }]);
+    const res = await request(app).get("/trades?limit=9999").set(auth);
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ items: [{ kind: "BUY" }] });
+    expect(tradeService.history).toHaveBeenCalledWith(USER_ID, 200);
+  });
+
+  it("needs sign-in", async () => {
+    expect((await request(app).get("/trades")).status).toBe(401);
+    expect((await request(app).post("/trades/buy").send({})).status).toBe(401);
+    expect((await request(app).post("/trades/sell").send({})).status).toBe(401);
+  });
+});
+
+describe("POST /plan is gone (money goes in through /trades)", () => {
+  it("is a 404", async () => {
+    expect((await request(app).post("/plan").set(auth).send({})).status).toBe(404);
+  });
+});
+
 describe("GET /plan with no active plan", () => {
   it("404s with a message", async () => {
     (planService.getActivePlan as jest.Mock).mockResolvedValue(null);
     const res = await request(app).get("/plan").set(auth);
     expect(res.status).toBe(404);
-    expect(res.body.error).toBe("No active plan");
+    expect(res.body.error).toBe("Set up your profile first");
   });
 });
 
@@ -190,8 +215,8 @@ describe("error mapping", () => {
     [409, "Conflict"],
     [422, "Unprocessable"],
   ])("an HttpError(%i) from a service is returned with its status and message", async (status, message) => {
-    (planService.startPlan as jest.Mock).mockRejectedValue(new HttpError(status, message));
-    const res = await request(app).post("/plan").set(auth).send({});
+    (tradeService.buy as jest.Mock).mockRejectedValue(new HttpError(status, message));
+    const res = await request(app).post("/trades/buy").set(auth).send({});
     expect(res.status).toBe(status);
     expect(res.body).toEqual({ error: message });
   });
@@ -209,7 +234,7 @@ describe("error mapping", () => {
 
   it("malformed JSON in a body -> 400 with a clear message, not a 500", async () => {
     const spy = jest.spyOn(console, "error").mockImplementation(() => undefined);
-    const res = await request(app).post("/plan").set(auth).set("Content-Type", "application/json").send("{ not json");
+    const res = await request(app).post("/trades/buy").set(auth).set("Content-Type", "application/json").send("{ not json");
     expect(res.status).toBe(400);
     expect(res.body).toEqual({ error: "Malformed request body" });
     expect(spy).not.toHaveBeenCalled(); // a client mistake is not logged as a server fault
@@ -218,7 +243,7 @@ describe("error mapping", () => {
 
   it("an oversized body -> 413", async () => {
     const res = await request(app)
-      .post("/plan")
+      .post("/trades/buy")
       .set(auth)
       .send({ blob: "x".repeat(200_000) });
     expect(res.status).toBe(413);

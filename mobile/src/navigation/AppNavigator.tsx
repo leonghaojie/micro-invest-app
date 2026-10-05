@@ -33,7 +33,9 @@ import { FriendHoldingsScreen } from "../screens/FriendHoldingsScreen";
 import { FundDetailScreen } from "../screens/FundDetailScreen";
 import { ForgotPasswordScreen } from "../screens/ForgotPasswordScreen";
 import { FriendsScreen } from "../screens/FriendsScreen";
+import { ActivityScreen } from "../screens/ActivityScreen";
 import { ProfileSetupScreen } from "../screens/ProfileSetupScreen";
+import { TradeScreen } from "../screens/TradeScreen";
 import { WelcomeLoginScreen } from "../screens/WelcomeLoginScreen";
 import { MainTabNavigator } from "./MainTabNavigator";
 import { navigationRef } from "./navigationRef";
@@ -52,6 +54,12 @@ export type RootStackParamList = {
   // DECISIONS.md #10: emailed-code password reset, reached from the login screen.
   ForgotPassword: { email?: string } | undefined;
   ProfileSetup: undefined;
+  // DECISIONS.md #19: the same form, to change income, expenses, risk... later in life.
+  EditProfile: undefined;
+  // DECISIONS.md #19: buy or sell. Exactly one of fundId / portfolioId for a buy; fundId for a sell.
+  Trade: { mode: "buy" | "sell"; name: string; fundId?: string; portfolioId?: string };
+  // DECISIONS.md #19: buys, sells and monthly cash credits.
+  Activity: undefined;
   Main: NavigatorScreenParams<MainTabParamList> | undefined;
   // DECISIONS.md #8: friend management, opened from the Peers tab.
   Friends: undefined;
@@ -134,7 +142,10 @@ export function AppNavigator() {
       <Stack.Screen name="WelcomeLogin" component={WelcomeLoginScreen} options={{ title: "Welcome" }} />
       <Stack.Screen name="ForgotPassword" component={ForgotPasswordScreen} options={{ title: "Reset Password" }} />
       <Stack.Screen name="ProfileSetup" component={ProfileSetupScreen} options={{ title: "Set Up Profile" }} />
+      <Stack.Screen name="EditProfile" component={ProfileSetupScreen} options={{ title: "Edit Profile" }} />
       <Stack.Screen name="Main" component={MainTabNavigator} options={{ headerShown: false }} />
+      <Stack.Screen name="Trade" component={TradeScreen} options={({ route }) => ({ title: route.params.mode === "buy" ? "Buy" : "Sell" })} />
+      <Stack.Screen name="Activity" component={ActivityScreen} options={{ title: "Activity" }} />
       <Stack.Screen name="Friends" component={FriendsScreen} options={{ title: "Friends" }} />
       <Stack.Screen
         name="FriendHoldings"

@@ -1,15 +1,15 @@
 /**
  * S-04 Dashboard — UC-04. A portfolio overview in the style of a brokerage
- * account screen (DECISIONS.md #17, 4 Oct 2026), built from the user's one active
- * Plan (plan.service.ts) and profile (DECISIONS.md #1 third amendment).
+ * account screen (DECISIONS.md #17, 4 Oct 2026), built from the user's account
+ * (plan.service.ts: a ledger of buys, sells and cash, DECISIONS.md #19).
  *
  *   1. Summary card — total assets (invested value + cash), last month's profit or
- *      loss, then securities value, unrealised P&L and cash balance.
- *   2. Your holdings — the plan's funds with their weight and value; tap one to
- *      see its history. Long lists are capped with "Show all".
- *   3. Growth over time and Savings Rate, as before.
- *   4. Account — display name, email, password, log out. Each opens its own
- *      screen, so the dashboard stays a list. Also available with no plan.
+ *      loss, then securities value, total profit and cash balance.
+ *   2. Your holdings — real positions, each with its own profit; tap one to see
+ *      its history (and buy or sell). Long lists are capped with "Show all".
+ *   3. Growth over time and Savings Rate.
+ *   4. Account — activity, profile, display name, email, password, log out. Each
+ *      opens its own screen. Also available before the first buy.
  *
  * NFR-01: target <2s load. Data reloads on every focus.
  */
@@ -31,12 +31,15 @@ interface Holding {
   currency: string;
   weightPct: number;
   value: number;
+  costBasis: number;
+  profit: number;
+  profitPct: number | null;
 }
 
 interface LatestPlan {
   planId: string;
-  portfolioName: string;
-  portfolioIsPreset: boolean;
+  tradeMonth: string;
+  latestDataMonth: string;
   startMonth: string;
   contributionAmount: number;
   monthsRunning: number;
@@ -52,6 +55,7 @@ interface LatestPlan {
 
 interface DashboardSummary {
   hasPlan: boolean;
+  hasHoldings: boolean;
   latestPlan: LatestPlan | null;
 }
 
@@ -63,7 +67,6 @@ interface GrowthPoint {
 
 interface DashboardGrowth {
   planId: string | null;
-  portfolioName: string | null;
   points: GrowthPoint[];
 }
 
@@ -157,6 +160,7 @@ export function DashboardScreen({ navigation }: Props) {
     <AccountSection
       me={me}
       onEdit={(kind) => navigation.navigate("EditAccount", { kind })}
+      onOpen={(screen) => navigation.navigate(screen)}
       onLogout={handleLogout}
     />
   );
@@ -164,10 +168,10 @@ export function DashboardScreen({ navigation }: Props) {
   if (!summary?.hasPlan || !summary.latestPlan) {
     return (
       <ScrollView contentContainerStyle={styles.scrollContainer}>
-        <Text style={styles.title}>No plan yet</Text>
-        <Text style={styles.subtitle}>Start a plan to see your dashboard.</Text>
-        <Pressable style={styles.submitButton} onPress={() => navigation.navigate("Contribution")}>
-          <Text style={styles.submitButtonText}>Start your plan</Text>
+        <Text style={styles.title}>Set up your account</Text>
+        <Text style={styles.subtitle}>Tell us your income and expenses, so there is cash to invest each month.</Text>
+        <Pressable style={styles.submitButton} onPress={() => navigation.navigate("ProfileSetup")}>
+          <Text style={styles.submitButtonText}>Set up profile</Text>
         </Pressable>
         {account}
       </ScrollView>
@@ -184,7 +188,7 @@ export function DashboardScreen({ navigation }: Props) {
     <ScrollView contentContainerStyle={styles.scrollContainer}>
       <View style={styles.headerRow}>
         <Text style={styles.title}>Dashboard</Text>
-        <Text style={styles.headerSub}>Since {plan.startMonth.slice(0, 7)}</Text>
+        {summary.hasHoldings && <Text style={styles.headerSub}>Since {plan.startMonth.slice(0, 7)}</Text>}
       </View>
 
       {/* 1. Summary */}
@@ -211,7 +215,7 @@ export function DashboardScreen({ navigation }: Props) {
             <Text style={styles.summaryNumber}>{formatCurrency(plan.finalValue)}</Text>
           </View>
           <View style={styles.summaryCol}>
-            <Text style={styles.summaryLabel}>Unrealised P&L</Text>
+            <Text style={styles.summaryLabel}>Total profit</Text>
             <Text style={[styles.summaryNumber, { color: plan.growth >= 0 ? UP : DOWN }]}>{signedCurrency(plan.growth)}</Text>
             {plan.growthPct !== null && <Text style={[styles.summarySmall, { color: plan.growth >= 0 ? UP : DOWN }]}>{signedPct(plan.growthPct)}</Text>}
           </View>
@@ -223,18 +227,27 @@ export function DashboardScreen({ navigation }: Props) {
         </View>
 
         <Text style={styles.summaryFoot}>
-          Contributed so far {formatCurrency(plan.totalContributed)} · cash is what's left after contributing each month
+          Invested so far {formatCurrency(plan.totalContributed)} (bought minus sold) · cash is what you can still invest
         </Text>
       </View>
 
       {/* 2. Holdings */}
       <View style={styles.card}>
         <Text style={styles.cardHeading}>Your holdings</Text>
-        <Text style={styles.cardSub}>
-          {plan.portfolioName}
-          {plan.portfolioIsPreset ? "" : " (custom)"} · {formatCurrency(plan.contributionAmount)} a month · {plan.monthsRunning} month
-          {plan.monthsRunning === 1 ? "" : "s"}
-        </Text>
+        {summary.hasHoldings ? (
+          <Text style={styles.cardSub}>
+            {plan.monthsRunning === 0
+              ? `Bought this month. Returns start once ${longMonth(plan.tradeMonth)} data arrives.`
+              : `${formatCurrency(plan.contributionAmount)} bought a month on average · ${plan.monthsRunning} month${plan.monthsRunning === 1 ? "" : "s"} invested`}
+          </Text>
+        ) : (
+          <>
+            <Text style={styles.cardSub}>Nothing yet. You have {formatCurrency(plan.walletBalance)} in cash to invest.</Text>
+            <Pressable style={styles.submitButton} onPress={() => navigation.navigate("Funds")}>
+              <Text style={styles.submitButtonText}>Browse funds</Text>
+            </Pressable>
+          </>
+        )}
 
         {holdings.map((h) => (
           <Pressable
@@ -260,8 +273,12 @@ export function DashboardScreen({ navigation }: Props) {
               <Text style={styles.holdingMeta}>
                 {ASSET_CLASS_LABELS[h.assetClass] ?? h.assetClass} · {h.currency}
               </Text>
-              <Text style={styles.holdingMeta}>{formatWeight(h.weightPct)} of portfolio ›</Text>
+              <Text style={[styles.holdingMeta, { color: h.profit >= 0 ? "#1a8f4c" : LOSS }]}>
+                {signedCurrency(h.profit)}
+                {h.profitPct !== null ? ` (${signedPct(h.profitPct)})` : ""}
+              </Text>
             </View>
+            <Text style={styles.holdingMeta}>{formatWeight(h.weightPct)} of portfolio ›</Text>
           </Pressable>
         ))}
 
@@ -271,9 +288,13 @@ export function DashboardScreen({ navigation }: Props) {
           </Pressable>
         )}
 
-        <Text style={styles.note}>Each fund is valued at its weight of the portfolio; the plan is rebalanced to these weights every month.</Text>
+        {summary.hasHoldings && (
+          <Text style={styles.note}>
+            Holdings move with the market and are not rebalanced. Anything bought this month shows at cost until {longMonth(plan.tradeMonth)} data arrives.
+          </Text>
+        )}
         <Pressable onPress={() => navigation.navigate("Contribution")}>
-          <Text style={styles.secondaryButtonText}>Change plan →</Text>
+          <Text style={styles.secondaryButtonText}>Buy a portfolio →</Text>
         </Pressable>
       </View>
 
@@ -310,15 +331,19 @@ export function DashboardScreen({ navigation }: Props) {
 function AccountSection({
   me,
   onEdit,
+  onOpen,
   onLogout,
 }: {
   me: Me["user"] | null;
   onEdit: (kind: "name" | "email" | "password") => void;
+  onOpen: (screen: "Activity" | "EditProfile") => void;
   onLogout: () => void;
 }) {
   return (
     <View style={styles.card}>
       <Text style={styles.cardHeading}>Account</Text>
+      <AccountRow label="Activity" value="Buys, sells, cash" onPress={() => onOpen("Activity")} />
+      <AccountRow label="Profile" value="Income, expenses, risk" onPress={() => onOpen("EditProfile")} />
       <AccountRow label="Display name" value={me?.displayName ?? "Not set"} onPress={() => onEdit("name")} />
       <AccountRow label="Email" value={me?.email ?? ""} onPress={() => onEdit("email")} />
       <AccountRow label="Password" value="Change" onPress={() => onEdit("password")} />
@@ -364,6 +389,13 @@ function signedCurrency(value: number): string {
 
 function signedPct(value: number): string {
   return `${value >= 0 ? "+" : "-"}${Math.abs(value).toFixed(2)}%`;
+}
+
+const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+/** "2026-10" -> "Oct 2026" */
+function longMonth(m: string): string {
+  const [y, mo] = m.split("-");
+  return `${MONTH_NAMES[Number(mo) - 1]} ${y}`;
 }
 
 function formatWeight(v: number): string {

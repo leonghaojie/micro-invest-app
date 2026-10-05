@@ -4,6 +4,8 @@
  * engine (utils/peerCohort.ts), and returns only aggregates: a cohort label, a group
  * description, medians and percentiles, never another person's record (NFR-03).
  *
+ * Members are accounts that have invested (DECISIONS.md #19).
+ *
  * Unlike the older peer views (peerInsights.service.ts), which aggregate in Postgres,
  * the nearest-neighbour step is computed here in application memory: it needs every
  * member's normalised features at once. That is cheap at this scale (hundreds of
@@ -47,7 +49,7 @@ class PeerCohortService {
     const plans = await prisma.plan.findMany({
       include: {
         user: { select: { isSynthetic: true, profile: true } },
-        portfolio: { include: { allocations: { include: { fund: { select: { assetClass: true } } } } } },
+        holdings: { select: { value: true, fund: { select: { assetClass: true } } } },
         months: { orderBy: { monthDate: "desc" }, take: WINDOW_MONTHS },
       },
     });
@@ -57,6 +59,9 @@ class PeerCohortService {
     for (const plan of plans) {
       const p = plan.user.profile;
       if (!p) continue;
+      // Only people who have invested are compared (an account with just cash is not an investor yet).
+      if (plan.holdings.length === 0 && !plan.months.some((m) => m.hasPosition)) continue;
+      const heldTotal = plan.holdings.reduce((sum, h) => sum + Number(h.value), 0);
       if (plan.user.isSynthetic) simulated += 1;
       members.push({
         id: plan.userId,
@@ -65,8 +70,9 @@ class PeerCohortService {
         expense: Number(p.monthlyExpense),
         risk: p.riskLevel as Risk,
         contribution: Number(plan.contributionAmount),
-        holdings: plan.portfolio.allocations.map((a) => ({ assetClass: a.fund.assetClass, weight: Number(a.weightPct) / 100 })),
-        monthlyReturns: Object.fromEntries(plan.months.map((m) => [monthKey(m.monthDate), Number(m.portfolioReturnPct)])),
+        holdings: plan.holdings.map((h) => ({ assetClass: h.fund.assetClass, weight: heldTotal > 0 ? Number(h.value) / heldTotal : 0 })),
+        // Months with nothing invested have no return and are left out.
+        monthlyReturns: Object.fromEntries(plan.months.filter((m) => m.hasPosition).map((m) => [monthKey(m.monthDate), Number(m.portfolioReturnPct)])),
       });
     }
 
