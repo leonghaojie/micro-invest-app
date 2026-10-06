@@ -7,7 +7,8 @@
  *      loss, then securities value, total profit and cash balance.
  *   2. Your holdings — real positions, each with its own profit; tap one to see
  *      its history (and buy or sell). Long lists are capped with "Show all".
- *   3. Growth over time and Savings Rate.
+ *   3. Value against money invested: a line chart of the value at each month-end beside the
+ *      money put in, so the gap is the profit; tap a month for its figures (DECISIONS.md #25).
  *   4. Account — activity, profile, display name, email, password, log out. Each
  *      opens its own screen. Also available before the first buy.
  *
@@ -19,6 +20,7 @@ import { useFocusEffect } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { apiFetch, ApiError, clearStoredAuthToken } from "../api/client";
 import { ASSET_CLASS_COLORS, ASSET_CLASS_LABELS } from "../components/charts/MixBar";
+import { GrowthPoint, monthLabel, ValueVsInvestedChart } from "../components/charts/ValueVsInvestedChart";
 import type { MainTabScreenProps, RootStackParamList } from "../navigation/AppNavigator";
 
 type Props = MainTabScreenProps<"Dashboard">;
@@ -59,11 +61,6 @@ interface DashboardSummary {
   latestPlan: LatestPlan | null;
 }
 
-interface GrowthPoint {
-  monthDate: string;
-  portfolioValue: number;
-  walletBalance: number;
-}
 
 interface DashboardGrowth {
   planId: string | null;
@@ -72,14 +69,12 @@ interface DashboardGrowth {
 
 interface ProfileResponse {
   monthlyExpense: number;
-  savingsRatePct: number;
 }
 
 interface Me {
   user: { id: string; email: string; displayName: string | null };
 }
 
-const MAX_BARS = 16;
 const HOLDINGS_SHOWN = 6; // holdings listed before "Show all"
 const UP = "#7ee2a8"; // on the blue summary card
 const DOWN = "#ff9d9d";
@@ -93,6 +88,7 @@ export function DashboardScreen({ navigation }: Props) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showAllHoldings, setShowAllHoldings] = useState(false);
+  const [selectedMonth, setSelectedMonth] = useState<number | null>(null);
 
   const load = useCallback(() => {
     let cancelled = false;
@@ -179,8 +175,8 @@ export function DashboardScreen({ navigation }: Props) {
   }
 
   const plan = summary.latestPlan;
-  const bars = downsample(growth?.points ?? [], MAX_BARS);
-  const maxValue = Math.max(...bars.map((b) => b.portfolioValue), 1);
+  const points = growth?.points ?? [];
+  const picked = selectedMonth !== null && selectedMonth >= 0 && selectedMonth < points.length ? selectedMonth : points.length - 1;
   const emergencyBuffer = profile && profile.monthlyExpense > 0 ? plan.walletBalance / profile.monthlyExpense : null;
   const holdings = showAllHoldings ? plan.holdings : plan.holdings.slice(0, HOLDINGS_SHOWN);
 
@@ -298,26 +294,31 @@ export function DashboardScreen({ navigation }: Props) {
         </Pressable>
       </View>
 
-      {/* 3. Growth, savings rate */}
-      {bars.length > 0 && (
+      {/* 3. Value against money invested */}
+      {points.length > 1 && (
         <View style={styles.card}>
-          <Text style={styles.cardHeading}>Growth over time</Text>
-          <View style={styles.chart}>
-            {bars.map((point) => (
-              <View key={point.monthDate} style={[styles.bar, { height: Math.max(4, (point.portfolioValue / maxValue) * 100) }]} />
-            ))}
+          <Text style={styles.cardHeading}>Value and money invested</Text>
+          <View style={styles.legend}>
+            <View style={styles.legendItem}>
+              <View style={[styles.legendLine, { backgroundColor: "#2e6fdb" }]} />
+              <Text style={styles.legendText}>Value</Text>
+            </View>
+            <View style={styles.legendItem}>
+              <View style={[styles.legendLine, styles.legendDashed]} />
+              <Text style={styles.legendText}>Money invested</Text>
+            </View>
           </View>
+          <ValueVsInvestedChart points={points} selected={picked} onSelect={setSelectedMonth} />
+          <GrowthDetail point={points[picked]} />
           <Text style={styles.chartCaption}>
-            {bars[0].monthDate.slice(0, 7)} → {bars[bars.length - 1].monthDate.slice(0, 7)} · {formatCurrency(bars[bars.length - 1].portfolioValue)}
+            Month-end values. The green area is profit, the red area a loss. Tap a month for its figures; anything bought this month shows once its data arrives.
           </Text>
         </View>
       )}
-
-      {profile && (
+      {points.length === 1 && (
         <View style={styles.card}>
-          <Text style={styles.cardHeading}>Savings Rate</Text>
-          <Text style={styles.bigStat}>{profile.savingsRatePct.toFixed(0)}%</Text>
-          <Text style={styles.chartCaption}>(income − expense) / income</Text>
+          <Text style={styles.cardHeading}>Value and money invested</Text>
+          <Text style={styles.cardSub}>This chart appears once you have a second month of data.</Text>
         </View>
       )}
 
@@ -367,17 +368,23 @@ function AccountRow({ label, value, onPress }: { label: string; value: string; o
   );
 }
 
-// Evenly samples down to at most `max` points, always keeping the last one
-// so the chart's rightmost bar is the true final value.
-function downsample(points: GrowthPoint[], max: number): GrowthPoint[] {
-  if (points.length <= max) return points;
-  const step = points.length / max;
-  const sampled: GrowthPoint[] = [];
-  for (let i = 0; i < max - 1; i++) {
-    sampled.push(points[Math.floor(i * step)]);
-  }
-  sampled.push(points[points.length - 1]);
-  return sampled;
+/** One month's figures under the chart: value, money invested, and the profit or loss between them. */
+function GrowthDetail({ point }: { point: GrowthPoint }) {
+  const profit = point.portfolioValue - point.invested;
+  const pct = point.invested > 0 ? (profit / point.invested) * 100 : null;
+  const color = profit >= 0 ? "#1e8449" : LOSS;
+  return (
+    <View style={styles.detail}>
+      <Text style={styles.detailMonth}>{monthLabel(point.monthDate)}</Text>
+      <Text style={styles.detailLine}>
+        Value {formatCurrency(point.portfolioValue)} · Invested {formatCurrency(point.invested)}
+      </Text>
+      <Text style={[styles.detailProfit, { color }]}>
+        {profit >= 0 ? "Profit" : "Loss"} {signedCurrency(profit)}
+        {pct !== null ? ` (${signedPct(pct)})` : ""}
+      </Text>
+    </View>
+  );
 }
 
 function formatCurrency(value: number): string {
@@ -454,10 +461,16 @@ const styles = StyleSheet.create({
   holdingMeta: { fontSize: 11, color: "#999" },
 
   // growth chart
-  chart: { flexDirection: "row", alignItems: "flex-end", height: 100, gap: 3 },
-  bar: { flex: 1, backgroundColor: "#2e6fdb", borderRadius: 2, minWidth: 4 },
+  legend: { flexDirection: "row", gap: 16 },
+  legendItem: { flexDirection: "row", alignItems: "center", gap: 6 },
+  legendLine: { width: 18, height: 3, borderRadius: 2 },
+  legendDashed: { backgroundColor: "#777", opacity: 0.8 },
+  legendText: { fontSize: 12, color: "#555" },
+  detail: { gap: 2 },
+  detailMonth: { fontSize: 13, fontWeight: "700", color: "#333" },
+  detailLine: { fontSize: 13, color: "#555" },
+  detailProfit: { fontSize: 14, fontWeight: "700" },
   chartCaption: { fontSize: 12, color: "#777", marginTop: 4 },
-  bigStat: { fontSize: 32, fontWeight: "700", color: "#2e6fdb" },
 
   // account
   accountRow: { flexDirection: "row", alignItems: "center", gap: 12, paddingVertical: 12, borderTopWidth: 1, borderTopColor: "#eee" },

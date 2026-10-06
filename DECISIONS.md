@@ -2141,6 +2141,52 @@ Supersedes the measure lists of #22 and #23. Implements: UC-05 and UC-08 amended
 `backend/src/utils/peerCohort.ts`, `backend/src/services/friends.service.ts`,
 `backend/src/services/peerInsights.service.ts`, mobile `FriendsComparison.tsx`, `MetricsTable.tsx`.
 
+## 25. The Dashboard shows value against money invested; the savings rate card goes (7 Oct 2026)
+
+**Problem.** The Dashboard (#17) ended with two cards. The **Savings Rate** card repeated a
+number from the user's own profile ((income - expense) / income) that the Profile screen and the
+Explore comparison already show. The **Growth over time** card was a row of bars of the value of
+the holdings at each month-end with no axis, no labels and nothing to tap, only a first month, a
+last month and a final value. Worse, the value rises every time the user buys, so a run of
+growing bars can come from buying alone, even in a losing portfolio: it implied a story the
+Summary card's total profit does not support.
+
+**Decision.**
+
+1. The **Savings Rate card is removed** from the Dashboard (the profile screen and Explore still
+   have it). The emergency-buffer line under the cash balance stays.
+2. The growth chart is replaced by **Value and money invested**:
+   - two lines per month-end, from the month money first went in: the value of the holdings
+     (solid) and the money put in so far, bought minus sold (dashed);
+   - the area between them is green where value is above what was put in and red where it is
+     below, so the gap reads as profit or loss;
+   - a strip beneath shows **the profit or loss of each month** as bars (green above zero, red
+     below), because a gap that is small next to the total is hard to see on the lines;
+   - **tap a month** (one tap target per month, so it behaves the same on web and on a phone) to
+     read its value, money invested and profit or loss, in dollars and as a percentage of the
+     money invested; the latest month is shown by default;
+   - with only one month of data the card says the chart appears with the second month.
+3. The growth endpoint returns each month's `invested` (the stored net amount put in) beside the
+   value; no other API changed.
+
+**Verification.**
+- 755 backend tests pass; the growth tests check that `invested` is carried per month and that
+  value minus invested is the profit or loss. Both typechecks pass.
+- Live check for an account with seven months: the API gives value 285.77 against 300.00 invested
+  for the first month (a loss of 14.23) and 1,528.07 against 1,500.00 for the latest (a profit of
+  28.07); the screen shows the same, with a red bar for the first month and green after, and
+  tapping March 2026 shows "Value $285.77 - Invested $300.00 - Loss -$14.23 (-4.74%)".
+- A first version read the tap position from the touch event, which is missing on web and made the
+  selection NaN and blanked the page; the per-month tap targets replace it.
+
+**Limits.**
+- The chart ends at the latest month-end with data, so it can be a month behind the Summary card
+  (anything bought since shows once its data arrives; the card says so).
+- Profit here is value minus net money put in, the same definition as the Summary card's total profit.
+
+Supersedes the growth chart of #17. Implements: UC-04 amended (FR57). Owner: mobile
+`DashboardScreen.tsx`, `components/charts/ValueVsInvestedChart.tsx`; backend `dashboard.service.ts`.
+
 ## Open items (Design Model §8, carried forward)
 
 - **`Phase2_SRS_v1.6.docx` — done, no longer open.** Produced in the same

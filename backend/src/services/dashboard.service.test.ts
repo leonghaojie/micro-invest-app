@@ -78,9 +78,15 @@ describe("DashboardService", () => {
     it("maps the months to chart points", async () => {
       mockedPlanService.getActivePlan.mockResolvedValue(PLAN_SUMMARY);
       expect((await dashboardService.getGrowth("user-1")).points).toEqual([
-        { monthDate: "2026-01-01", portfolioValue: 101, walletBalance: 50 },
-        { monthDate: "2026-02-01", portfolioValue: 205.02, walletBalance: 100 },
+        { monthDate: "2026-01-01", portfolioValue: 101, invested: 100, walletBalance: 50 },
+        { monthDate: "2026-02-01", portfolioValue: 205.02, invested: 200, walletBalance: 100 },
       ]);
+    });
+
+    it("carries the money put in beside each month's value, so the gap between them is the profit or loss", async () => {
+      mockedPlanService.getActivePlan.mockResolvedValue(PLAN_SUMMARY);
+      const points = (await dashboardService.getGrowth("user-1")).points;
+      expect(points.map((p) => Math.round((p.portfolioValue - p.invested) * 100) / 100)).toEqual([1, 5.02]);
     });
 
     it("starts the chart when money first went in, not at account opening", async () => {

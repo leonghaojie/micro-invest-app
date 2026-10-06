@@ -129,6 +129,8 @@ export function buildDashboardPlan(plan: PlanSummary, funds: FundMeta[]): Dashbo
 export interface GrowthPoint {
   monthDate: string;
   portfolioValue: number;
+  /** Money put in so far (bought minus sold), so value minus invested is the profit or loss. */
+  invested: number;
   walletBalance: number;
 }
 
@@ -159,7 +161,7 @@ class DashboardService {
     const shown = firstInvested === -1 ? [] : plan.months.slice(firstInvested);
     return {
       planId: plan.planId,
-      points: shown.map((m) => ({ monthDate: m.monthDate, portfolioValue: m.endingBalance, walletBalance: m.walletBalance })),
+      points: shown.map((m) => ({ monthDate: m.monthDate, portfolioValue: m.endingBalance, invested: m.totalInvested, walletBalance: m.walletBalance })),
     };
   }
 }
