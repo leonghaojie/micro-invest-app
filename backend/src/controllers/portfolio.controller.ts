@@ -36,3 +36,12 @@ export async function createPortfolio(req: Request, res: Response, next: NextFun
     next(err);
   }
 }
+
+// DECISIONS.md #28: one portfolio's page (description, funds, history). ?range=1y|3y|5y|10y|max
+export async function getPortfolioDetail(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    res.status(200).json(await portfolioService.getPortfolioDetail(req.userId!, req.params.id, req.query.range));
+  } catch (err) {
+    next(err);
+  }
+}

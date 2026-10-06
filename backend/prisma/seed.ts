@@ -9,11 +9,12 @@
  * Two concerns:
  *
  * 1. Preset portfolios — the quick-start portfolios in
- *    src/utils/presetPortfolios.ts: the original single-fund
- *    Conservative/Balanced/Growth plus diversified multi-fund ones
- *    (DECISIONS.md #1 second amendment, #16). Existing presets are never
- *    modified. Users can still build their own multi-fund Portfolio
- *    (portfolio.service.ts).
+ *    src/utils/presetPortfolios.ts: diversified multi-fund mixes in three
+ *    risk levels (DECISIONS.md #1 second amendment, #16, #28). Existing
+ *    presets are never modified; the original single-fund Conservative/
+ *    Balanced/Growth are retired first (retiredPresets.service.ts), which
+ *    turns any monthly buy of one into the fund itself. Users can still build
+ *    their own multi-fund Portfolio (portfolio.service.ts).
  *
  * 2. Synthetic peer data (SRS §2.6, DECISIONS.md #4, #9) — ~300 reproducible
  *    peers from src/utils/syntheticPeers.ts, each with a profile, a custom
@@ -40,6 +41,7 @@ import { backfillLegacyPlans } from "../src/services/ledgerBackfill.service";
 import { buysInMonth } from "../src/utils/syntheticPeers";
 import { planService } from "../src/services/plan.service";
 import { PRESET_PORTFOLIOS } from "../src/utils/presetPortfolios";
+import { retireLegacyPresets } from "../src/services/retiredPresets.service";
 import { assignExperience, experienceStream, FundInfo, generatePeerSpecs, SyntheticPeerSpec } from "../src/utils/syntheticPeers";
 
 const prisma = new PrismaClient();
@@ -300,6 +302,10 @@ async function backfillSyntheticExperience(): Promise<void> {
 
 async function main() {
   const args = parseArgs();
+  const retired = await retireLegacyPresets();
+  if (retired.deleted.length || retired.kept.length) {
+    console.log(`[seed] retired presets: ${retired.deleted.length} deleted (${retired.deleted.join(", ") || "none"}), ${retired.rulesConverted} monthly buys now on the fund itself, ${retired.rulesMerged} merged, ${retired.kept.length} kept because something still points at them.`);
+  }
   await seedPresetPortfolios();
   const generated = await seedSyntheticPeers(args);
   if (!generated) await refreshSyntheticPlans();
