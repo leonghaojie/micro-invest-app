@@ -3,7 +3,8 @@
  * Answers "compared with whom?" before it shows any number: the headline sets your
  * return against similar investors' median and a plain market benchmark, a label names
  * the cohort you were placed in, "Your peer group" describes the people behind it, and
- * four cards compare you with them, each saying why those peers were chosen.
+ * one table compares you with them measure by measure; tap a row for what it means
+ * (DECISIONS.md #20).
  *
  * Aggregate-only (GET /peers/cohort, NFR-03). The server returns every figure and every
  * sentence of explanation; this screen only lays them out.
@@ -12,27 +13,10 @@ import { useCallback, useRef, useState } from "react";
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { useFocusEffect } from "@react-navigation/native";
 import { apiFetch, ApiError } from "../api/client";
+import { MetricsTable } from "../components/MetricsTable";
+import type { Card } from "../utils/cohortTypes";
 
 type Risk = "LOW" | "MEDIUM" | "HIGH";
-
-interface Card {
-  key: "investmentRate" | "consistency" | "diversification" | "return" | "returnPerRisk";
-  label: string;
-  unit: "%" | "score" | "ratio";
-  status: "ok" | "unavailable" | "withheld";
-  message?: string;
-  you?: number;
-  median?: number;
-  p25?: number;
-  p75?: number;
-  percentile?: number;
-  topPct?: number;
-  cohortSize?: number;
-  basis: string;
-  filter: string | null;
-  relaxations: string[];
-  detail?: { label: string; you: number; median: number; unit: "%" };
-}
 
 interface CohortReport {
   suppressed: boolean;
@@ -170,9 +154,8 @@ export function PeerCohort({ onStartPlan, onEditProfile }: { onStartPlan: () => 
       {report.group && <GroupCard group={report.group} />}
 
       <Text style={styles.sectionHeading}>How you compare</Text>
-      {report.cards.map((card) => (
-        <ComparisonCard key={card.key} card={card} />
-      ))}
+      <Text style={styles.tableHint}>Tap a metric to see what it means and how it is worked out.</Text>
+      <MetricsTable cards={report.cards} />
 
       {report.observation && (
         <View style={[styles.card, styles.noteCard]}>
@@ -257,53 +240,6 @@ function Row({ label, value }: { label: string; value: string }) {
   );
 }
 
-function ComparisonCard({ card }: { card: Card }) {
-  return (
-    <View style={styles.card}>
-      <Text style={styles.cardHeading}>{card.label}</Text>
-      {card.status !== "ok" ? (
-        <Text style={styles.body}>
-          {card.message ?? (card.status === "withheld" ? "Too few comparable investors to show this privately." : "Not available yet.")}
-        </Text>
-      ) : (
-        <>
-          <View style={styles.threeRow}>
-            <Figure label="You" value={fmt(card, card.you!)} highlight />
-            <Figure label="Peer median" value={fmt(card, card.median!)} />
-            <Figure label={card.percentile! >= 50 ? "Position" : "of peers"} value={position(card.percentile!, card.topPct!)} />
-          </View>
-          <Text style={styles.hint}>
-            Middle half of peers: {fmt(card, card.p25!)} to {fmt(card, card.p75!)}
-          </Text>
-          {card.detail && (
-            <Text style={styles.hint}>
-              {card.detail.label}: <Text style={styles.strong}>{card.detail.you.toFixed(0)}%</Text> vs peer median{" "}
-              {card.detail.median.toFixed(0)}%
-            </Text>
-          )}
-          <Text style={styles.basis}>
-            Compared with {card.cohortSize} investors {card.filter ? `at the ${card.filter}, with ` : "with "}
-            {card.basis}.
-            {card.relaxations.length > 0 ? ` Too few matched exactly, so we ${card.relaxations.join("; ")}.` : ""}
-          </Text>
-        </>
-      )}
-    </View>
-  );
-}
-
-/** "Top 12%" for the upper half; below the median, the share of peers you're above. */
-function position(percentile: number, topPct: number): string {
-  if (percentile >= 50) return `Top ${topPct}%`;
-  return percentile <= 0 ? "Lowest" : `Above ${percentile}%`;
-}
-
-function fmt(card: Card, v: number): string {
-  if (card.unit === "score") return `${Math.round(v)}/100`;
-  if (card.unit === "ratio") return v.toFixed(2);
-  return `${v.toFixed(1)}%`;
-}
-
 const pct = (v: number) => `${v.toFixed(1)}%`;
 
 function describeError(err: unknown): string {
@@ -322,7 +258,7 @@ const styles = StyleSheet.create({
   body: { fontSize: 14, color: "#555" },
   strong: { fontWeight: "700", color: "#333" },
   hint: { fontSize: 12, color: "#777" },
-  basis: { fontSize: 12, color: "#777", borderTopWidth: 1, borderTopColor: "#eee", paddingTop: 8 },
+  tableHint: { fontSize: 12, color: "#777", alignSelf: "flex-start", width: "100%", maxWidth: 360, marginTop: -6 },
   footnote: { fontSize: 11, color: "#999", textAlign: "center", maxWidth: 360, marginTop: 4 },
   error: { color: "#c0392b", textAlign: "center" },
   card: { width: "100%", maxWidth: 360, borderWidth: 1, borderColor: "#ccc", borderRadius: 8, padding: 16, gap: 10 },
