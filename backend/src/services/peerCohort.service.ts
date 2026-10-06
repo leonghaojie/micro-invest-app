@@ -50,7 +50,7 @@ class PeerCohortService {
     const plans = await prisma.plan.findMany({
       include: {
         user: { select: { isSynthetic: true, profile: true } },
-        holdings: { select: { value: true, fund: { select: { assetClass: true } } } },
+        holdings: { select: { value: true, fund: { select: { assetClass: true, ticker: true, name: true } } } },
         months: { orderBy: { monthDate: "desc" }, take: WINDOW_MONTHS },
       },
     });
@@ -82,7 +82,7 @@ class PeerCohortService {
         risk: p.riskLevel as Risk,
         contribution: Number(plan.contributionAmount),
         consistencyPct: contributionConsistency(buyMonthsByPlan.get(plan.id) ?? [], tradeMonth)?.pct ?? null,
-        holdings: plan.holdings.map((h) => ({ assetClass: h.fund.assetClass, weight: heldTotal > 0 ? Number(h.value) / heldTotal : 0 })),
+        holdings: plan.holdings.map((h) => ({ assetClass: h.fund.assetClass, weight: heldTotal > 0 ? Number(h.value) / heldTotal : 0, ticker: h.fund.ticker, name: h.fund.name })),
         // Months with nothing invested have no return and are left out.
         monthlyReturns: Object.fromEntries(plan.months.filter((m) => m.hasPosition).map((m) => [monthKey(m.monthDate), Number(m.portfolioReturnPct)])),
       });

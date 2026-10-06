@@ -55,8 +55,8 @@ function planRow(i: number, over: { userId?: string; synthetic?: boolean; noProf
     holdings: over.holdingless
       ? []
       : [
-          { value: "600.00", fund: { assetClass: i % 2 ? "EQUITY" : "BOND" } },
-          { value: "400.00", fund: { assetClass: "REIT" } },
+          { value: "600.00", fund: { assetClass: i % 2 ? "EQUITY" : "BOND", ticker: i % 2 ? "VT" : "AGG", name: i % 2 ? "World stocks" : "US bonds" } },
+          { value: "400.00", fund: { assetClass: "REIT", ticker: "VNQ", name: "Real estate" } },
         ],
     // newest first, as the query returns them
     months: MONTHS.slice(-n)
@@ -139,6 +139,17 @@ describe("PeerCohortService.getCohort", () => {
     const res = await peerCohortService.getCohort("user-0");
     if (res.status !== "ok") throw new Error("expected ok");
     expect(res.report.cards.find((c) => c.key === "consistency")!.status).toBe("unavailable");
+  });
+
+  it("says what the peers hold: their mix, the most-held funds and how many funds they hold", async () => {
+    const res = await peerCohortService.getCohort("user-0");
+    if (res.status !== "ok") throw new Error("expected ok");
+    const h = res.report.holdings!;
+    expect(h.peerCount).toBeGreaterThan(0);
+    expect(h.topFunds.map((f) => f.ticker)).toContain("VNQ"); // every fixture portfolio holds it
+    expect(h.topFunds.find((f) => f.ticker === "VNQ")).toMatchObject({ name: "Real estate", heldByPct: 100, youHold: true });
+    expect(h.avgFunds).toBe(2);
+    expect(h.peerMix.find((x) => x.assetClass === "REIT")!.pct).toBe(40);
   });
 
   it("reports how much of the population is simulated", async () => {
