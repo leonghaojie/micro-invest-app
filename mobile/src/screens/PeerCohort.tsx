@@ -3,8 +3,9 @@
  * Answers "compared with whom?" before it shows any number: the headline sets your
  * return against similar investors' median and a plain market benchmark, a label names
  * the cohort you were placed in, "Your peer group" describes the people behind it, and
- * one table compares you with them measure by measure; tap a row for what it means
- * (DECISIONS.md #20).
+ * one table compares you with them measure by measure (tap a row for what it means and
+ * where you sit in the range), and "What people like you hold" shows what they invest in
+ * (DECISIONS.md #20, #21).
  *
  * Aggregate-only (GET /peers/cohort, NFR-03). The server returns every figure and every
  * sentence of explanation; this screen only lays them out.
@@ -14,7 +15,8 @@ import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from
 import { useFocusEffect } from "@react-navigation/native";
 import { apiFetch, ApiError } from "../api/client";
 import { MetricsTable } from "../components/MetricsTable";
-import type { Card } from "../utils/cohortTypes";
+import { PeerHoldings } from "../components/PeerHoldings";
+import type { Card, HoldingsSummary } from "../utils/cohortTypes";
 
 type Risk = "LOW" | "MEDIUM" | "HIGH";
 
@@ -35,6 +37,7 @@ interface CohortReport {
     benchmark: { label: string; returnPct: number } | null;
   } | null;
   cards: Card[];
+  holdings: HoldingsSummary | null;
   observation: string | null;
 }
 
@@ -156,6 +159,8 @@ export function PeerCohort({ onStartPlan, onEditProfile }: { onStartPlan: () => 
       <Text style={styles.sectionHeading}>How you compare</Text>
       <Text style={styles.tableHint}>Tap a metric to see what it means and how it is worked out.</Text>
       <MetricsTable cards={report.cards} />
+
+      {report.holdings && <PeerHoldings holdings={report.holdings} />}
 
       {report.observation && (
         <View style={[styles.card, styles.noteCard]}>

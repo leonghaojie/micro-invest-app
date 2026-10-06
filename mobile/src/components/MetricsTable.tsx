@@ -62,6 +62,8 @@ function Explanation({ card }: { card: Card }) {
       <Section title="How it is worked out" body={info.how} />
       <Section title="What the numbers mean" body={info.meaning} />
 
+      {card.status === "ok" && <RangeBar card={card} />}
+
       {card.status !== "ok" ? (
         <Section
           title="Why there is no figure"
@@ -84,6 +86,39 @@ function Explanation({ card }: { card: Card }) {
           />
         </>
       )}
+    </View>
+  );
+}
+
+/**
+ * Where your figure sits among the peers: a bar for the middle half of them (25th to 75th
+ * percentile), a tick at the median and a dot for you. The scale runs just past whichever
+ * of those is furthest out, so you can always be seen.
+ */
+function RangeBar({ card }: { card: Card }) {
+  const { p25, p75, median, you } = card;
+  if (p25 === undefined || p75 === undefined || median === undefined || you === undefined) return null;
+  const lo = Math.min(p25, you, median);
+  const hi = Math.max(p75, you, median);
+  const pad = (hi - lo || Math.max(Math.abs(hi), 1)) * 0.15;
+  const min = lo - pad;
+  const span = hi + pad - min;
+  const at = (v: number) => `${Math.min(100, Math.max(0, ((v - min) / span) * 100))}%` as const;
+  return (
+    <View style={styles.rangeWrap}>
+      <View style={styles.track}>
+        <View style={[styles.band, { left: at(p25), width: `${Math.max(((p75 - p25) / span) * 100, 1.5)}%` }]} />
+        <View style={[styles.medianTick, { left: at(median) }]} />
+        <View style={[styles.youDot, { left: at(you) }]} accessibilityLabel="Your figure" />
+      </View>
+      <View style={styles.legend}>
+        <Text style={styles.legendText}>
+          <Text style={styles.legendBand}>▬</Text> Middle half of peers: {formatMetric(card, p25)} to {formatMetric(card, p75)}
+        </Text>
+        <Text style={styles.legendText}>
+          <Text style={styles.legendMedian}>┃</Text> Median {formatMetric(card, median)}   <Text style={styles.legendYou}>●</Text> You {formatMetric(card, you)}
+        </Text>
+      </View>
     </View>
   );
 }
@@ -117,4 +152,14 @@ const styles = StyleSheet.create({
   detail: { fontSize: 13, color: "#555" },
   strong: { fontWeight: "700", color: "#333" },
   note: { fontSize: 12, color: "#b9770e" },
+  rangeWrap: { gap: 6 },
+  track: { height: 14, borderRadius: 7, backgroundColor: "#e9eef7", justifyContent: "center" },
+  band: { position: "absolute", top: 3, height: 8, borderRadius: 4, backgroundColor: "#b9cdf0" },
+  medianTick: { position: "absolute", top: 1, width: 2, height: 12, marginLeft: -1, backgroundColor: "#555" },
+  youDot: { position: "absolute", top: 0, width: 14, height: 14, marginLeft: -7, borderRadius: 7, backgroundColor: "#2e6fdb", borderWidth: 2, borderColor: "#fff" },
+  legend: { gap: 2 },
+  legendText: { fontSize: 11, color: "#666" },
+  legendBand: { color: "#9db8e8" },
+  legendMedian: { color: "#555" },
+  legendYou: { color: "#2e6fdb" },
 });

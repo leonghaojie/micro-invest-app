@@ -1,6 +1,16 @@
 /** Shapes of the peer comparison cards, as GET /peers/cohort returns them (DECISIONS.md #18). */
 export type MetricKey = "investmentRate" | "consistency" | "diversification" | "return" | "returnPerRisk";
 
+/** What the peers hold (DECISIONS.md #21): aggregate only. */
+export interface HoldingsSummary {
+  peerCount: number;
+  peerMix: { assetClass: string; pct: number }[];
+  myMix: { assetClass: string; pct: number }[];
+  topFunds: { ticker: string; name: string; heldByPct: number; youHold: boolean }[];
+  avgFunds: number;
+  myFunds: number;
+}
+
 export interface Card {
   key: MetricKey;
   label: string;

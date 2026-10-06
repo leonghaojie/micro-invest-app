@@ -50,7 +50,8 @@ export interface Member {
    */
   consistencyPct: number | null;
   /** One entry per fund: its asset class and weight as a fraction (the weights sum to 1). */
-  holdings: { assetClass: string; weight: number }[];
+  /** ticker and name identify the fund for the "what peers hold" summary; they are never returned per person. */
+  holdings: { assetClass: string; weight: number; ticker?: string; name?: string }[];
   /** The portfolio's monthly return (a fraction) by month, "YYYY-MM". Recent months only. */
   monthlyReturns: Record<string, number>;
 }
@@ -477,6 +478,72 @@ export interface Card {
   detail?: { label: string; you: number; median: number; unit: "%" };
 }
 
+/** What the peers hold (DECISIONS.md #21): aggregate only, never one person's portfolio. */
+export interface HoldingsSummary {
+  /** How many peers it describes (all of them hold something). */
+  peerCount: number;
+  /** The peers' average share of each asset class, percent, largest first (adds up to 100). */
+  peerMix: { assetClass: string; pct: number }[];
+  /** The user's own mix, same shape. */
+  myMix: { assetClass: string; pct: number }[];
+  /** The funds most peers hold, with the share of peers that hold each. Only funds held by at least MIN_FUND_HOLDERS peers. */
+  topFunds: { ticker: string; name: string; heldByPct: number; youHold: boolean }[];
+  /** The average number of funds a peer holds, and how many the user holds. */
+  avgFunds: number;
+  myFunds: number;
+}
+
+/** A fund is listed only if at least this many peers hold it, so no list can describe one or two people. */
+export const MIN_FUND_HOLDERS = 3;
+/** The most funds listed. */
+export const TOP_FUNDS_SHOWN = 6;
+
+const mixOf = (holdings: Member["holdings"]): { assetClass: string; pct: number }[] =>
+  Object.entries(classShares(holdings))
+    .map(([assetClass, w]) => ({ assetClass, pct: round1(w * 100) }))
+    .sort((a, b) => b.pct - a.pct || (a.assetClass < b.assetClass ? -1 : 1));
+
+/**
+ * What the peers hold, for the same people the diversification row compares you with: their
+ * average asset-class mix, the funds held by the most of them, and how many funds they hold.
+ * null with fewer peers than the privacy floor, or when the user holds nothing.
+ */
+export function summarizeHoldings(peers: Member[], me: Member, minGroup: number): HoldingsSummary | null {
+  const withHoldings = peers.filter((p) => p.holdings.length > 0);
+  if (withHoldings.length < minGroup || me.holdings.length === 0) return null;
+
+  const totals: Record<string, number> = {};
+  for (const p of withHoldings) for (const [c, w] of Object.entries(classShares(p.holdings))) totals[c] = (totals[c] ?? 0) + w;
+  const peerMix = Object.entries(totals)
+    .map(([assetClass, w]) => ({ assetClass, pct: round1((w / withHoldings.length) * 100) }))
+    .sort((a, b) => b.pct - a.pct || (a.assetClass < b.assetClass ? -1 : 1));
+
+  const holders = new Map<string, { name: string; count: number }>();
+  for (const p of withHoldings) {
+    for (const h of new Set(p.holdings.map((x) => x.ticker).filter((t): t is string => !!t))) {
+      const name = p.holdings.find((x) => x.ticker === h)?.name ?? h;
+      const e = holders.get(h) ?? { name, count: 0 };
+      e.count += 1;
+      holders.set(h, e);
+    }
+  }
+  const mine = new Set(me.holdings.map((h) => h.ticker).filter((t): t is string => !!t));
+  const topFunds = [...holders.entries()]
+    .filter(([, e]) => e.count >= MIN_FUND_HOLDERS)
+    .sort((a, b) => b[1].count - a[1].count || (a[0] < b[0] ? -1 : 1))
+    .slice(0, TOP_FUNDS_SHOWN)
+    .map(([ticker, e]) => ({ ticker, name: e.name, heldByPct: Math.round((e.count / withHoldings.length) * 100), youHold: mine.has(ticker) }));
+
+  return {
+    peerCount: withHoldings.length,
+    peerMix,
+    myMix: mixOf(me.holdings),
+    topFunds,
+    avgFunds: round1(withHoldings.reduce((sum, p) => sum + p.holdings.length, 0) / withHoldings.length),
+    myFunds: me.holdings.length,
+  };
+}
+
 export interface CohortReport {
   /** Withheld entirely: the whole population is too small to describe anyone's peers. */
   suppressed: boolean;
@@ -490,6 +557,8 @@ export interface CohortReport {
     benchmark: { label: string; returnPct: number } | null;
   } | null;
   cards: Card[];
+  /** What the peers behind the diversification row hold, or null. */
+  holdings: HoldingsSummary | null;
   /** One neutral sentence on what stands out; never advice. */
   observation: string | null;
 }
@@ -534,12 +603,15 @@ export function buildCohortReport(pop: Population, me: Member, ctx: ReportContex
 
   const general = selectPeers(pop, me, GENERAL_WEIGHTS, { ...base, hardRisk: false, eligible: () => true });
   if (general.suppressed) {
-    return { suppressed: true, identity, group: null, headline: null, cards: [], observation: null };
+    return { suppressed: true, identity, group: null, headline: null, cards: [], holdings: null, observation: null };
   }
 
   const n = windowLength(me, ctx.asOf);
   const months = trailingMonths(ctx.asOf, Math.max(n, 1));
   const myReturns = n > 0 ? windowReturns(me, months) : null;
+
+  // The people behind the diversification row: what they hold is what "people like you" invest in.
+  let diversificationPeers: Member[] = [];
 
   const cards: Card[] = CARD_DEFS.map((def): Card => {
     const weights = METRIC_WEIGHTS[def.key];
@@ -593,6 +665,7 @@ export function buildCohortReport(pop: Population, me: Member, ctx: ReportContex
     if (sel.filter === "same risk level") out.basis = describeBasis({ ...weights, risk: 0 });
 
     if (def.key === "diversification") {
+      diversificationPeers = sel.peers;
       const peerLargest = sel.peers.map((p) => largestHoldingPct(p.holdings)).sort((a, b) => a - b);
       out.detail = { label: "Largest holding", you: largestHoldingPct(me.holdings), median: round1(quantile(peerLargest, 0.5)), unit: "%" };
     }
@@ -614,7 +687,15 @@ export function buildCohortReport(pop: Population, me: Member, ctx: ReportContex
         }
       : null;
 
-  return { suppressed: false, identity, group: describeGroup(general.peers), headline, cards, observation: buildObservation(cards) };
+  return {
+    suppressed: false,
+    identity,
+    group: describeGroup(general.peers),
+    headline,
+    cards,
+    holdings: summarizeHoldings(diversificationPeers, me, ctx.minGroup),
+    observation: buildObservation(cards),
+  };
 }
 
 /** Within this many percentile points of the middle counts as "in line". */

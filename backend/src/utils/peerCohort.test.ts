@@ -8,6 +8,7 @@ import {
   BENCHMARKS,
   benchmarkReturnPct,
   buildCohortReport,
+  summarizeHoldings,
   buildObservation,
   buildPopulation,
   capacityOf,
@@ -741,5 +742,104 @@ describe("buildObservation", () => {
   it("is descriptive only: no instruction to change anything", () => {
     const text = buildObservation([card("investmentRate", 90), card("diversification", 5, { detail: { label: "Largest holding", you: 80, median: 30, unit: "%" } })])!;
     expect(text).not.toMatch(/should|could improve|reduce|increase|consider|try to/i);
+  });
+});
+
+// ── What the peers hold (DECISIONS.md #21) ──────────────────────────────
+
+describe("summarizeHoldings", () => {
+  const h = (assetClass: string, ticker: string, weight = 1) => ({ assetClass, ticker, name: `${ticker} fund`, weight });
+  const holder = (id: string, holdings: ReturnType<typeof h>[]) => member(id, { holdings });
+  const me = holder("me", [h("EQUITY", "VT", 0.6), h("BOND", "AGG", 0.4)]);
+
+  it("averages the peers' asset-class mix (it adds up to 100) and gives the user's own", () => {
+    const peers = [...Array.from({ length: 10 }, (_, i) => holder(`e${i}`, [h("EQUITY", "VT")])), ...Array.from({ length: 10 }, (_, i) => holder(`b${i}`, [h("BOND", "AGG")]))];
+    const r = summarizeHoldings(peers, me, 10)!;
+    expect(r.peerMix).toEqual([{ assetClass: "BOND", pct: 50 }, { assetClass: "EQUITY", pct: 50 }]);
+    expect(r.peerMix.reduce((s, x) => s + x.pct, 0)).toBeCloseTo(100, 5);
+    expect(r.myMix).toEqual([{ assetClass: "EQUITY", pct: 60 }, { assetClass: "BOND", pct: 40 }]);
+    expect(r.peerCount).toBe(20);
+  });
+
+  it("lists the funds most peers hold, with the share of peers, largest first, and marks the ones the user holds", () => {
+    const peers = [
+      ...Array.from({ length: 12 }, (_, i) => holder(`a${i}`, [h("EQUITY", "VT")])),
+      ...Array.from({ length: 6 }, (_, i) => holder(`b${i}`, [h("BOND", "AGG"), h("EQUITY", "VT", 0.5)])),
+      ...Array.from({ length: 2 }, (_, i) => holder(`c${i}`, [h("COMMODITY", "GLD")])),
+    ];
+    const r = summarizeHoldings(peers, me, 10)!;
+    expect(r.topFunds.map((f) => [f.ticker, f.heldByPct, f.youHold])).toEqual([
+      ["VT", 90, true], // 18 of 20
+      ["AGG", 30, true], // 6 of 20
+    ]);
+    expect(r.topFunds[0].name).toBe("VT fund");
+  });
+
+  it("never lists a fund held by fewer than 3 peers (so a list cannot describe one or two people)", () => {
+    const base = Array.from({ length: 10 }, (_, i) => holder(`a${i}`, [h("EQUITY", "VT")]));
+    const two = summarizeHoldings([...base, holder("x1", [h("COMMODITY", "GLD")]), holder("x2", [h("COMMODITY", "GLD")])], me, 10)!;
+    expect(two.topFunds.map((f) => f.ticker)).not.toContain("GLD");
+    const three = summarizeHoldings([...base, holder("x1", [h("COMMODITY", "GLD")]), holder("x2", [h("COMMODITY", "GLD")]), holder("x3", [h("COMMODITY", "GLD")])], me, 10)!;
+    expect(three.topFunds.map((f) => f.ticker)).toContain("GLD");
+  });
+
+  it("shows at most six funds, ties broken by ticker so the order is stable", () => {
+    const tickers = ["A", "B", "C", "D", "E", "F", "G", "H"];
+    const peers = tickers.flatMap((t) => Array.from({ length: 4 }, (_, i) => holder(`${t}${i}`, [h("EQUITY", t)])));
+    const r = summarizeHoldings(peers, me, 10)!;
+    expect(r.topFunds.map((f) => f.ticker)).toEqual(["A", "B", "C", "D", "E", "F"]);
+  });
+
+  it("counts how many funds the peers hold on average and how many the user holds", () => {
+    const peers = [...Array.from({ length: 5 }, (_, i) => holder(`a${i}`, [h("EQUITY", "VT")])), ...Array.from({ length: 5 }, (_, i) => holder(`b${i}`, [h("EQUITY", "VT", 0.5), h("BOND", "AGG", 0.5), h("COMMODITY", "GLD", 0.0)]))];
+    const r = summarizeHoldings(peers, me, 10)!;
+    expect(r.avgFunds).toBe(2);
+    expect(r.myFunds).toBe(2);
+  });
+
+  it("leaves out peers who hold nothing, and is null under the privacy floor or when the user holds nothing", () => {
+    const peers = [...Array.from({ length: 9 }, (_, i) => holder(`a${i}`, [h("EQUITY", "VT")])), holder("empty", [])];
+    expect(summarizeHoldings(peers, me, 10)).toBeNull(); // only 9 hold something
+    expect(summarizeHoldings([...peers, holder("more", [h("EQUITY", "VT")])], me, 10)!.peerCount).toBe(10);
+    expect(summarizeHoldings(peers, holder("none", []), 5)).toBeNull();
+  });
+
+  it("ignores funds with no ticker rather than failing", () => {
+    const peers = Array.from({ length: 10 }, (_, i) => member(`a${i}`, { holdings: [{ assetClass: "EQUITY", weight: 1 }] }));
+    const r = summarizeHoldings(peers, me, 10)!;
+    expect(r.topFunds).toEqual([]);
+    expect(r.peerMix).toEqual([{ assetClass: "EQUITY", pct: 100 }]);
+  });
+});
+
+describe("the cohort report's holdings", () => {
+  const members = population(150, 41).map((m, i) => ({
+    ...m,
+    holdings: [
+      { assetClass: i % 2 ? "EQUITY" : "BOND", ticker: i % 2 ? "VT" : "AGG", name: i % 2 ? "World" : "Bonds", weight: 0.7 },
+      { assetClass: "COMMODITY", ticker: "GLD", name: "Gold", weight: 0.3 },
+    ],
+  }));
+  const me = members[0];
+  const ctx = { asOf: AS_OF, fundReturns: { VT: Object.fromEntries(MONTHS12.map((m) => [m, 0.01])), AGG: Object.fromEntries(MONTHS12.map((m) => [m, 0.003])) }, minGroup: 10 };
+
+  it("describes the same peers as the diversification row", () => {
+    const r = buildCohortReport(buildPopulation(members), me, ctx);
+    const div = r.cards.find((c) => c.key === "diversification")!;
+    expect(r.holdings!.peerCount).toBe(div.cohortSize);
+    expect(r.holdings!.peerMix.reduce((s, x) => s + x.pct, 0)).toBeCloseTo(100, 0);
+    expect(r.holdings!.myFunds).toBe(2);
+  });
+
+  it("is null when the whole pool is too small to describe", () => {
+    const r = buildCohortReport(buildPopulation(members.slice(0, 6)), members[0], ctx);
+    expect(r.suppressed).toBe(true);
+    expect(r.holdings).toBeNull();
+  });
+
+  it("carries no ids and no per-person portfolio", () => {
+    const json = JSON.stringify(buildCohortReport(buildPopulation(members), me, ctx).holdings);
+    for (const m of members.slice(0, 40)) expect(json).not.toContain(`"${m.id}"`);
+    expect(json).not.toMatch(/weight/);
   });
 });

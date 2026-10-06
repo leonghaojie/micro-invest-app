@@ -1881,6 +1881,66 @@ the wording is checked by reading it.
 Implements: UC-05 amended (FR49, FR50). Owner: mobile `MetricsTable.tsx`, `metricInfo.ts`,
 `PeerCohort.tsx`.
 
+## 21. What people like you hold, and where you sit in the range (6 Oct 2026)
+
+**Problem.** The project summary says the comparison dashboard should "visualize performance
+metrics, savings habits, and investment choices, fostering a sense of community and
+benchmarking". After #20 the Cohort view covered performance (return, return per risk) and
+savings habits (investment rate, consistency) but **investment choices** were one number, the
+diversification score, which says how spread out you are and not what people actually hold.
+The old Explore screen had a "what peers hold" panel; it did not carry over. And the table
+was all numbers.
+
+**Decision.** Two additions to the Cohort view:
+
+1. **What people like you hold.** A card under the table with
+   - the **asset-class mix** of your peers (their average) against your own, as two bars;
+   - the **most-held funds** among them, each with the share of peers that hold it and a
+     "You hold this" mark;
+   - the **average number of funds** they hold against how many you hold.
+   It describes **the same people as the diversification row** (matched on risk level,
+   spare income, income and life stage), so "people like you" means the same thing in both
+   places. It is withheld when fewer than the privacy floor of peers hold anything, or when you
+   hold nothing.
+2. **A range bar in each opened row.** Under the explanation of a measure: a bar for the middle
+   half of peers (25th to 75th percentile), a tick at the median and a dot for you. The scale
+   runs just past whichever of the three is furthest out, so you are always visible.
+
+**Privacy.** Aggregates only, as everywhere (NFR-03). A fund is listed only if **at least 3
+peers hold it** (`MIN_FUND_HOLDERS`, the same cell size as before), at most six are shown,
+and the response carries no identifier and no individual's weights (a test checks). The mix
+is an average over at least 10 peers.
+
+**Where it lives.** `summarizeHoldings` and `HoldingsSummary` in `utils/peerCohort.ts`, called
+from `buildCohortReport` with the diversification peers; engine members now carry each fund's
+ticker and name. Response field `report.holdings`. Mobile: `PeerHoldings.tsx` (reusing the mix
+bar), a `RangeBar` in `MetricsTable.tsx`.
+
+**Verification.**
+- 11 new engine tests and one service test: the average mix adds up to 100; funds ranked by the
+  share of peers, ties by ticker, six at most; a fund held by two peers is not listed and by
+  three is; the "you hold this" flag; the average number of funds; peers holding nothing are
+  left out; null under the floor, with no holdings, or when the whole pool is too small; the
+  peers are the diversification row's; no ids and no weights in the output.
+- **Independent recomputation** from raw database rows for two different accounts (own
+  nearest-peer selection written from the weights, then the mix, the ranking and the counts):
+  the peer count, the mix, the six most-held funds in order with their shares and the "you
+  hold" marks, and the average number of funds all agree.
+- **UI (Expo web, phone size):** the card shows the two bars, six funds with shares, the
+  "You hold this" marks and the average; an opened row shows the bar with the band, median tick
+  and your dot at the right positions (checked from the rendered geometry).
+
+**Limits.**
+- "People like you" is the diversification row's peers, who are matched on profile, not on
+  what they hold, so the mix shows what similar people choose, not what is best.
+- 97% of the peers are simulated, and their holdings are random draws skewed by risk level
+  (#9), so the mix reflects those assumptions.
+- The bar's scale is local to each measure; bars are not comparable across rows.
+
+Implements: UC-05 amended (FR51, FR52). Owner: `backend/src/utils/peerCohort.ts`
+(`summarizeHoldings`), `backend/src/services/peerCohort.service.ts`, mobile
+`PeerHoldings.tsx`, `MetricsTable.tsx`.
+
 ## Open items (Design Model §8, carried forward)
 
 - **`Phase2_SRS_v1.6.docx` — done, no longer open.** Produced in the same
