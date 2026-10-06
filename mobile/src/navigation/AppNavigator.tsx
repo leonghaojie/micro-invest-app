@@ -31,6 +31,7 @@ import { apiFetch, ApiError, clearStoredAuthToken, getStoredAuthToken, setUnauth
 import { EditAccountScreen } from "../screens/EditAccountScreen";
 import { FriendCompareScreen } from "../screens/FriendCompareScreen";
 import { FundDetailScreen } from "../screens/FundDetailScreen";
+import { PortfolioDetailScreen } from "../screens/PortfolioDetailScreen";
 import { ForgotPasswordScreen } from "../screens/ForgotPasswordScreen";
 import { FriendsScreen } from "../screens/FriendsScreen";
 import { ActivityScreen } from "../screens/ActivityScreen";
@@ -71,6 +72,7 @@ export type RootStackParamList = {
   FriendCompare: { friendshipId: string; displayName: string };
   // DECISIONS.md #14: one fund's history and statistics, opened from the Funds tab.
   FundDetail: { fundId: string; ticker: string };
+  PortfolioDetail: { portfolioId: string; name: string };
   // DECISIONS.md #17: change one account detail, opened from the dashboard's Account section.
   EditAccount: { kind: "name" | "email" | "password" };
 };
@@ -162,6 +164,7 @@ export function AppNavigator() {
         options={({ route }) => ({ title: { name: "Display name", email: "Change email", password: "Change password" }[route.params.kind] })}
       />
       <Stack.Screen name="FundDetail" component={FundDetailScreen} options={({ route }) => ({ title: route.params.ticker })} />
+      <Stack.Screen name="PortfolioDetail" component={PortfolioDetailScreen} options={({ route }) => ({ title: route.params.name })} />
     </Stack.Navigator>
   );
 }

@@ -1151,6 +1151,8 @@ Implements: new scope (data currency; extends FR04). Owner:
 
 ## 16. A bigger fund catalog and more preset portfolios (4 Oct 2026)
 
+*Amended by #28: the three original single-fund presets are retired and the presets are grouped by risk level.*
+
 **Problem.** The Funds tab offered 8 funds and 3 presets, and the presets were weak:
 each was a single fund, and "Balanced" was 100% one REIT ETF (which has lost money
 since 2017). There was little to browse, and nothing diversified to start from.
@@ -2313,6 +2315,81 @@ three-way control per item, the star per friend), `FriendCompareScreen.tsx` (the
 
 Implements: UC-08 amended (FR59). Owner: `backend/src/services/friends.service.ts`, mobile
 `FriendsScreen.tsx`.
+
+## 28. Portfolios by risk level, a page for each, and the original three retired (7 Oct 2026)
+
+**Problem.** The Portfolios tab was a flat list: a name, a risk word and a string of tickers
+("BIL 40% · AGG 30% · A35.SI 20%"), with nothing to tell someone what a mix is for or how it has
+behaved, unlike the Funds tab where every fund has a page (#14). Three of the ten presets
+(Conservative, Balanced, Growth) were single funds, kept untouched only because plans used to point at
+their portfolio; since the ledger (#19) no account does.
+
+**Decision.**
+
+1. **Grouped by risk.** The tab shows **Low, Medium and High risk** sections, each with a line on what
+   that level means, and the user's own saved mixes after them. Each card has the preset's tagline,
+   an asset-class bar, its funds and weights, and one line of history ("Past: +6.6% a year · worst fall
+   -29%").
+2. **A page for each portfolio** (tap a card), modelled on a fund's page and on the example the Syfe
+   app gave. Buy and "buy every month" sit at the top; then three views:
+   - **Key details**: who it suits, the risk considerations, and the key figures (total and yearly
+     return, ups and downs, worst fall, best and worst month);
+   - **Composition**: the asset-class mix and each fund with its weight (tap a fund for the fund's own
+     page);
+   - **Past returns**: growth of 100 over a range (1Y, 3Y, 5Y, 10Y, Max, drag to read), year by year and
+     month by month.
+   The header's yearly return and worst fall are over the **whole** history, the same figures the list
+   shows, whatever range the chips select.
+3. **The history is a backtest**: the funds' monthly returns blended at the portfolio's weights, with the
+   weights restored each month, over the months **every** fund has (so the youngest fund limits how far
+   back it goes, and the page says which). No fees, and no exchange-rate adjustment when the funds are in
+   different currencies (the page says so). It is described as the past, never a forecast. The funds'
+   dividends are inside their total returns, so no dividend yield is shown.
+4. **Page text** (tagline, three highlights, who it suits, the risks) is written with each preset in
+   `presetPortfolios.ts`, so it cannot drift from the allocation; a test checks every preset has it and that
+   none promises a return. A custom mix gets the page without that text (its name is free text the owner
+   typed, never treated as a preset's).
+5. **Three presets per level.** With the single-fund ones gone, Low risk had one choice, so two were added:
+   **Singapore Bonds** and **Stable Income** (Low), and **US Growth** (High). The ten presets are
+   Capital Preservation, Singapore Bonds, Stable Income; Global 60/40, Singapore Income, All-Weather,
+   Dividend & Income; Global Equity, Asia Growth, US Growth.
+6. **The original three are retired.** Conservative (A35.SI), Balanced (CFA.SI) and Growth (ES3.SI) are one
+   fund each, which the Funds tab already offers. The seed now retires them
+   (`retiredPresets.service.ts`): an account still on the old fixed plan is turned into ledger rows first;
+   a monthly buy of one becomes a monthly buy of **that fund**, with its history kept, and if the account
+   already had a monthly buy of that fund the two are merged (amounts added, the other ended last month, or
+   deleted if it had not started); then the preset is deleted if nothing points at it. Ledger history
+   needed no change: buys were already recorded per fund. Anything not exactly one fund is left alone.
+7. New `GET /portfolio/portfolios/:id?range=` (a preset for everyone, a custom mix only for its owner, the same
+   404 otherwise); the list gains `tagline`, `history` and each fund's asset class.
+
+**Verification.**
+- 799 backend tests pass (about 40 new): the blend (weights, compounding, common months, empty cases),
+  the list's history and tagline, the detail (ranges, whole-history figures, funds largest first, no yield,
+  mixed currencies, the limiting fund, custom mix privacy, the same 404), every preset's text and the
+  three-per-level rule, and the retirement (conversion, merge, deletion of one not started, kept when
+  referenced, only the three names, migration first).
+- **Independent recomputation** of Global 60/40 from the raw monthly returns of VT and AGG: 60 months to
+  Sep 2026, total +37.41% and worst fall -21.08%; whole history 219 months, +6.62% a year and -29.24%: the
+  same as the API in every figure.
+- **Against the real database**: the seed deleted the three presets and created the three new ones (the
+  dev data had no monthly buy on a retired preset, so I also made temporary data: a monthly buy of the
+  fund and one of "Conservative", ran the retirement, saw them merge to 80 with the extra ended in Sep 2026
+  and the preset deleted, and removed the temporary rows).
+- **UI (Expo web):** three risk sections with three, four and three cards; a card opens its page; the header
+  figures match the list; the three views show the key details, the composition (tapping VT opens VT's own
+  page) and the chart, years and months.
+
+**Limits.**
+- A backtest is not what an account would have earned: no fees, funds restored to their weights every
+  month (a real buyer does not), and no exchange-rate effects.
+- The presets' text is written, not generated, and describes mixes; it can still be read as a nudge.
+- Three of the new presets' histories start in 2018 (the youngest fund), so their worst fall misses earlier
+  crises; the page says when the history starts.
+
+Supersedes the original presets of #16. Implements: UC-03 amended (FR60). Owner:
+`backend/src/utils/presetPortfolios.ts`, `portfolioBlend.ts`, `backend/src/services/portfolio.service.ts`,
+`retiredPresets.service.ts`, mobile `PortfoliosScreen.tsx`, `PortfolioDetailScreen.tsx`.
 
 ## Open items (Design Model §8, carried forward)
 

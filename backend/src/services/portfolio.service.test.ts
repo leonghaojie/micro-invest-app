@@ -4,21 +4,35 @@
  * without a live Postgres connection.
  */
 import { prisma } from "../config/prisma";
-import { portfolioService } from "./portfolio.service";
+import { portfolioService, summarizeHistory } from "./portfolio.service";
+import { MonthlyRow } from "../utils/fundStats";
 
 jest.mock("../config/prisma", () => ({
   prisma: {
     fund: { findMany: jest.fn(), findUnique: jest.fn() },
-    portfolio: { findMany: jest.fn(), create: jest.fn() },
-    fundMonthlyReturn: { groupBy: jest.fn() },
+    portfolio: { findMany: jest.fn(), create: jest.fn(), findUnique: jest.fn() },
+    fundMonthlyReturn: { groupBy: jest.fn(), findMany: jest.fn() },
   },
 }));
 
 const mockedPrisma = prisma as unknown as {
   fund: { findMany: jest.Mock; findUnique: jest.Mock };
-  portfolio: { findMany: jest.Mock; create: jest.Mock };
-  fundMonthlyReturn: { groupBy: jest.Mock };
+  portfolio: { findMany: jest.Mock; create: jest.Mock; findUnique: jest.Mock };
+  fundMonthlyReturn: { groupBy: jest.Mock; findMany: jest.Mock };
 };
+
+beforeEach(() => {
+  mockedPrisma.fundMonthlyReturn.findMany.mockResolvedValue([]); // no history unless a test gives some
+});
+
+/** Stored months for a fund: `n` months from `start`, each returning `r` (a fraction). */
+function months(fundId: string, start: string, n: number, r: number) {
+  const [y, m] = start.split("-").map(Number);
+  return Array.from({ length: n }, (_, i) => {
+    const d = new Date(Date.UTC(y, m - 1 + i, 1));
+    return { fundId, monthDate: d, endPrice: String(100 + i), dividendAmount: "0", returnPct: String(r) };
+  });
+}
 
 describe("PortfolioService", () => {
   describe("listFunds", () => {
@@ -100,6 +114,8 @@ describe("PortfolioService", () => {
           name: "Conservative",
           isPreset: true,
           riskLevel: "LOW",
+          tagline: null, // a retired name: no page text
+          history: null, // no stored months in this test
           earliestStartMonth: "2008-02",
           allocations: [{ fundId: "fund-1", ticker: "A35", fundName: "ABF Sg Bond", weightPct: 100 }],
         },
@@ -342,5 +358,143 @@ describe("PortfolioService.getFundDetail (DECISIONS.md #14)", () => {
     await expect(portfolioService.getFundDetail(FUND_ID, "2y")).rejects.toThrow();
     await expect(portfolioService.getFundDetail(FUND_ID, "constructor")).rejects.toThrow();
     expect(mockedPrisma.fund.findUnique).not.toHaveBeenCalled();
+  });
+
+  describe("history on the list and the portfolio page (DECISIONS.md #28)", () => {
+    const pf = (over: object = {}) => ({
+      id: "11111111-1111-4111-8111-111111111111",
+      name: "Global 60/40",
+      isPreset: true,
+      userId: null,
+      riskLevel: "MEDIUM",
+      allocations: [
+        { fundId: "vt", weightPct: "60.00", fund: { ticker: "VT", name: "World stocks", assetClass: "EQUITY", exchange: "US", currency: "USD" } },
+        { fundId: "agg", weightPct: "40.00", fund: { ticker: "AGG", name: "US bonds", assetClass: "BOND", exchange: "US", currency: "USD" } },
+      ],
+      ...over,
+    });
+    const ID = "11111111-1111-4111-8111-111111111111";
+
+    it("gives a preset its tagline and a one-line history on the list, from the months its funds share", async () => {
+      mockedPrisma.portfolio.findMany.mockResolvedValue([pf()]);
+      mockedPrisma.fundMonthlyReturn.groupBy.mockResolvedValue([]);
+      mockedPrisma.fundMonthlyReturn.findMany.mockResolvedValue([...months("vt", "2020-01", 24, 0.01), ...months("agg", "2020-01", 24, 0.005)]);
+
+      const [p] = await portfolioService.listPortfolios("user-1");
+
+      expect(p.tagline).toMatch(/60%/);
+      expect(p.history!.months).toBe(24);
+      // 60% of +1% and 40% of +0.5% is +0.8% a month: about 10% a year
+      expect(p.history!.annualizedReturnPct).toBeCloseTo((1.008 ** 12 - 1) * 100, 1);
+      expect(p.history!.maxDrawdownPct).toBe(0);
+    });
+
+    it("loads every fund's months once for the whole list, not once per portfolio", async () => {
+      mockedPrisma.fundMonthlyReturn.findMany.mockClear();
+      mockedPrisma.portfolio.findMany.mockResolvedValue([pf(), pf({ id: "other" })]);
+      mockedPrisma.fundMonthlyReturn.groupBy.mockResolvedValue([]);
+      await portfolioService.listPortfolios("user-1");
+      expect(mockedPrisma.fundMonthlyReturn.findMany).toHaveBeenCalledTimes(1);
+    });
+
+    it("has no history, and no annualised figure, when there is too little to go on", async () => {
+      mockedPrisma.portfolio.findMany.mockResolvedValue([pf()]);
+      mockedPrisma.fundMonthlyReturn.groupBy.mockResolvedValue([]);
+      mockedPrisma.fundMonthlyReturn.findMany.mockResolvedValue([...months("vt", "2026-01", 6, 0.01), ...months("agg", "2026-01", 6, 0.005)]);
+      const [p] = await portfolioService.listPortfolios("user-1");
+      expect(p.history).toMatchObject({ months: 6, annualizedReturnPct: null });
+    });
+
+    describe("getPortfolioDetail", () => {
+      beforeEach(() => {
+        mockedPrisma.portfolio.findUnique.mockResolvedValue(pf());
+        mockedPrisma.fundMonthlyReturn.findMany.mockResolvedValue([...months("vt", "2015-01", 120, 0.01), ...months("agg", "2018-01", 84, 0.004)]);
+      });
+
+      it("describes a preset, lists its funds largest first and gives its history over the months they share", async () => {
+        const d = await portfolioService.getPortfolioDetail("user-1", ID, "max");
+
+        expect(d.portfolio).toMatchObject({ name: "Global 60/40", isPreset: true, riskLevel: "MEDIUM" });
+        expect(d.portfolio.highlights).toHaveLength(3);
+        expect(d.portfolio.suits).toBeTruthy();
+        expect(d.composition.map((c) => [c.ticker, c.weightPct])).toEqual([["VT", 60], ["AGG", 40]]);
+        expect(d.assetMix).toEqual([{ assetClass: "EQUITY", pct: 60 }, { assetClass: "BOND", pct: 40 }]);
+        expect(d.months).toBe(84); // AGG starts later, so the blend starts when it does
+        expect(d.startMonth).toBe("2018-01");
+        expect(d.limitedBy).toEqual({ ticker: "AGG", earliestMonth: "2018-01" });
+        expect(d.availableRanges).toContain("5y");
+      });
+
+      it("always gives the whole history's figures too (the list's), whatever range is chosen", async () => {
+        const d = await portfolioService.getPortfolioDetail("user-1", ID, "1y");
+        expect(d.months).toBe(12);
+        expect(d.overall.months).toBe(84);
+        expect(d.overall).toMatchObject({ startMonth: "2018-01", endMonth: "2024-12" });
+        const [listed] = await (async () => {
+          mockedPrisma.portfolio.findMany.mockResolvedValue([pf()]);
+          mockedPrisma.fundMonthlyReturn.groupBy.mockResolvedValue([]);
+          return portfolioService.listPortfolios("user-1");
+        })();
+        expect(d.overall.annualizedReturnPct).toBe(listed.history!.annualizedReturnPct);
+        expect(d.overall.maxDrawdownPct).toBe(listed.history!.maxDrawdownPct);
+      });
+
+      it("uses the range asked for, 5 years by default", async () => {
+        expect((await portfolioService.getPortfolioDetail("user-1", ID)).months).toBe(60);
+        expect((await portfolioService.getPortfolioDetail("user-1", ID, "3y")).months).toBe(36);
+        await expect(portfolioService.getPortfolioDetail("user-1", ID, "forever")).rejects.toThrow();
+      });
+
+      it("gives no dividend yield (the funds' dividends are inside their returns), and warns when the funds are in mixed currencies", async () => {
+        const d = await portfolioService.getPortfolioDetail("user-1", ID, "max");
+        expect(d.trailingYieldPct).toBeNull();
+        expect(d.mixedCurrencies).toBe(false); // both USD
+
+        mockedPrisma.portfolio.findUnique.mockResolvedValue(
+          pf({ allocations: [{ fundId: "vt", weightPct: "50.00", fund: { ticker: "VT", name: "x", assetClass: "EQUITY", exchange: "US", currency: "USD" } }, { fundId: "agg", weightPct: "50.00", fund: { ticker: "A35.SI", name: "y", assetClass: "BOND", exchange: "SGX", currency: "SGD" } }] })
+        );
+        expect((await portfolioService.getPortfolioDetail("user-1", ID, "max")).mixedCurrencies).toBe(true);
+      });
+
+      it("says nothing about the limit when the funds start together", async () => {
+        mockedPrisma.fundMonthlyReturn.findMany.mockResolvedValue([...months("vt", "2018-01", 84, 0.01), ...months("agg", "2018-01", 84, 0.004)]);
+        expect((await portfolioService.getPortfolioDetail("user-1", ID, "max")).limitedBy).toBeNull();
+      });
+
+      it("shows a custom mix to its owner without any preset text, and to nobody else (the same 404 as a missing one)", async () => {
+        mockedPrisma.portfolio.findUnique.mockResolvedValue(pf({ isPreset: false, userId: "user-1", name: "Global 60/40" })); // a custom mix that borrows a preset's name
+        const mine = await portfolioService.getPortfolioDetail("user-1", ID, "max");
+        expect(mine.portfolio).toMatchObject({ isPreset: false, tagline: null, highlights: null, suits: null, riskNote: null });
+
+        await expect(portfolioService.getPortfolioDetail("user-2", ID, "max")).rejects.toMatchObject({ statusCode: 404, message: "Portfolio not found" });
+        mockedPrisma.portfolio.findUnique.mockResolvedValue(null);
+        await expect(portfolioService.getPortfolioDetail("user-1", ID, "max")).rejects.toMatchObject({ statusCode: 404, message: "Portfolio not found" });
+      });
+
+      it("404s when its funds share no month, and rejects an id that is not a uuid", async () => {
+        mockedPrisma.fundMonthlyReturn.findMany.mockResolvedValue([...months("vt", "2010-01", 12, 0.01), ...months("agg", "2020-01", 12, 0.004)]);
+        await expect(portfolioService.getPortfolioDetail("user-1", ID, "max")).rejects.toMatchObject({ statusCode: 404 });
+        await expect(portfolioService.getPortfolioDetail("user-1", "nope", "max")).rejects.toThrow();
+      });
+    });
+  });
+});
+
+describe("summarizeHistory", () => {
+  const rows = (month0: string, returns: number[]): MonthlyRow[] => {
+    const [y, m] = month0.split("-").map(Number);
+    return returns.map((r, i) => ({ month: new Date(Date.UTC(y, m - 1 + i, 1)).toISOString().slice(0, 7), endPrice: 100, dividend: 0, returnPct: r }));
+  };
+
+  it("is null when any fund has no months", () => {
+    expect(summarizeHistory([{ fundId: "a", weightPct: 50 }, { fundId: "b", weightPct: 50 }], new Map([["a", rows("2020-01", [0.01])]]))).toBeNull();
+  });
+
+  it("reports the worst fall of the blended path", () => {
+    const r = [0.1, -0.2, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05];
+    const h = summarizeHistory([{ fundId: "a", weightPct: 100 }], new Map([["a", rows("2020-01", r)]]))!;
+    expect(h.maxDrawdownPct).toBe(-20);
+    expect(h.months).toBe(12);
+    expect(h.annualizedReturnPct).not.toBeNull();
   });
 });
