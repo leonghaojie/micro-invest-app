@@ -197,10 +197,10 @@ export function RecurringScreen({ navigation }: Props) {
       <View style={styles.setup}>
         <Text style={styles.hint}>Set up a new one:</Text>
         <View style={styles.actions}>
-          <Pressable onPress={() => navigation.navigate("Main", { screen: "Contribution" })}>
+          <Pressable onPress={() => navigation.navigate("Main", { screen: "Invest", params: { tab: "managed" } })}>
             <Text style={styles.action}>Choose a portfolio</Text>
           </Pressable>
-          <Pressable onPress={() => navigation.navigate("Main", { screen: "Funds" })}>
+          <Pressable onPress={() => navigation.navigate("Main", { screen: "Invest", params: { tab: "discover" } })}>
             <Text style={styles.action}>Choose a fund</Text>
           </Pressable>
         </View>

@@ -147,7 +147,7 @@ export function ProfileSetupScreen({ navigation, route }: Props) {
         navigation.goBack();
       } else {
         // Straight to the Portfolios tab: with cash credited, buying something is the next step.
-        navigation.replace("Main", { screen: "Contribution" });
+        navigation.replace("Main", { screen: "Invest", params: { tab: "managed" } });
       }
     } catch (err) {
       setError(describeError(err));

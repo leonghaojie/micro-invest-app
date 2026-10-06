@@ -8,12 +8,11 @@
  *   RootStack — WelcomeLogin (S-01) → ProfileSetup (S-02, first-time only)
  *   → Main, a single stack screen that hosts the whole tab bar below.
  *
- *   MainTabNavigator (./MainTabNavigator.tsx) — Dashboard (S-04), Funds
- *   (new — fund catalog browsing + portfolio building, split out of what
- *   used to be S-03's "build" step), Contribution (S-03, trimmed to just
- *   choose-a-portfolio + configure-and-run), Peer Comparison (S-05),
- *   Insights (S-06) — five sibling tabs a user jumps between directly,
- *   instead of a fixed linear order.
+ *   MainTabNavigator (./MainTabNavigator.tsx) — Dashboard (S-04), Invest
+ *   (S-03: Managed portfolios, Discover funds and Custom portfolios in one
+ *   tab, DECISIONS.md #30; it replaced the separate Funds and Portfolios
+ *   tabs), Peer Comparison (S-05), Insights (S-06) — four sibling tabs a
+ *   user jumps between directly, instead of a fixed linear order.
  *
  * Auto-login: a stored JWT (mobile/src/api/client.ts) is verified against
  * the server (GET /auth/me) on boot. Only if the server confirms it do we
@@ -41,11 +40,12 @@ import { TradeScreen } from "../screens/TradeScreen";
 import { WelcomeLoginScreen } from "../screens/WelcomeLoginScreen";
 import { MainTabNavigator } from "./MainTabNavigator";
 import { navigationRef } from "./navigationRef";
+import type { InvestTab } from "../utils/investTabs";
 
 export type MainTabParamList = {
   Dashboard: undefined;
-  Funds: undefined;
-  Contribution: undefined;
+  // DECISIONS.md #30: Funds and Portfolios in one tab; `tab` opens a particular view (managed, discover, custom).
+  Invest: { tab?: InvestTab } | undefined;
   PeerComparison: undefined;
   Insights: undefined;
 };
@@ -70,7 +70,7 @@ export type RootStackParamList = {
   // DECISIONS.md #12: one person's full holdings. friendshipId is a friendship
   // handle (never a user id), or "me" for the viewer's own.
   FriendCompare: { friendshipId: string; displayName: string };
-  // DECISIONS.md #14: one fund's history and statistics, opened from the Funds tab.
+  // DECISIONS.md #14: one fund's history and statistics, opened from the Invest tab.
   FundDetail: { fundId: string; ticker: string };
   PortfolioDetail: { portfolioId: string; name: string };
   // DECISIONS.md #17: change one account detail, opened from the dashboard's Account section.
@@ -81,7 +81,7 @@ export type RootStackParamList = {
 export type RootStackScreenProps<T extends keyof RootStackParamList> = NativeStackScreenProps<RootStackParamList, T>;
 
 // Props helper for screens living inside a tab: composes the tab's own nav
-// (for jumping to a sibling tab, e.g. Contribution -> Dashboard) with the
+// (for jumping to a sibling tab, e.g. Invest -> Dashboard) with the
 // root stack's (for navigation.getParent() actions like logging out).
 export type MainTabScreenProps<T extends keyof MainTabParamList> = CompositeScreenProps<
   BottomTabScreenProps<MainTabParamList, T>,

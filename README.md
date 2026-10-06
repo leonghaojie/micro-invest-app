@@ -103,10 +103,10 @@ is not verified, and other devices stay signed in after a password change (see t
 decision for both).
 
 **Bigger catalog and more presets** (`fund-catalog.json`, `presetPortfolios.ts` —
-`DECISIONS.md` #16, 4 Oct 2026): the Funds tab now offers 23 ETFs (global and US
+`DECISIONS.md` #16, 4 Oct 2026): the Discover view of the Invest tab (once the Funds tab) offers 23 ETFs (global and US
 equity, Asia/emerging, bonds from T-bills to long Treasuries, REITs, gold, silver
 and broad commodities), searchable and filterable by asset class. Since 7 Oct 2026
-(`DECISIONS.md` #28) the Portfolios tab groups ten diversified presets by risk level
+(`DECISIONS.md` #28) the Managed view of the Invest tab (once the Portfolios tab) groups ten diversified presets by risk level
 (Low: Capital Preservation, Singapore Bonds, Stable Income; Medium: Global 60/40,
 Singapore Income, All-Weather, Dividend & Income; High: Global Equity, Asia Growth, US
 Growth). Tapping one opens its page: who it suits and its risks, what it holds (each fund
@@ -130,10 +130,10 @@ catch-up check at server start (which fetches only if a month is missing) and a
 few spaced retries if Yahoo isn't ready, it does nothing between months. Needs Python with `yfinance` on the backend machine
 (`pip install yfinance`). Run it by hand with `npm run update-fund-data`
 (`-- --force` to fetch regardless); turn it off with `FUND_DATA_AUTO_UPDATE=false`.
-The Funds tab shows how current the data is.
+The Discover view shows how current the data is.
 
 **Fund history** (`fundStats.ts` — `DECISIONS.md` #14, 4 Oct 2026): tap any
-fund in the Funds tab to see how it has moved — growth of 100 with dividends
+fund in the Invest tab to see how it has moved — growth of 100 with dividends
 reinvested over 1Y / 3Y / 5Y / 10Y / Max (drag across the chart to read any
 month), key figures (total and annualised return, volatility, worst fall, best
 and worst month, share of up months, dividend yield), the last 36 monthly
@@ -212,9 +212,9 @@ micro-invest-app/
 │  ├─ src/config/                     prisma.ts (PrismaClient singleton), env.ts
 │  └─ src/app.ts, src/index.ts        AppServer
 └─ mobile/
-   ├─ src/screens/                S-01 – S-07, plus PortfoliosScreen (buy a portfolio), TradeScreen (buy/sell), ActivityScreen, FundBrowserScreen, PeerCohort (the default Peers view), PeerDashboard (Explore) and FriendsComparison (the Friends view); src/components/charts/ holds the SVG charts
+   ├─ src/screens/                S-01 – S-07, plus InvestScreen (Managed / Discover / Custom: ManagedPortfolios, DiscoverFunds, CustomPortfolios), TradeScreen (buy/sell), ActivityScreen, PeerCohort (the default Peers view), PeerDashboard (Explore) and FriendsComparison (the Friends view); src/components/charts/ holds the SVG charts
    ├─ src/navigation/AppNavigator.tsx      root stack — WelcomeLogin/ProfileSetup pre-login, Main (tab bar) after
-   ├─ src/navigation/MainTabNavigator.tsx  the tab bar itself: Dashboard, Funds, Portfolios (route key still Contribution), Peers, Insights
+   ├─ src/navigation/MainTabNavigator.tsx  the tab bar itself: Dashboard, Invest, Peers, Insights
    └─ src/api/client.ts           apiFetch wrapper
 ```
 
@@ -434,6 +434,8 @@ original Word documents, each superseding the last within its phase:
 - `Phase2_SRS_v1.27.docx` — Phase 4 amendment (7 Oct 2026): **all fund prices, dividends and returns in Singapore
   dollars** — new FR61, UC-03 and the Data Dictionary (FundMonthlyReturn) amended. Not a reopened TBD
   (`DECISIONS.md` #29). Kept alongside v1.26.
+- `Phase2_SRS_v1.28.docx` — Phase 4 amendment (7 Oct 2026): **one Invest tab with Managed portfolios, Discover and
+  Custom** — new FR62, UC-03 and S-03 amended. Not a reopened TBD (`DECISIONS.md` #30). Kept alongside v1.27.
 - `FYP Roadmap.docx` — the full Phase 0–9 plan mapped to the Lab #1–#5
   sequence and semester timeline.
 - `FYP_SRS_UseCase_UI_Lab1Style.docx` — an earlier Lab #1-formatted SRS
@@ -465,6 +467,7 @@ income-based/monthly-backtest rewrite (`DECISIONS.md` #1 third amendment,
 | — | More funds and presets (new scope) | FR29–30 | ✅ Done — 23 funds (15 added, gap-checked), 10 presets (7 diversified; originals untouched), search + asset-class filters, earliest start month per portfolio; every preset verified live (DECISIONS.md #16, SRS v1.13) |
 | — | Portfolio dashboard + account management (new scope) | FR31–34 | ✅ Done — total assets / securities value / unrealised P&L / cash / last-month P&L, holdings that open each fund, and an Account section (name, email, password, log out) with current-password checks and a 5-guess limit (DECISIONS.md #17, SRS v1.14). Email unverified; other devices stay signed in after a password change |
 | — | Peer cohort comparison (new scope) | FR35–37 | ✅ Done — default Peers view: headline vs similar investors and a benchmark, cohort labels, peer group, four per-metric cards with reasons; weighted-distance nearest neighbours per metric, same-risk filter for returns; experience stored for a future filter; verified against an independent implementation (DECISIONS.md #18, SRS v1.15). 97% of peers are simulated; consistency and goal-progress metrics left out |
+| — | One Invest tab: Managed, Discover, Custom (amendment) | FR62 | ✅ Done — Funds and Portfolios merged into Invest with a Managed / Discover / Custom control; your funds and weights are a short list of their own, with Split evenly; links from other screens open the right view (DECISIONS.md #30, SRS v1.28) |
 | — | Everything in Singapore dollars (amendment) | FR61 | ✅ Done — monthly USD/SGD rate fetched with the funds; US funds' prices, dividends and returns converted at each month's rate and stored in SGD; own-currency price kept; checked against an independent recomputation from the raw files (DECISIONS.md #29, SRS v1.27) |
 | — | Portfolios by risk level and a page for each (amendment) | FR60 | ✅ Done — Low/Medium/High groups, a card per preset with its history, a page with key details, composition and past returns (a backtest, checked against an independent recomputation), the original single-fund presets retired and their monthly buys converted (DECISIONS.md #28, SRS v1.26) |
 | — | Close friends (new scope) | FR59 | ✅ Done — private one-directional close-friends list; each sharing choice is Nobody / Close friends / All friends; a figure shown to a close friend looks missing to others and nobody is told who is listed (DECISIONS.md #27, SRS v1.25) |
@@ -481,7 +484,7 @@ income-based/monthly-backtest rewrite (`DECISIONS.md` #1 third amendment,
 | 9 | Demo prep & submission | — | ⬜ Not started |
 
 There is no remaining functional gap against the SRS as of this pass —
-`Phase2_SRS_v1.6.docx`, `v1.7.docx`, `v1.8.docx`, `v1.9.docx`, `v1.10.docx`, `v1.11.docx`, `v1.12.docx`, `v1.13.docx`, `v1.14.docx`, `v1.15.docx`, `v1.16.docx`, `v1.17.docx`, `v1.18.docx`, `v1.19.docx`, `v1.20.docx`, `v1.21.docx`, `v1.22.docx`, `v1.23.docx`, `v1.24.docx`, `v1.25.docx`, `v1.26.docx` and `v1.27.docx` each land in the same
+`Phase2_SRS_v1.6.docx`, `v1.7.docx`, `v1.8.docx`, `v1.9.docx`, `v1.10.docx`, `v1.11.docx`, `v1.12.docx`, `v1.13.docx`, `v1.14.docx`, `v1.15.docx`, `v1.16.docx`, `v1.17.docx`, `v1.18.docx`, `v1.19.docx`, `v1.20.docx`, `v1.21.docx`, `v1.22.docx`, `v1.23.docx`, `v1.24.docx`, `v1.25.docx`, `v1.26.docx`, `v1.27.docx` and `v1.28.docx` each land in the same
 pass as the code, matching every prior amendment.
 
 The old "Budget band (B1–B4) thresholds" gap is moot, not resolved:

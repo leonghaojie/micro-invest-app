@@ -2456,6 +2456,52 @@ is loaded:
 Implements: FR61. Owner: `backend/src/utils/fundIngest.ts`, `backend/src/services/fundDataUpdate.service.ts`,
 `backend/prisma/ingest-funds-yfinance.py`, `schema.prisma` (migration `20261007230000_sgd_fund_data`).
 
+## 30. One Invest tab: Managed, Discover and Custom (7 Oct 2026)
+
+**Problem.** Buying something was spread over two tabs that did overlapping jobs. **Funds** listed every fund
+*and* carried a form for building your own portfolio, so the funds you had picked and their weights sat among
+a long list of funds, and **Portfolios** showed the ready-made mixes and, mixed in with them, the ones you had
+saved. A person deciding where to put money had to keep switching tabs.
+
+**Decision.** The two tabs become one, **Invest**, with a segmented control at the top (as on the Peers tab):
+1. **Managed** is the old Portfolios tab: the ready-made portfolios by risk level, each opening its page to read
+   and buy from (#28). Your own mixes no longer appear here.
+2. **Discover** is the old Funds tab, only the catalog: search, asset-class filter, the latest monthly return and
+   how much history, and each fund opening its page (#14). The builder is gone from it.
+3. **Custom** is new and is where your own mixes live: **Your mixes** (each opening its portfolio page, where it
+   can be bought once or monthly) and **Create a mix**: a name, **Your funds** (a short list of just the funds you
+   have picked, each with a weight box and a remove button, a running total that must reach 100% and a **Split
+   evenly** button), and **Add funds**, the searchable catalog below it with a + on each fund. After saving, a
+   banner links to the new mix's page.
+4. The tab bar goes from five tabs to four (Dashboard, Invest, Peers, Insights). Links from other screens
+   open the right view through a route parameter: "Buy a portfolio", Insights' adjust button, the Peers
+   cohort and Explore prompts, profile set-up and the monthly buys screen's "Choose a portfolio" open Managed;
+   the Dashboard's "Browse funds" and the monthly buys screen's "Choose a fund" open Discover. Each view also
+   links to the others.
+
+No backend, schema or API change: it is the same endpoints (`/portfolio/funds`, `/portfolio/portfolios`).
+
+**Where it lives.** Mobile: `InvestScreen.tsx` (the control and the three views), `ManagedPortfolios.tsx`
+(was `PortfoliosScreen.tsx`), `DiscoverFunds.tsx` and `CustomPortfolios.tsx` (replacing `FundBrowserScreen.tsx`),
+`components/FundFilters.tsx` and `utils/fundCatalog.ts` (the catalog loading and filtering Discover and Custom
+share), `utils/investTabs.ts`; `MainTabNavigator.tsx` and the links above.
+
+**Verification.**
+- Typecheck clean (there are no mobile tests; the backend is unchanged: 811 tests as before).
+- **UI (Expo web):** the tab bar has Dashboard, Invest, Peers and Insights; Managed shows the groups, Discover lists 23
+  funds with the filters, Custom shows the form and the catalog. Building a mix end to end: picking VT, A35.SI and GLD
+  showed them under Your funds, Split evenly made 33.33 / 33.33 / 33.34 with "Total: 100% ✓", the mix saved and
+  appeared under Your mixes with its banner (it was removed afterwards). "Buy a portfolio" on the Dashboard opens
+  Managed, including when the Invest tab had last been left on Custom.
+
+**Limits.**
+- The weights are typed numbers (no sliders), as before; Split evenly is the only helper.
+- A custom mix cannot be edited or deleted from the app once saved (not in scope here); it can be bought as it is.
+- The screenshot tool of the preview pane was unavailable, so the layout was checked from the page text, not by eye.
+
+Supersedes the tab structure of the 20 Aug 2026 UI restructuring and the Funds and Portfolios tabs of #14, #16 and
+#28. Implements: UC-03 and FR04 amended (FR62).
+
 ## Open items (Design Model §8, carried forward)
 
 - **`Phase2_SRS_v1.6.docx` — done, no longer open.** Produced in the same
