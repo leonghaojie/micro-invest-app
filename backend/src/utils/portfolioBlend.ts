@@ -4,8 +4,8 @@
  * A portfolio has no prices of its own, so its past is a backtest: each month's return is the
  * weighted average of its funds' returns for that month, as if the weights were restored every
  * month (monthly rebalancing). It only covers the months every fund has data for, so the
- * youngest fund decides how far back it goes. Returns are in each fund's own currency with no
- * exchange-rate adjustment, as for a single fund (#14). Pure, so the maths is testable.
+ * youngest fund decides how far back it goes. The funds' returns are already in Singapore dollars
+ * (DECISIONS.md #29), so a mix of Singapore and US funds blends like for like.
  */
 import { MonthlyRow } from "./fundStats";
 

@@ -1,7 +1,11 @@
 /**
- * Pure helpers for loading monthly fund data (DECISIONS.md #15). No I/O, so the
+ * Pure helpers for loading monthly fund data (DECISIONS.md #15, #29). No I/O, so the
  * rules that decide what is stored - which months are complete, how a month's
  * return is derived, whether a row is plausible - are testable.
+ *
+ * Everything is converted to Singapore dollars (#29): a fund listed in US dollars has each
+ * month's close and dividend multiplied by that month's USD/SGD rate, so its stored return is
+ * the return a Singapore investor got, including the currency move.
  *
  * Months are "YYYY-MM" strings (UTC). "Complete" means the calendar month has
  * fully ended: in October only data through September is final.
@@ -16,15 +20,34 @@ export interface RawRow {
   dividends: number;
 }
 
+/** Month-end exchange rate by month ("YYYY-MM"): Singapore dollars for one unit of the fund's currency. */
+export type FxRates = Map<string, number>;
+
+export const BASE_CURRENCY = "SGD";
+
+/** Pure. Month-end USD/SGD rates from the raw rows the fetch wrote (SGD per US dollar), skipping bad ones. */
+export function fxRatesFromRows(rows: { date: string; close: number }[]): FxRates {
+  const out: FxRates = new Map();
+  for (const r of rows) if (Number.isFinite(r.close) && r.close > 0) out.set(r.date.slice(0, 7), r.close);
+  return out;
+}
+
 export interface DerivedReturn {
   /** "YYYY-MM" */
   month: string;
   monthDate: Date;
+  /** In SGD (the previous month's close at that month's rate). */
   startPrice: number;
+  /** In SGD. */
   endPrice: number;
+  /** In SGD, at the month's rate. */
   dividendAmount: number;
-  /** Fraction, e.g. 0.0125 = 1.25% */
+  /** In SGD, as a fraction, e.g. 0.0125 = 1.25% */
   returnPct: number;
+  /** The month-end close in the fund's own currency. */
+  endPriceLocal: number;
+  /** SGD per one unit of the fund's currency, at month end (1 for an SGD fund). */
+  fxRate: number;
 }
 
 /** Bounds for a believable single-month total return. Outside this a row is
@@ -66,23 +89,45 @@ export interface DeriveResult {
   rejected: { month: string; reason: string }[];
 }
 
-/** A month's return is (end close + dividends - previous close) / previous close,
- * so it needs the previous month's row; the first row only supplies a start. */
-export function deriveMonthlyReturns(rows: RawRow[], now: Date): DeriveResult {
+/** A month's return is (end close + dividends - previous close) / previous close, in SGD,
+ * so it needs the previous month's row; the first row only supplies a start. `fx` is the
+ * conversion for a fund not listed in SGD (null for one that is). A month with no rate for
+ * itself or for the month before cannot be converted: before the first rate it is skipped
+ * quietly (the history simply starts later), after it it is rejected, which the gap check reports. */
+export function deriveMonthlyReturns(rows: RawRow[], now: Date, fx: FxRates | null = null): DeriveResult {
   const complete = dropIncompleteMonth(rows, now);
   const returns: DerivedReturn[] = [];
   const rejected: DeriveResult["rejected"] = [];
+  const firstRateMonth = fx ? [...fx.keys()].sort()[0] : null;
 
   for (let i = 1; i < complete.length; i++) {
-    const prev = complete[i - 1];
+    const prevRow = complete[i - 1];
     const cur = complete[i];
     const month = cur.date.slice(0, 7);
 
-    if (!(prev.close > 0) || !(cur.close > 0) || !Number.isFinite(cur.close) || !Number.isFinite(cur.dividends) || cur.dividends < 0) {
+    let rate = 1;
+    let prevRate = 1;
+    if (fx) {
+      if (firstRateMonth !== null && prevRow.date.slice(0, 7) < firstRateMonth) continue; // before exchange rates begin
+      const r = fx.get(month);
+      const p = fx.get(prevRow.date.slice(0, 7));
+      if (r === undefined || p === undefined) {
+        rejected.push({ month, reason: "no exchange rate for this month" });
+        continue;
+      }
+      rate = r;
+      prevRate = p;
+    }
+    const prev = { ...prevRow, close: prevRow.close * prevRate };
+    const local = cur.close;
+
+    if (!(prev.close > 0) || !(local > 0) || !Number.isFinite(local) || !Number.isFinite(cur.dividends) || cur.dividends < 0) {
       rejected.push({ month, reason: "non-positive or non-finite price/dividend" });
       continue;
     }
-    const returnPct = (cur.close + cur.dividends - prev.close) / prev.close;
+    const end = local * rate;
+    const dividend = cur.dividends * rate;
+    const returnPct = (end + dividend - prev.close) / prev.close;
     if (returnPct < MIN_MONTHLY_RETURN || returnPct > MAX_MONTHLY_RETURN) {
       rejected.push({ month, reason: `implausible monthly return ${(returnPct * 100).toFixed(1)}%` });
       continue;
@@ -91,9 +136,11 @@ export function deriveMonthlyReturns(rows: RawRow[], now: Date): DeriveResult {
       month,
       monthDate: new Date(cur.date.slice(0, 7) + "-01T00:00:00.000Z"),
       startPrice: prev.close,
-      endPrice: cur.close,
-      dividendAmount: cur.dividends,
+      endPrice: end,
+      dividendAmount: dividend,
       returnPct,
+      endPriceLocal: local,
+      fxRate: rate,
     });
   }
   return { returns, rejected };

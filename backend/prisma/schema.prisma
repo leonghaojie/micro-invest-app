@@ -207,11 +207,18 @@ model FundMonthlyReturn {
   id             String   @id @default(uuid())
   fundId         String
   monthDate      DateTime // first-of-month, e.g. 2026-01-01
+  // DECISIONS.md #29: every price, dividend and return is in Singapore dollars. A fund listed in
+  // another currency (USD) is converted at the month-end exchange rate, so its return includes the
+  // currency move. The original price and the rate used are kept alongside.
   startPrice     Decimal  @db.Decimal(12, 4)
   endPrice       Decimal  @db.Decimal(12, 4)
   dividendAmount Decimal  @default(0) @db.Decimal(10, 4)
-  // (endPrice + dividendAmount - startPrice) / startPrice
+  // (endPrice + dividendAmount - startPrice) / startPrice, all in SGD
   returnPct      Decimal  @db.Decimal(8, 6)
+  // The month-end close in the fund's own currency, and the SGD per one unit of that currency used
+  // to convert it (1 for a fund already in SGD).
+  endPriceLocal  Decimal  @db.Decimal(12, 4)
+  fxRate         Decimal  @default(1) @db.Decimal(12, 6)
 
   fund Fund @relation(fields: [fundId], references: [id], onDelete: Cascade)
 

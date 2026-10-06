@@ -2,7 +2,7 @@
  * fundIngest (DECISIONS.md #15): which months count as complete, how returns are
  * derived, and which rows are rejected as implausible.
  */
-import { dropIncompleteMonth, deriveMonthlyReturns, findGaps, lastCompleteMonth, monthKey, monthsBetween, RawRow } from "./fundIngest";
+import { dropIncompleteMonth, deriveMonthlyReturns, findGaps, fxRatesFromRows, lastCompleteMonth, monthKey, monthsBetween, RawRow } from "./fundIngest";
 
 const utc = (iso: string) => new Date(iso + "T12:00:00Z");
 const row = (date: string, close: number, dividends = 0): RawRow => ({ date, close, dividends });
@@ -113,5 +113,60 @@ describe("findGaps", () => {
   it("handles empty and single-element lists", () => {
     expect(findGaps([])).toEqual([]);
     expect(findGaps(["2026-01"])).toEqual([]);
+  });
+});
+
+describe("deriveMonthlyReturns with exchange rates (DECISIONS.md #29)", () => {
+  const NOW = new Date("2026-10-04T12:00:00Z");
+  const rows = [
+    { date: "2026-07-01", close: 100, dividends: 0 },
+    { date: "2026-08-01", close: 110, dividends: 0 },
+    { date: "2026-09-01", close: 110, dividends: 2 },
+  ];
+  const fx = fxRatesFromRows([
+    { date: "2026-07-01", close: 1.4 },
+    { date: "2026-08-01", close: 1.4 },
+    { date: "2026-09-01", close: 1.3 },
+  ]);
+
+  it("without rates (an SGD fund) behaves as before: rate 1, own price kept", () => {
+    const { returns } = deriveMonthlyReturns(rows, NOW);
+    expect(returns[0]).toMatchObject({ endPrice: 110, endPriceLocal: 110, fxRate: 1, startPrice: 100 });
+  });
+
+  it("converts prices and dividends at each month's rate, with the start at the previous month's rate", () => {
+    const { returns } = deriveMonthlyReturns(rows, NOW, fx);
+    expect(returns[0]).toMatchObject({ month: "2026-08", startPrice: 140, endPrice: 154, endPriceLocal: 110, fxRate: 1.4 });
+    expect(returns[0].returnPct).toBeCloseTo(0.1, 12); // the rate did not move: the SGD return equals the USD return
+    // September: flat in USD, dividend 2, but the dollar weakened from 1.4 to 1.3
+    expect(returns[1]).toMatchObject({ month: "2026-09", startPrice: 154, endPrice: 143, dividendAmount: 2.6, fxRate: 1.3 });
+    expect(returns[1].returnPct).toBeCloseTo((143 + 2.6 - 154) / 154, 12);
+  });
+
+  it("a flat US price still loses in SGD when the US dollar falls, and gains when it rises", () => {
+    const flat = [{ date: "2026-08-01", close: 100, dividends: 0 }, { date: "2026-09-01", close: 100, dividends: 0 }];
+    const down = deriveMonthlyReturns(flat, NOW, fxRatesFromRows([{ date: "2026-08-01", close: 1.4 }, { date: "2026-09-01", close: 1.3 }])).returns[0].returnPct;
+    const up = deriveMonthlyReturns(flat, NOW, fxRatesFromRows([{ date: "2026-08-01", close: 1.3 }, { date: "2026-09-01", close: 1.4 }])).returns[0].returnPct;
+    expect(down).toBeCloseTo(1.3 / 1.4 - 1, 12);
+    expect(up).toBeCloseTo(1.4 / 1.3 - 1, 12);
+  });
+
+  it("skips months before the rates begin without complaint (the history just starts later)", () => {
+    const early = [{ date: "2003-10-01", close: 100, dividends: 0 }, { date: "2003-11-01", close: 101, dividends: 0 }, ...rows];
+    const { returns, rejected } = deriveMonthlyReturns(early, NOW, fx);
+    expect(returns.map((r) => r.month)).toEqual(["2026-08", "2026-09"]);
+    expect(rejected).toEqual([]);
+  });
+
+  it("rejects a month with no rate after the rates begin, so the gap is reported", () => {
+    const sparse = fxRatesFromRows([{ date: "2026-07-01", close: 1.4 }, { date: "2026-09-01", close: 1.3 }]); // August missing
+    const { returns, rejected } = deriveMonthlyReturns(rows, NOW, sparse);
+    expect(returns).toEqual([]); // August has no rate, and September's previous month has none
+    expect(rejected.map((r) => r.month)).toEqual(["2026-08", "2026-09"]);
+  });
+
+  it("fxRatesFromRows ignores bad rates", () => {
+    const m = fxRatesFromRows([{ date: "2026-07-01", close: 1.3 }, { date: "2026-08-01", close: 0 }, { date: "2026-09-01", close: Number.NaN }]);
+    expect([...m.keys()]).toEqual(["2026-07"]);
   });
 });

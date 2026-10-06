@@ -13,6 +13,10 @@ FundMonthlyReturn via Prisma (kept as a second step, in TS, so the actual
 DB write stays Prisma-only rather than adding a second Postgres client in
 Python).
 
+DECISIONS.md #29: the funds are priced in Singapore dollars. Funds listed in US dollars are
+converted when they are loaded, so this step also fetches the monthly USD/SGD rate
+(Yahoo's "SGD=X", Singapore dollars per US dollar) and writes it to _fx.json.
+
 Usage: python ingest-funds-yfinance.py
 Requires: pip install yfinance
 """
@@ -32,7 +36,37 @@ with open(os.path.join(os.path.dirname(__file__), "fund-catalog.json"), encoding
     CATALOG = [(c["symbol"], c["exchange"], c["name"], c["assetClass"], c["currency"]) for c in json.load(_f)]
 
 
+# Singapore dollars per one US dollar (DECISIONS.md #29).
+FX_SYMBOL = "SGD=X"
+
+
+def fetch_fx():
+    """Monthly USD/SGD closes, one raw file next to the fund files. Returns False if there are none."""
+    print(f"[fetch] {FX_SYMBOL} (USD to SGD)... ", end="", flush=True)
+    try:
+        hist = yf.Ticker(FX_SYMBOL).history(period="max", interval="1mo", auto_adjust=False)
+        rows = []
+        for idx, row in hist.iterrows():
+            close = row["Close"]
+            if close != close or close <= 0:
+                continue
+            rows.append({"date": str(idx.date()), "close": float(close)})
+        if not rows:
+            print("EMPTY (no data returned)")
+            return False
+        with open(os.path.join(OUT_DIR, "_fx.json"), "w") as f:
+            json.dump({"pair": "USDSGD", "symbol": FX_SYMBOL, "rows": rows}, f, indent=2)
+        print(f"OK: {len(rows)} months, {rows[0]['date']} .. {rows[-1]['date']}")
+        return True
+    except Exception as e:
+        print(f"FAILED: {e}")
+        return False
+
+
 def main():
+    # Without the exchange rate a US-listed fund cannot be converted, so stop before writing anything half-done.
+    if not fetch_fx():
+        raise SystemExit("could not fetch the USD/SGD exchange rate")
     manifest = []
     for symbol, exchange, name, asset_class, currency in CATALOG:
         print(f"[fetch] {symbol}... ", end="", flush=True)
