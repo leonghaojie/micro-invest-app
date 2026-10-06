@@ -53,17 +53,19 @@ export async function getComparison(req: Request, res: Response, next: NextFunct
   }
 }
 
-export async function getHoldings(req: Request, res: Response, next: NextFunction): Promise<void> {
+// DECISIONS.md #26: one friend side by side with the viewer; :id is a friendship id.
+export async function getFriendComparison(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    res.status(200).json(await friendsService.getHoldings(req.userId!));
+    res.status(200).json(await friendsService.getFriendComparison(req.userId!, req.params.id));
   } catch (err) {
     next(err);
   }
 }
 
-export async function getHoldingsDetail(req: Request, res: Response, next: NextFunction): Promise<void> {
+// DECISIONS.md #27: put a friend on, or take them off, the viewer's private close-friends list.
+export async function setCloseFriend(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    res.status(200).json(await friendsService.getHoldingsDetail(req.userId!, req.params.id));
+    res.status(200).json(await friendsService.setCloseFriend(req.userId!, req.params.id, req.body));
   } catch (err) {
     next(err);
   }

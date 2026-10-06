@@ -2187,6 +2187,133 @@ Summary card's total profit does not support.
 Supersedes the growth chart of #17. Implements: UC-04 amended (FR57). Owner: mobile
 `DashboardScreen.tsx`, `components/charts/ValueVsInvestedChart.tsx`; backend `dashboard.service.ts`.
 
+## 26. Friends: tap a name to compare one to one; the Holdings tab goes (7 Oct 2026)
+
+**Problem.** The Friends view had two separate halves: Rankings (a board per measure) and a
+Holdings tab (a list of friends, each opening their holdings). To see how you differ from one
+friend you had to look at five boards and then switch to a different tab, and the holdings page
+showed only that friend's funds, not yours beside them.
+
+**Decision.**
+
+1. **The Holdings tab is removed.** Friends is one page: the rankings, then a list of every friend.
+2. **Tap a name** on a ranking (or in the list of friends below it) to open **You and <friend>**:
+   - **How you compare**: each of the five measures with your figure and theirs, over the same
+     months for both of you (no gap column: the two numbers are side by side, and a gap computed
+     from the unrounded figures could disagree with the rounded ones on screen);
+   - **What you hold**: an asset-class bar for each of you, the number of funds you hold in
+     common, and one table of every fund either of you holds with both weights, the funds you both
+     hold shaded. Percentages only, never amounts.
+3. **Every friend is reachable.** A friend who shares no measure is on no board, so the page also
+   lists all friends by name (with a search box over 8), and that list opens the same page.
+   Your own row is not tappable.
+4. The ranking rows carry a **friendship handle** (never a user id) and the comparison response
+   lists every friend; `GET /friends/:id/compare` returns the one-to-one comparison. The old
+   `/friends/holdings` and `/friends/holdings/:id` endpoints, the friends-list summary and the
+   `FriendHoldings` screen are gone.
+
+**Privacy.** The rules of #8, #12 and #22 are unchanged and apply to the new page:
+- a friend's figure appears only if they share that measure, and their holdings only if they share
+  holdings and have some; a **private figure and a missing one both show as a dash**, so the page never
+  says what someone has switched off (the old holdings page was likewise a uniform 404);
+- the value of a portfolio is never in the response (a test searches the whole response for a known
+  value); no user id or email appears;
+- a link that is missing, still pending or someone else's gives the same 404;
+- only the two people are loaded, and the friend's account is read as stored.
+
+**Where it lives.** `friends.service.ts` (`getFriendComparison`, `mixOf`; `buildComparison` now
+carries the handles and the friends list), `friends.controller.ts`, `friends.routes.ts`; mobile
+`FriendCompareScreen.tsx`, `FriendsComparison.tsx`, `utils/friendMetrics.ts` (the five measures'
+names and units, shared by the rankings and the new page).
+
+**Verification.**
+- 742 backend tests pass. The old holdings-list and holdings-detail tests were replaced by the
+  one-to-one tests: both figures for each shared measure over the viewer's months; private and
+  missing look identical; no value, id or email in the response; both people's holdings with the
+  funds in common marked; no holdings (and the friend's plan not read) when private; none when the
+  friend has no plan; a viewer with nothing invested still sees the friend; the viewer as addressee;
+  the same 404 for a missing, pending and someone else's link; only the two people loaded.
+- **Live check** (demo account, five friends): Alex T.'s page shows return 3.6% against 6.1%,
+  monthly return -1.8% against -2.0%, investment rate 5.1% against 4.2%, consistency 75% against
+  100%, diversification 48 against 66, and the same figures the API gives and the ranking shows; the
+  fund table lists VT and AGG for you and QQQ, SCHD, MBH.SI and GLD for Alex with no overlap
+  ("You have no funds in common"); a bad id gives a 404 and the old holdings endpoint is gone.
+  The cards fit the phone width with no horizontal overflow.
+
+**Limits.**
+- A friend who shares nothing still opens, to a page of dashes: the alternative (hiding them) would
+  also say what they chose.
+- The screenshot tool of the preview pane was unavailable during this check, so the layout was
+  checked from the page text and element sizes, not by eye.
+
+Supersedes the Holdings view of #12 (the opt-in switch and its privacy rules stay). Implements: UC-08
+amended (FR58). Owner: `backend/src/services/friends.service.ts`, mobile `FriendCompareScreen.tsx`,
+`FriendsComparison.tsx`.
+
+## 27. Close friends: choose who sees more (7 Oct 2026)
+
+**Problem.** Every friend was treated the same: a sharing choice was on or off for the whole
+list. People are comfortable sharing more with a few close friends than with everyone they have
+added (a colleague, a relative), and had no way to say so except to share nothing.
+
+**Decision.** An Instagram-style close-friends list, private to its owner:
+
+1. **Each sharing choice has an audience** instead of on/off: **Nobody** (the default),
+   **Close friends** or **All friends**, separately for each of the five measures and for
+   holdings. The migration turns every existing "on" into All friends and "off" into Nobody, so
+   nothing changes for anyone until they use the new option.
+2. **You choose your close friends** by tapping the star next to a friend on the Manage friends
+   screen, or the "Add to close friends" button on that friend's comparison page. The list is
+   **one-directional and private**: putting someone on yours shows them more of *your* figures, and
+   shows you nothing more of theirs. **Nobody is told** whether they are on anyone's list.
+3. A viewer sees a figure of a friend if its audience is All friends, or Close friends and that
+   friend has put the viewer on their list. This applies to the rankings, the one-to-one comparison
+   (#26) and the holdings. A figure the viewer is not allowed to see looks like a missing one, as
+   before, so nothing says someone is on or off a list.
+4. Stored in a new table, `close_friends` (one row per friendship and owner), that disappears with
+   the friendship; the sharing flags become an enum (`ShareAudience`). `PUT /friends/:id/close`
+   puts a friend on or off your list; the friends list and a friend's page report only the viewer's
+   own marking.
+
+**Privacy.**
+- The list is never disclosed to the other side: no response says whether the viewer is on
+  anyone's list, and the figures that follow from it look the same as missing ones.
+- A friend's own marking is the only thing reported about the list, and only to its owner. A
+  friendship that is missing, pending or someone else's gives the same 404 as elsewhere.
+- Nothing about value, ids or emails changes (#22, #26).
+
+**Where it lives.** `friends.service.ts` (`effectiveSharing`, `setCloseFriend`, audiences in
+`getOverview` / `updateSettings` / `getComparison` / `getFriendComparison`), `friends.routes.ts`,
+`schema.prisma` and migration `20261007200000_close_friends`; mobile `FriendsScreen.tsx` (a
+three-way control per item, the star per friend), `FriendCompareScreen.tsx` (the button),
+`FriendsComparison.tsx` (a star beside close friends in the list).
+
+**Verification.**
+- 759 backend tests pass (17 new): `effectiveSharing` (ALL to every friend, CLOSE only to a close friend,
+  none by default, holdings the same); `setCloseFriend` (own list only, idempotent, the addressee too,
+  the same 404, boolean required); close friends in the rankings and the one-to-one page (a CLOSE
+  measure shown only to friends who listed the viewer, my own list gives me nothing more, no response
+  reveals who listed me, my own marking is the only thing reported); the audiences saved
+  independently and the old true/false rejected.
+- The migration was checked against `schema.prisma` on a throwaway shadow database and applied to dev:
+  the 301 users who shared the return now have All friends and the 4 who did not have Nobody.
+- **End to end with two real test accounts** (removed afterwards): Ann shares holdings with close
+  friends and the investment rate with all; Bob saw the rate but not the holdings; after Ann listed
+  Bob he saw her holdings; Bob listing Ann changed nothing for Bob; after Ann unlisted Bob the holdings
+  were gone; Ann saw her own marking and Bob's list entry was never reported.
+- **UI (Expo web):** every item shows Nobody / Close friends / All friends; choosing Close friends for
+  the return and starring a friend were saved (checked against the API) and reverted.
+
+**Limits.**
+- A friend who has been put on a list sees more figures, so they could guess they were added; the
+  app never says so, and an unlisted friend cannot tell the difference between private and missing.
+- There is one list per person, not named groups.
+- The audience applies per item, so a close friend sees an item only if you also set it to Close
+  friends or All friends.
+
+Implements: UC-08 amended (FR59). Owner: `backend/src/services/friends.service.ts`, mobile
+`FriendsScreen.tsx`.
+
 ## Open items (Design Model §8, carried forward)
 
 - **`Phase2_SRS_v1.6.docx` — done, no longer open.** Produced in the same

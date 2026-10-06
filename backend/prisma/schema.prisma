@@ -88,31 +88,55 @@ model Friendship {
   requester User @relation("FriendshipRequester", fields: [requesterId], references: [id], onDelete: Cascade)
   addressee User @relation("FriendshipAddressee", fields: [addresseeId], references: [id], onDelete: Cascade)
 
+  closeFriends CloseFriend[]
+
   @@unique([requesterId, addresseeId])
   @@map("friendships")
 }
 
-// Per-metric opt-in: what accepted friends may see about this user. All
-// off by default (privacy by default). The user always sees their own
-// numbers regardless of these toggles.
+// DECISIONS.md #27: who a shared figure is shown to. NONE is private, CLOSE is the friends the
+// owner put on their close-friends list, ALL is every accepted friend.
+enum ShareAudience {
+  NONE
+  CLOSE
+  ALL
+}
+
+// Per-metric choice of audience: what accepted friends may see about this user. All
+// NONE by default (privacy by default). The user always sees their own numbers regardless
+// of these choices.
 model FriendSharing {
-  id                    String  @id @default(uuid())
-  userId                String  @unique
+  id                    String        @id @default(uuid())
+  userId                String        @unique
   // DECISIONS.md #22: friends rank on the cohort comparison's measures. Value, savings rate and
-  // emergency buffer are not offered at all. Every flag is off by default.
-  shareInvestmentRate   Boolean @default(false)
-  shareConsistency      Boolean @default(false)
-  shareDiversification  Boolean @default(false)
-  shareReturn           Boolean @default(false)
-  shareMonthlyReturn    Boolean @default(false)
-  // DECISIONS.md #12: whether accepted friends may see which funds are in
-  // this user's plan and each fund's weight (percent only, never amounts).
-  // Off by default like every other flag here.
-  shareHoldings         Boolean @default(false)
+  // emergency buffer are not offered at all.
+  shareInvestmentRate   ShareAudience @default(NONE)
+  shareConsistency      ShareAudience @default(NONE)
+  shareDiversification  ShareAudience @default(NONE)
+  shareReturn           ShareAudience @default(NONE)
+  shareMonthlyReturn    ShareAudience @default(NONE)
+  // DECISIONS.md #12: whether friends may see which funds are in this user's plan and each
+  // fund's weight (percent only, never amounts).
+  shareHoldings         ShareAudience @default(NONE)
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("friend_sharing")
+}
+
+// DECISIONS.md #27: one person's private close-friends list, one row per friend they put on it.
+// `ownerId` is the person who made the choice (one of the two sides of the friendship); the other
+// side is never told. Removing the friendship removes the row.
+model CloseFriend {
+  id           String   @id @default(uuid())
+  friendshipId String
+  ownerId      String
+  createdAt    DateTime @default(now())
+
+  friendship Friendship @relation(fields: [friendshipId], references: [id], onDelete: Cascade)
+
+  @@unique([friendshipId, ownerId])
+  @@map("close_friends")
 }
 
 // DECISIONS.md #1 third amendment / #2 rewrite (25 Aug 2026): riskLevel and

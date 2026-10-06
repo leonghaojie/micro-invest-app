@@ -11,24 +11,35 @@
  *  - sharing is opt-in per metric, everything off by default.
  */
 import { useCallback, useState } from "react";
-import { ActivityIndicator, Pressable, StyleSheet, Switch, Text, TextInput, View } from "react-native";
+import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import { useFocusEffect } from "@react-navigation/native";
 import { apiFetch, ApiError } from "../api/client";
 import { KeyboardScreen } from "../components/KeyboardScreen";
 
+/** Who sees a figure (DECISIONS.md #27): nobody, only the friends on your close-friends list, or every friend. */
+type Audience = "NONE" | "CLOSE" | "ALL";
+
 interface SharingSettings {
-  shareInvestmentRate: boolean;
-  shareConsistency: boolean;
-  shareDiversification: boolean;
-  shareReturn: boolean;
-  shareMonthlyReturn: boolean;
-  shareHoldings: boolean;
+  shareInvestmentRate: Audience;
+  shareConsistency: Audience;
+  shareDiversification: Audience;
+  shareReturn: Audience;
+  shareMonthlyReturn: Audience;
+  shareHoldings: Audience;
 }
 
 interface FriendLink {
   friendshipId: string;
   displayName: string;
+  /** Whether you have put this friend on your close-friends list (only you can see this). */
+  close?: boolean;
 }
+
+const AUDIENCES: { value: Audience; label: string }[] = [
+  { value: "NONE", label: "Nobody" },
+  { value: "CLOSE", label: "Close friends" },
+  { value: "ALL", label: "All friends" },
+];
 
 interface FriendsOverview {
   inviteCode: string;
@@ -115,10 +126,15 @@ export function FriendsScreen() {
     load();
   }
 
-  function toggleShare(key: keyof SharingSettings, value: boolean) {
-    // Optimistic: flip it now, and let the reload reconcile if the save fails.
+  function chooseAudience(key: keyof SharingSettings, value: Audience) {
+    // Optimistic: change it now, and let the reload reconcile if the save fails.
     setOverview((prev) => (prev ? { ...prev, sharing: { ...prev.sharing, [key]: value } } : prev));
     run(() => apiFetch("/friends/settings", { method: "PUT", body: { [key]: value } }));
+  }
+
+  function setClose(friendshipId: string, close: boolean) {
+    setOverview((prev) => (prev ? { ...prev, friends: prev.friends.map((f) => (f.friendshipId === friendshipId ? { ...f, close } : f)) } : prev));
+    run(() => apiFetch(`/friends/${friendshipId}/close`, { method: "PUT", body: { close } }));
   }
 
   async function sendRequest() {
@@ -197,20 +213,38 @@ export function FriendsScreen() {
 
       <View style={styles.card}>
         <Text style={styles.cardHeading}>What friends can see</Text>
-        <Text style={styles.hint}>Everything is off until you turn it on. You always see your own stats.</Text>
+        <Text style={styles.hint}>
+          Nobody sees anything until you choose. For each item pick who: every friend, or only your close friends. You always see your own
+          stats.
+        </Text>
         {SHARE_OPTIONS.map((opt) => (
-          <View key={opt.key} style={styles.toggleRow}>
+          <View key={opt.key} style={styles.shareBlock}>
             <View style={styles.toggleText}>
               <Text style={styles.toggleLabel}>{opt.label}</Text>
               <Text style={styles.hint}>{opt.hint}</Text>
             </View>
-            <Switch
-              value={overview.sharing[opt.key]}
-              onValueChange={(v) => toggleShare(opt.key, v)}
-              trackColor={{ true: "#2e6fdb", false: "#ccc" }}
-            />
+            <View style={styles.segment}>
+              {AUDIENCES.map((a) => {
+                const selected = overview.sharing[opt.key] === a.value;
+                return (
+                  <Pressable
+                    key={a.value}
+                    style={[styles.segmentButton, selected && styles.segmentButtonSelected]}
+                    onPress={() => chooseAudience(opt.key, a.value)}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected }}
+                    accessibilityLabel={`${opt.label}: ${a.label}`}
+                  >
+                    <Text style={[styles.segmentText, selected && styles.segmentTextSelected]}>{a.label}</Text>
+                  </Pressable>
+                );
+              })}
+            </View>
           </View>
         ))}
+        <Text style={styles.hint}>
+          Your close friends are chosen in the list of friends below. It is private: nobody is told whether they are on it.
+        </Text>
       </View>
 
       <View style={styles.card}>
@@ -256,8 +290,18 @@ export function FriendsScreen() {
       <View style={styles.card}>
         <Text style={styles.cardHeading}>Your friends ({overview.friends.length})</Text>
         {overview.friends.length === 0 && <Text style={styles.hint}>No friends yet.</Text>}
+        {overview.friends.length > 0 && <Text style={styles.hint}>Tap the star to add a friend to your close friends. Only you see this list.</Text>}
         {overview.friends.map((f) => (
           <View key={f.friendshipId} style={styles.personRow}>
+            <Pressable
+              onPress={() => setClose(f.friendshipId, !f.close)}
+              accessibilityRole="button"
+              accessibilityState={{ selected: !!f.close }}
+              accessibilityLabel={f.close ? `Remove ${f.displayName} from close friends` : `Add ${f.displayName} to close friends`}
+              hitSlop={8}
+            >
+              <Text style={[styles.star, f.close && styles.starOn]}>{f.close ? "★" : "☆"}</Text>
+            </Pressable>
             <Text style={styles.personName} numberOfLines={1}>
               {f.displayName}
             </Text>
@@ -329,7 +373,14 @@ const styles = StyleSheet.create({
   buttonDisabled: { opacity: 0.5 },
   secondaryButton: { paddingVertical: 10, paddingHorizontal: 16 },
   secondaryButtonText: { color: "#2e6fdb", fontWeight: "600" },
-  toggleRow: { flexDirection: "row", alignItems: "center", gap: 12, paddingVertical: 4 },
+  shareBlock: { gap: 6, paddingVertical: 6 },
+  segment: { flexDirection: "row", borderWidth: 1, borderColor: "#ccc", borderRadius: 8, overflow: "hidden" },
+  segmentButton: { flex: 1, paddingVertical: 8, alignItems: "center" },
+  segmentButtonSelected: { backgroundColor: "#eaf1fd" },
+  segmentText: { fontSize: 12, color: "#555", fontWeight: "600" },
+  segmentTextSelected: { color: "#2e6fdb" },
+  star: { fontSize: 22, color: "#bbb", width: 28, textAlign: "center" },
+  starOn: { color: "#e0a800" },
   toggleText: { flex: 1, gap: 2 },
   toggleLabel: { fontSize: 14, fontWeight: "600", color: "#333" },
   personRow: { flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 4 },

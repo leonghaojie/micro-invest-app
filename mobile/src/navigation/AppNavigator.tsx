@@ -29,7 +29,7 @@ import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import type { BottomTabScreenProps } from "@react-navigation/bottom-tabs";
 import { apiFetch, ApiError, clearStoredAuthToken, getStoredAuthToken, setUnauthorizedHandler } from "../api/client";
 import { EditAccountScreen } from "../screens/EditAccountScreen";
-import { FriendHoldingsScreen } from "../screens/FriendHoldingsScreen";
+import { FriendCompareScreen } from "../screens/FriendCompareScreen";
 import { FundDetailScreen } from "../screens/FundDetailScreen";
 import { ForgotPasswordScreen } from "../screens/ForgotPasswordScreen";
 import { FriendsScreen } from "../screens/FriendsScreen";
@@ -68,7 +68,7 @@ export type RootStackParamList = {
   Friends: undefined;
   // DECISIONS.md #12: one person's full holdings. friendshipId is a friendship
   // handle (never a user id), or "me" for the viewer's own.
-  FriendHoldings: { friendshipId: string; displayName: string };
+  FriendCompare: { friendshipId: string; displayName: string };
   // DECISIONS.md #14: one fund's history and statistics, opened from the Funds tab.
   FundDetail: { fundId: string; ticker: string };
   // DECISIONS.md #17: change one account detail, opened from the dashboard's Account section.
@@ -152,9 +152,9 @@ export function AppNavigator() {
       <Stack.Screen name="Recurring" component={RecurringScreen} options={{ title: "Monthly buys" }} />
       <Stack.Screen name="Friends" component={FriendsScreen} options={{ title: "Friends" }} />
       <Stack.Screen
-        name="FriendHoldings"
-        component={FriendHoldingsScreen}
-        options={({ route }) => ({ title: `${route.params.displayName}'s holdings` })}
+        name="FriendCompare"
+        component={FriendCompareScreen}
+        options={({ route }) => ({ title: `You and ${route.params.displayName}` })}
       />
       <Stack.Screen
         name="EditAccount"

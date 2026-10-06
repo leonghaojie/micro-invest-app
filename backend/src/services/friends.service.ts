@@ -13,7 +13,9 @@
  *    belong to real accounts (for the same reason outgoing requests are
  *    never listed back to the sender);
  *  - each user opts in, per metric, to what friends can see (all off by
- *    default); a metric a friend hasn't shared never appears in a response.
+ *    default), and to who: every friend, or only the friends on their private
+ *    close-friends list (DECISIONS.md #27); a metric a friend hasn't shared
+ *    with the viewer never appears in a response.
  *    The metrics are exactly the ones the cohort comparison measures (investment
  *    rate, contribution consistency, diversification, return, return per unit of
  *    risk; DECISIONS.md #22). The portfolio's value, savings rate and emergency
@@ -21,7 +23,9 @@
  *  - holdings (which funds a friend's plan contains, and their weights) are
  *    a separate opt-in, shareHoldings, off by default (DECISIONS.md #12):
  *    percentages only, never amounts, and a custom portfolio's name (free
- *    text the owner typed) is never shown;
+ *    text the owner typed) is never shown. They are opened from the friend's
+ *    one-to-one comparison (getFriendComparison, DECISIONS.md #26), which
+ *    never says whether something is private or simply missing;
  *  - no response ever contains another user's id or email — only a
  *    friendship id (to act on the link) and the chosen display name.
  */
@@ -39,6 +43,7 @@ export const METRIC_KEYS = COMPARISON_METRICS;
 export type MetricKey = ComparisonKey;
 export type MemberMetrics = Record<MetricKey, number | null>;
 
+/** What the viewer is allowed to see of one friend: on or off for each measure and for holdings. */
 export interface SharingSettings {
   shareInvestmentRate: boolean;
   shareConsistency: boolean;
@@ -48,17 +53,38 @@ export interface SharingSettings {
   shareHoldings: boolean;
 }
 
-/** Maps a stored FriendSharing row (or its absence) to settings. Anything
- * missing is off - privacy by default. */
-function toSharingSettings(row: Partial<SharingSettings> | null | undefined): SharingSettings {
-  return {
-    shareInvestmentRate: row?.shareInvestmentRate ?? false,
-    shareConsistency: row?.shareConsistency ?? false,
-    shareDiversification: row?.shareDiversification ?? false,
-    shareReturn: row?.shareReturn ?? false,
-    shareMonthlyReturn: row?.shareMonthlyReturn ?? false,
-    shareHoldings: row?.shareHoldings ?? false,
-  };
+/** Who a choice is shown to (DECISIONS.md #27): nobody, the owner's close friends, or every friend. */
+export type Audience = "NONE" | "CLOSE" | "ALL";
+
+/** What a user has chosen to share, and with whom, for each measure and for holdings. */
+export type AudienceSettings = Record<keyof SharingSettings, Audience>;
+
+const SHARE_KEYS: (keyof SharingSettings)[] = [
+  "shareInvestmentRate",
+  "shareConsistency",
+  "shareDiversification",
+  "shareReturn",
+  "shareMonthlyReturn",
+  "shareHoldings",
+];
+
+/** Maps a stored FriendSharing row (or its absence) to audiences. Anything
+ * missing is NONE - privacy by default. */
+function toAudienceSettings(row: Partial<Record<keyof SharingSettings, string>> | null | undefined): AudienceSettings {
+  const out = {} as AudienceSettings;
+  for (const key of SHARE_KEYS) {
+    const v = row?.[key];
+    out[key] = v === "ALL" || v === "CLOSE" ? v : "NONE";
+  }
+  return out;
+}
+
+/** Pure. What one viewer may see, given the owner's audiences and whether the owner has put the
+ * viewer on their close-friends list. CLOSE is shown only to a close friend; ALL to every friend. */
+export function effectiveSharing(settings: AudienceSettings, viewerIsClose: boolean): SharingSettings {
+  const out = {} as SharingSettings;
+  for (const key of SHARE_KEYS) out[key] = settings[key] === "ALL" || (settings[key] === "CLOSE" && viewerIsClose);
+  return out;
 }
 
 const SHARE_FLAG: Record<MetricKey, keyof SharingSettings> = {
@@ -69,14 +95,6 @@ const SHARE_FLAG: Record<MetricKey, keyof SharingSettings> = {
   monthlyReturn: "shareMonthlyReturn",
 };
 
-const NO_SHARING: SharingSettings = {
-  shareInvestmentRate: false,
-  shareConsistency: false,
-  shareDiversification: false,
-  shareReturn: false,
-  shareMonthlyReturn: false,
-  shareHoldings: false,
-};
 
 export const MAX_FRIENDS = 50;
 
@@ -95,6 +113,8 @@ export function snapshotOf(holdings: { value: unknown; fund: { ticker: string; n
 // ── Ranking ────────────────────────────────────────────────────────────
 
 export interface BoardRow {
+  /** Handle for opening this friend's one-to-one comparison; null for the viewer. Never a user id. */
+  friendshipId: string | null;
   displayName: string;
   isMe: boolean;
   value: number;
@@ -111,6 +131,8 @@ export interface MetricBoard {
 
 export type FriendsComparison = {
   friendCount: number;
+  /** Every accepted friend by display name, so each can be opened even if they share no measure. */
+  friends: FriendLink[];
   /** How many months the return measures cover: the longest recent run the viewer has (up to 12). */
   windowMonths: number;
   metrics: Record<MetricKey, MetricBoard>;
@@ -122,6 +144,9 @@ interface ComparisonMember {
 }
 
 interface ComparisonFriend extends ComparisonMember {
+  friendshipId: string;
+  /** Whether the viewer has put this friend on their own close-friends list. */
+  close?: boolean;
   shared: SharingSettings;
 }
 
@@ -132,12 +157,12 @@ export function buildComparison(me: ComparisonMember, friends: ComparisonFriend[
   const metrics = {} as Record<MetricKey, MetricBoard>;
 
   for (const key of METRIC_KEYS) {
-    const entries: { displayName: string; isMe: boolean; value: number }[] = [];
+    const entries: { friendshipId: string | null; displayName: string; isMe: boolean; value: number }[] = [];
     let hiddenCount = 0;
     let noDataCount = 0;
 
     const mine = me.metrics[key];
-    if (mine !== null) entries.push({ displayName: me.displayName, isMe: true, value: mine });
+    if (mine !== null) entries.push({ friendshipId: null, displayName: me.displayName, isMe: true, value: mine });
 
     for (const friend of friends) {
       if (!friend.shared[SHARE_FLAG[key]]) {
@@ -149,7 +174,7 @@ export function buildComparison(me: ComparisonMember, friends: ComparisonFriend[
         noDataCount += 1;
         continue;
       }
-      entries.push({ displayName: friend.displayName, isMe: false, value: theirs });
+      entries.push({ friendshipId: friend.friendshipId, displayName: friend.displayName, isMe: false, value: theirs });
     }
 
     entries.sort((a, b) => b.value - a.value);
@@ -163,7 +188,8 @@ export function buildComparison(me: ComparisonMember, friends: ComparisonFriend[
     metrics[key] = { rows, hiddenCount, noDataCount };
   }
 
-  return { friendCount: friends.length, windowMonths, metrics };
+  const list = friends.map((f) => ({ friendshipId: f.friendshipId, displayName: f.displayName, close: f.close === true })).sort((a, b) => a.displayName.localeCompare(b.displayName));
+  return { friendCount: friends.length, friends: list, windowMonths, metrics };
 }
 
 // ── Invite codes ───────────────────────────────────────────────────────
@@ -187,35 +213,6 @@ export interface MemberHoldings {
    * free text the owner typed and so is never exposed. */
   portfolioName: string | null;
   holdings: HoldingRow[];
-}
-
-/** One row of the friends list: just enough to choose who to open. The
- * full list of funds is fetched per person (getHoldingsDetail) so a long
- * friends list, or a portfolio with dozens of funds, never has to be sent or
- * drawn all at once. */
-export interface HoldingsSummary {
-  /** Handle for opening this person's detail; null for the viewer themselves
-   * (opened as "me"). Never a user id. */
-  friendshipId: string | null;
-  displayName: string;
-  portfolioName: string | null;
-  fundCount: number;
-  /** Funds in this portfolio that the viewer also holds (0 for the viewer). */
-  sharedFundCount: number;
-  /** Weight per asset class, largest first, for a small bar. */
-  mix: { assetClass: string; pct: number }[];
-}
-
-export interface HoldingsOverview {
-  friendCount: number;
-  /** The viewer's own holdings (always visible to themselves), or null with no plan. */
-  me: HoldingsSummary | null;
-  /** Friends who share holdings and have a plan, by display name. */
-  friends: HoldingsSummary[];
-  /** Friends who keep holdings private (not named). */
-  hiddenCount: number;
-  /** Friends who share holdings but have no plan yet. */
-  noPlanCount: number;
 }
 
 export interface PortfolioSnapshot {
@@ -244,18 +241,36 @@ export function toMemberHoldings(displayName: string, portfolio: PortfolioSnapsh
   };
 }
 
-/** Pure. Condenses a member's holdings into a friends-list row. */
-export function summarizeHoldings(member: MemberHoldings, friendshipId: string | null): HoldingsSummary {
+/** Pure. A member's weight per asset class, largest first, for a small bar. */
+export function mixOf(member: MemberHoldings): { assetClass: string; pct: number }[] {
   const byClass = new Map<string, number>();
-  for (const h of member.holdings) byClass.set(h.assetClass, (byClass.get(h.assetClass) ?? 0) + h.weightPct);
-  return {
-    friendshipId,
-    displayName: member.displayName,
-    portfolioName: member.portfolioName,
-    fundCount: member.holdings.length,
-    sharedFundCount: friendshipId === null ? 0 : member.holdings.filter((h) => h.youHold).length,
-    mix: [...byClass.entries()].map(([assetClass, pct]) => ({ assetClass, pct })).sort((a, b) => b.pct - a.pct),
-  };
+  for (const h of member.holdings) byClass.set(h.assetClass, Math.round(((byClass.get(h.assetClass) ?? 0) + h.weightPct) * 100) / 100);
+  return [...byClass.entries()].map(([assetClass, pct]) => ({ assetClass, pct })).sort((a, b) => b.pct - a.pct);
+}
+
+// -- One-to-one comparison (DECISIONS.md #26) ----------------------------
+
+export interface FriendCompareMetric {
+  /** The viewer's own figure, or null when they have none. */
+  me: number | null;
+  /** The friend's figure, or null: they do not share it, or have no figure. The two are never told apart. */
+  friend: number | null;
+}
+
+export interface FriendComparisonDetail {
+  displayName: string;
+  /** Whether the viewer has put this friend on their own close-friends list (only the viewer sees this). */
+  close: boolean;
+  /** How many months the return measures cover (the viewer's window). */
+  windowMonths: number;
+  metrics: Record<MetricKey, FriendCompareMetric>;
+  /** Both people's holdings as shares of value, or null when the friend's are unavailable (private or none yet). */
+  holdings: {
+    me: MemberHoldings;
+    friend: MemberHoldings;
+    myMix: { assetClass: string; pct: number }[];
+    friendMix: { assetClass: string; pct: number }[];
+  } | null;
 }
 
 const CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -275,15 +290,19 @@ function isUniqueConstraintError(err: unknown): boolean {
 
 // ── Inputs ─────────────────────────────────────────────────────────────
 
+const audience = z.enum(["NONE", "CLOSE", "ALL"]);
+
 const updateSettingsSchema = z.object({
   displayName: z.string().trim().min(1, "Display name can't be empty").max(30, "Display name is at most 30 characters").optional(),
-  shareInvestmentRate: z.boolean().optional(),
-  shareConsistency: z.boolean().optional(),
-  shareDiversification: z.boolean().optional(),
-  shareReturn: z.boolean().optional(),
-  shareMonthlyReturn: z.boolean().optional(),
-  shareHoldings: z.boolean().optional(),
+  shareInvestmentRate: audience.optional(),
+  shareConsistency: audience.optional(),
+  shareDiversification: audience.optional(),
+  shareReturn: audience.optional(),
+  shareMonthlyReturn: audience.optional(),
+  shareHoldings: audience.optional(),
 });
+
+const closeSchema = z.object({ close: z.boolean() });
 
 const sendRequestSchema = z
   .object({
@@ -298,13 +317,15 @@ const sendRequestSchema = z
 
 export interface FriendLink {
   friendshipId: string;
+  /** Whether the viewer has put this friend on their own close-friends list (only the viewer sees this). */
+  close?: boolean;
   displayName: string;
 }
 
 export interface FriendsOverview {
   inviteCode: string;
   displayName: string | null;
-  sharing: SharingSettings;
+  sharing: AudienceSettings;
   friends: FriendLink[];
   incomingRequests: FriendLink[];
 }
@@ -356,6 +377,7 @@ class FriendsService {
         include: {
           requester: { select: { displayName: true } },
           addressee: { select: { displayName: true } },
+          closeFriends: { select: { ownerId: true } },
         },
         orderBy: { createdAt: "asc" },
       }),
@@ -366,9 +388,9 @@ class FriendsService {
     for (const link of links) {
       const iAmRequester = link.requesterId === userId;
       const other = iAmRequester ? link.addressee : link.requester;
-      const entry = { friendshipId: link.id, displayName: other.displayName ?? FALLBACK_NAME };
+      const entry: FriendLink = { friendshipId: link.id, displayName: other.displayName ?? FALLBACK_NAME };
       if (link.status === "ACCEPTED") {
-        friends.push(entry);
+        friends.push({ ...entry, close: link.closeFriends.some((c) => c.ownerId === userId) });
       } else if (!iAmRequester) {
         incomingRequests.push(entry);
       }
@@ -379,13 +401,13 @@ class FriendsService {
     return {
       inviteCode,
       displayName: user?.displayName ?? null,
-      sharing: toSharingSettings(user?.sharing),
+      sharing: toAudienceSettings(user?.sharing),
       friends,
       incomingRequests,
     };
   }
 
-  async updateSettings(userId: string, input: unknown): Promise<{ displayName: string | null; sharing: SharingSettings }> {
+  async updateSettings(userId: string, input: unknown): Promise<{ displayName: string | null; sharing: AudienceSettings }> {
     const { displayName, ...toggles } = updateSettingsSchema.parse(input);
 
     if (displayName !== undefined) {
@@ -401,7 +423,7 @@ class FriendsService {
     const user = await prisma.user.findUnique({ where: { id: userId }, select: { displayName: true } });
     return {
       displayName: user?.displayName ?? null,
-      sharing: toSharingSettings(sharing),
+      sharing: toAudienceSettings(sharing),
     };
   }
 
@@ -479,10 +501,16 @@ class FriendsService {
   async getComparison(userId: string): Promise<FriendsComparison> {
     const links = await prisma.friendship.findMany({
       where: { status: "ACCEPTED", OR: [{ requesterId: userId }, { addresseeId: userId }] },
-      select: { requesterId: true, addresseeId: true },
+      select: { id: true, requesterId: true, addresseeId: true },
     });
     const friendIds = links.map((l) => (l.requesterId === userId ? l.addresseeId : l.requesterId));
+    const linkIdByFriend = new Map(links.map((l) => [l.requesterId === userId ? l.addresseeId : l.requesterId, l.id]));
     const allIds = [userId, ...friendIds];
+
+    // Each side's private close-friends list: who I put on mine, and who has put me on theirs.
+    const closeRows = links.length ? await prisma.closeFriend.findMany({ where: { friendshipId: { in: links.map((l) => l.id) } }, select: { friendshipId: true, ownerId: true } }) : [];
+    const myClose = new Set(closeRows.filter((c) => c.ownerId === userId).map((c) => c.friendshipId));
+    const closeOwners = new Set(closeRows.filter((c) => c.ownerId !== userId).map((c) => c.ownerId)); // friends who listed me
 
     const users = await prisma.user.findMany({ where: { id: { in: allIds } }, select: { id: true, displayName: true, sharing: true } });
     const userById = new Map(users.map((u) => [u.id, u]));
@@ -500,11 +528,13 @@ class FriendsService {
     const me = userById.get(userId);
     const friends: ComparisonFriend[] = friendIds.map((id) => {
       const u = userById.get(id);
-      const s = u?.sharing;
       return {
+        friendshipId: linkIdByFriend.get(id)!,
+        close: myClose.has(linkIdByFriend.get(id)!),
         displayName: u?.displayName ?? FALLBACK_NAME,
         metrics: metricsFor(id),
-        shared: toSharingSettings(s),
+        // what this friend lets me see: their audiences, applied to whether they have put me on their list
+        shared: effectiveSharing(toAudienceSettings(u?.sharing), closeOwners.has(id)),
       };
     });
 
@@ -517,90 +547,75 @@ class FriendsService {
     return plan && plan.holdings.length > 0 ? plan : null;
   }
 
-  /** The friends list for the Holdings view: who shares, and a one-line
-   * summary of each. Only display names, a friendship handle, fund counts and
-   * an asset-class mix - never an id, an email, an amount, or a custom
-   * portfolio's name. */
-  async getHoldings(userId: string): Promise<HoldingsOverview> {
-    const links = await prisma.friendship.findMany({
-      where: { status: "ACCEPTED", OR: [{ requesterId: userId }, { addresseeId: userId }] },
-      select: { id: true, requesterId: true, addresseeId: true },
-    });
-    const linkByFriend = new Map(links.map((l) => [l.requesterId === userId ? l.addresseeId : l.requesterId, l.id]));
-    const friendIds = [...linkByFriend.keys()];
-
-    const friendUsers = friendIds.length
-      ? await prisma.user.findMany({
-          where: { id: { in: friendIds } },
-          select: { id: true, displayName: true, sharing: { select: { shareHoldings: true } } },
-        })
-      : [];
-    const sharers = friendUsers.filter((u) => u.sharing?.shareHoldings === true);
-
-    const [myPlan, sharerPlans, meUser] = await Promise.all([
-      this.accountHoldings(userId),
-      sharers.length ? prisma.plan.findMany({ where: { userId: { in: sharers.map((u) => u.id) } }, select: { userId: true, holdings: HOLDINGS_SELECT } }) : [],
-      prisma.user.findUnique({ where: { id: userId }, select: { displayName: true } }),
-    ]);
-
-    const viewerTickers = new Set(myPlan ? myPlan.holdings.map((h) => h.fund.ticker) : []);
-    const planByUser = new Map(sharerPlans.filter((p) => p.holdings.length > 0).map((p) => [p.userId, p]));
-
-    const friends: HoldingsSummary[] = [];
-    let noPlanCount = 0;
-    for (const u of sharers) {
-      const plan = planByUser.get(u.id);
-      if (!plan) {
-        noPlanCount += 1;
-        continue;
-      }
-      friends.push(
-        summarizeHoldings(toMemberHoldings(u.displayName ?? FALLBACK_NAME, snapshotOf(plan.holdings), viewerTickers), linkByFriend.get(u.id)!)
-      );
-    }
-    friends.sort((a, b) => a.displayName.localeCompare(b.displayName));
-
-    return {
-      friendCount: friendIds.length,
-      me: myPlan ? summarizeHoldings(toMemberHoldings(meUser?.displayName ?? "You", snapshotOf(myPlan.holdings), viewerTickers), null) : null,
-      friends,
-      hiddenCount: friendUsers.length - sharers.length,
-      noPlanCount,
-    };
-  }
-
-  /** One person's full holdings, opened from the list. `id` is a friendship
-   * id, or "me". Every way this can fail - not your friendship, not accepted,
-   * friend keeps holdings private, no plan - gives the same 404, so it can't
-   * be used to probe who shares what. */
-  async getHoldingsDetail(userId: string, id: string): Promise<MemberHoldings> {
-    const NOT_AVAILABLE = new HttpError(404, "Holdings not available");
-
-    const myPlan = await this.accountHoldings(userId);
-    const viewerTickers = new Set(myPlan ? myPlan.holdings.map((h) => h.fund.ticker) : []);
-
-    if (id === "me") {
-      if (!myPlan) throw NOT_AVAILABLE;
-      const me = await prisma.user.findUnique({ where: { id: userId }, select: { displayName: true } });
-      return toMemberHoldings(me?.displayName ?? "You", snapshotOf(myPlan.holdings), viewerTickers);
-    }
-
+  /**
+   * One friend, side by side with the viewer (DECISIONS.md #26): every measure with both figures,
+   * and both people's holdings. `id` is a friendship id. A friend's figure appears only if they
+   * share that measure, and their holdings only if they share holdings and have some; whether a
+   * figure is private or just missing is never told apart. Every way the link can be unusable (not
+   * yours, not accepted, gone) gives the same 404.
+   */
+  async getFriendComparison(userId: string, id: string): Promise<FriendComparisonDetail> {
+    const NOT_FOUND = new HttpError(404, "Friend not found");
     const link = await prisma.friendship.findUnique({ where: { id }, select: { requesterId: true, addresseeId: true, status: true } });
-    if (!link || link.status !== "ACCEPTED" || (link.requesterId !== userId && link.addresseeId !== userId)) {
-      throw NOT_AVAILABLE;
-    }
+    if (!link || link.status !== "ACCEPTED" || (link.requesterId !== userId && link.addresseeId !== userId)) throw NOT_FOUND;
     const friendId = link.requesterId === userId ? link.addresseeId : link.requesterId;
 
-    const friend = await prisma.user.findUnique({
-      where: { id: friendId },
-      select: { displayName: true, sharing: { select: { shareHoldings: true } } },
-    });
-    if (friend?.sharing?.shareHoldings !== true) throw NOT_AVAILABLE;
+    const users = await prisma.user.findMany({ where: { id: { in: [userId, friendId] } }, select: { id: true, displayName: true, sharing: true } });
+    const me = users.find((u) => u.id === userId);
+    const friend = users.find((u) => u.id === friendId);
+    if (!friend) throw NOT_FOUND;
+    // What this friend lets me see: their audiences, applied to whether they have put me on their list.
+    const listedMe = (await prisma.closeFriend.count({ where: { friendshipId: id, ownerId: friendId } })) > 0;
+    const iListed = (await prisma.closeFriend.count({ where: { friendshipId: id, ownerId: userId } })) > 0;
+    const shared = effectiveSharing(toAudienceSettings(friend.sharing), listedMe);
 
-    const friendPlan = await this.accountHoldings(friendId);
-    if (!friendPlan) throw NOT_AVAILABLE;
+    // The viewer's own account is brought up to date; the friend's is read as stored.
+    await planService.getActivePlan(userId).catch(() => null);
+    const loaded = await loadMembers([userId, friendId]);
+    const memberById = new Map((loaded?.members ?? []).map((m) => [m.id, m]));
+    const window = loaded ? comparisonWindow(memberById.get(userId), loaded.asOf) : { months: [], n: 0 };
+    const mine = memberFigures(memberById.get(userId), window);
+    const theirs = memberFigures(memberById.get(friendId), window);
 
-    return toMemberHoldings(friend.displayName ?? FALLBACK_NAME, snapshotOf(friendPlan.holdings), viewerTickers);
+    const metrics = {} as Record<MetricKey, FriendCompareMetric>;
+    for (const key of METRIC_KEYS) metrics[key] = { me: mine[key], friend: shared[SHARE_FLAG[key]] ? theirs[key] : null };
+
+    let holdings: FriendComparisonDetail["holdings"] = null;
+    if (shared.shareHoldings) {
+      const [myPlan, friendPlan] = await Promise.all([this.accountHoldings(userId), this.accountHoldings(friendId)]);
+      if (friendPlan) {
+        const viewerTickers = new Set(myPlan ? myPlan.holdings.map((h) => h.fund.ticker) : []);
+        const friendHoldings = toMemberHoldings(friend.displayName ?? FALLBACK_NAME, snapshotOf(friendPlan.holdings), viewerTickers);
+        const myHoldings = toMemberHoldings(me?.displayName ?? "You", snapshotOf(myPlan?.holdings ?? []), new Set(friendPlan.holdings.map((h) => h.fund.ticker)));
+        holdings = { me: myHoldings, friend: friendHoldings, myMix: mixOf(myHoldings), friendMix: mixOf(friendHoldings) };
+      }
+    }
+
+    return { displayName: friend.displayName ?? FALLBACK_NAME, close: iListed, windowMonths: window.n, metrics, holdings };
+  }
+
+  /**
+   * Puts a friend on, or takes them off, the viewer's private close-friends list (DECISIONS.md #27).
+   * `id` is a friendship id. The friend is never told; they only see more (or less) of what the
+   * viewer has chosen to share with close friends. Idempotent. Anything that is not an accepted
+   * friendship of the viewer's gives the same 404.
+   */
+  async setCloseFriend(userId: string, id: string, input: unknown): Promise<{ friendshipId: string; close: boolean }> {
+    const { close } = closeSchema.parse(input);
+    const link = await prisma.friendship.findUnique({ where: { id }, select: { requesterId: true, addresseeId: true, status: true } });
+    if (!link || link.status !== "ACCEPTED" || (link.requesterId !== userId && link.addresseeId !== userId)) {
+      throw new HttpError(404, "Friend not found");
+    }
+    if (close) {
+      await prisma.closeFriend.upsert({
+        where: { friendshipId_ownerId: { friendshipId: id, ownerId: userId } },
+        create: { friendshipId: id, ownerId: userId },
+        update: {},
+      });
+    } else {
+      await prisma.closeFriend.deleteMany({ where: { friendshipId: id, ownerId: userId } });
+    }
+    return { friendshipId: id, close };
   }
 }
 
