@@ -14,6 +14,8 @@ import {
   capacityOf,
   Card,
   compoundedReturnPct,
+  COMPARISON_METRICS,
+  comparisonWindow,
   describeBasis,
   describeGroup,
   distance,
@@ -23,12 +25,12 @@ import {
   investmentRatePct,
   largestHoldingPct,
   lifeStageLabel,
+  memberFigures,
   LIFE_STAGE_SPAN_YEARS,
   Member,
   METRIC_WEIGHTS,
   midRank,
   quantile,
-  returnPerRisk,
   selectPeers,
   summarize,
   trailingMonths,
@@ -50,6 +52,7 @@ function member(id: string, over: Partial<Member> = {}): Member {
     risk: "MEDIUM",
     contribution: 400,
     consistencyPct: 100,
+    value: 5000,
     holdings: [
       { assetClass: "EQUITY", weight: 0.6 },
       { assetClass: "BOND", weight: 0.4 },
@@ -72,6 +75,7 @@ function population(n: number, seed = 7): Member[] {
       risk: risks[Math.floor(rng() * 3)],
       contribution: Math.round(income * (0.03 + rng() * 0.12)),
       consistencyPct: Math.round(40 + rng() * 60),
+      value: Math.round(500 + rng() * 20000),
       monthlyReturns: Object.fromEntries(MONTHS12.map((m) => [m, (rng() - 0.45) * 0.06])),
     });
   });
@@ -196,26 +200,58 @@ describe("windows and returns", () => {
     expect(compoundedReturnPct([0.1, -0.1])).toBe(-1); // 1.1 x 0.9 = 0.99
     expect(compoundedReturnPct([0.01, 0.01, 0.01])).toBeCloseTo(3.03, 2);
   });
+});
 
-  describe("returnPerRisk", () => {
-    it("is withheld below 6 months and when returns never move", () => {
-      expect(returnPerRisk([0.01, 0.02, 0.01, 0.0, 0.02])).toBeNull();
-      expect(returnPerRisk(Array(12).fill(0.01))).toBeNull();
-    });
+describe("comparison window and member figures (the friends ranking, DECISIONS.md #22)", () => {
+  it("the window is the viewer's own run of months, up to a year", () => {
+    expect(comparisonWindow(member("a"), AS_OF)).toEqual({ months: MONTHS12, n: 12 });
+    const short = member("b", { monthlyReturns: { "2026-08": 0.01, "2026-09": 0.01 } });
+    expect(comparisonWindow(short, AS_OF)).toEqual({ months: ["2026-08", "2026-09"], n: 2 });
+  });
 
-    it("is annualised return over annualised volatility", () => {
-      const r = [0.02, -0.01, 0.03, 0.0, 0.02, 0.01, -0.02, 0.03, 0.01, 0.0, 0.02, 0.01];
-      const growth = r.reduce((a, x) => a * (1 + x), 1);
-      const mean = r.reduce((a, b) => a + b, 0) / 12;
-      const vol = Math.sqrt(r.reduce((a, x) => a + (x - mean) ** 2, 0) / 11) * Math.sqrt(12);
-      expect(returnPerRisk(r)).toBeCloseTo((growth - 1) / vol, 1);
-    });
+  it("a viewer with no returns has an empty window (one month, n = 0), not an error", () => {
+    expect(comparisonWindow(null, AS_OF)).toEqual({ months: ["2026-09"], n: 0 });
+    expect(comparisonWindow(member("c", { monthlyReturns: {} }), AS_OF).n).toBe(0);
+  });
 
-    it("is higher for the same return with less swing", () => {
-      const smooth = Array.from({ length: 12 }, (_, i) => 0.01 + (i % 2 ? 0.002 : -0.002));
-      const rough = Array.from({ length: 12 }, (_, i) => 0.01 + (i % 2 ? 0.03 : -0.03));
-      expect(returnPerRisk(smooth)!).toBeGreaterThan(returnPerRisk(rough)!);
-    });
+  it("figures are the same numbers the cohort report compares", () => {
+    const me = member("me", { contribution: 400, income: 4000, consistencyPct: 75 });
+    const f = memberFigures(me, comparisonWindow(me, AS_OF));
+    expect(f.investmentRate).toBe(investmentRatePct(me));
+    expect(f.consistency).toBe(75);
+    expect(f.diversification).toBe(diversificationScore(me.holdings));
+    expect(f.return).toBe(compoundedReturnPct(Array(12).fill(0.01)));
+    expect(f.monthlyReturn).toBe(1); // the latest month: +1%
+    expect(Object.keys(f)).toEqual(COMPARISON_METRICS);
+  });
+
+  it("someone else is measured over the viewer's months: missing any of them means no return figure, other measures stay", () => {
+    const viewer = member("me");
+    const other = member("o", { monthlyReturns: { "2026-09": 0.02 } });
+    const f = memberFigures(other, comparisonWindow(viewer, AS_OF));
+    expect(f.return).toBeNull();
+    expect(f.monthlyReturn).toBe(2); // the latest month is the same for everyone, so it is still measured
+    expect(f.investmentRate).not.toBeNull();
+    expect(f.diversification).not.toBeNull();
+  });
+
+  it("an unknown member has no figures at all", () => {
+    const f = memberFigures(undefined, comparisonWindow(member("me"), AS_OF));
+    expect(Object.values(f).every((v) => v === null)).toBe(true);
+  });
+
+  it("never includes the portfolio's value: friends are never ranked or shown it", () => {
+    const me = member("me", { value: 123456 });
+    const f = memberFigures(me, comparisonWindow(me, AS_OF));
+    expect(Object.keys(f)).not.toContain("value");
+    expect(JSON.stringify(f)).not.toContain("123456");
+  });
+
+  it("the monthly return is the latest month's return as a percentage, and null without one", () => {
+    const me = member("me", { monthlyReturns: { "2026-08": 0.03, "2026-09": -0.0125 } });
+    expect(memberFigures(me, comparisonWindow(me, AS_OF)).monthlyReturn).toBe(-1.25);
+    const none = member("n", { monthlyReturns: {} });
+    expect(memberFigures(none, comparisonWindow(me, AS_OF)).monthlyReturn).toBeNull();
   });
 });
 
@@ -266,7 +302,8 @@ describe("weights (framework, re-split over profile-only features)", () => {
     expect(METRIC_WEIGHTS.investmentRate).toEqual({ income: 0.4, capacity: 0.4, life: 0.2 });
     expect(METRIC_WEIGHTS.diversification).toEqual({ risk: 0.4, capacity: 0.3, income: 0.15, life: 0.15 });
     expect(METRIC_WEIGHTS.return).toEqual({ risk: 0.5, life: 0.2, income: 0.15, capacity: 0.15 });
-    expect(METRIC_WEIGHTS.returnPerRisk).toEqual(METRIC_WEIGHTS.return);
+    expect(METRIC_WEIGHTS.monthlyReturn).toEqual(METRIC_WEIGHTS.return);
+    expect(METRIC_WEIGHTS.value).toEqual(METRIC_WEIGHTS.investmentRate); // means and age, not risk appetite
   });
 
   it("only use who the person is (profile), never what their investing produced", () => {
@@ -535,11 +572,11 @@ describe("buildCohortReport", () => {
   const me = members[0];
   const pop = buildPopulation(members);
 
-  it("gives five cards, an identity, a group, and a headline with a benchmark", () => {
+  it("gives six cards, an identity, a group, and a headline with a benchmark", () => {
     const r = buildCohortReport(pop, me, ctx);
     expect(r.suppressed).toBe(false);
     expect(r.identity).toHaveLength(4);
-    expect(r.cards.map((c) => c.key)).toEqual(["investmentRate", "consistency", "diversification", "return", "returnPerRisk"]);
+    expect(r.cards.map((c) => c.key)).toEqual(["value", "return", "monthlyReturn", "investmentRate", "consistency", "diversification"]);
     expect(r.cards.every((c) => c.status === "ok")).toBe(true);
     expect(r.group!.size).toBeGreaterThan(0);
     expect(r.headline).toMatchObject({ windowMonths: 12 });
@@ -589,15 +626,28 @@ describe("buildCohortReport", () => {
     expect(d.detail!.median).toBeGreaterThan(0);
   });
 
-  it("with fewer than 6 months of history, return works but return-per-risk is explained, not shown", () => {
+  it("a short history still gives a return and the latest month's return", () => {
     const short = member("short", { monthlyReturns: Object.fromEntries(trailingMonths(AS_OF, 4).map((m) => [m, 0.01])) });
     const pop2 = buildPopulation([short, ...members.slice(1)]);
     const r = buildCohortReport(pop2, short, ctx);
     expect(r.headline!.windowMonths).toBe(4);
     expect(r.cards.find((c) => c.key === "return")!.status).toBe("ok");
-    const rpr = r.cards.find((c) => c.key === "returnPerRisk")!;
-    expect(rpr.status).toBe("unavailable");
-    expect(rpr.message).toMatch(/at least 6 months.*you have 4/);
+    expect(r.cards.find((c) => c.key === "monthlyReturn")!.you).toBe(1);
+  });
+
+  it("the value card compares what the securities are worth now, among people matched on means and age, without the risk filter", () => {
+    const r = buildCohortReport(pop, me, ctx);
+    const v = r.cards.find((c) => c.key === "value")!;
+    expect(v).toMatchObject({ unit: "currency", status: "ok", filter: null, you: Math.round(me.value! * 100) / 100 });
+    expect(v.cohortSize).toBeGreaterThanOrEqual(10);
+  });
+
+  it("someone with nothing invested gets an explanation for value instead of a figure", () => {
+    const none = member("none", { value: undefined, monthlyReturns: {} });
+    const r = buildCohortReport(buildPopulation([none, ...members.slice(1)]), none, ctx);
+    const v = r.cards.find((c) => c.key === "value")!;
+    expect(v.status).toBe("unavailable");
+    expect(v.message).toMatch(/first investment/);
   });
 
   it("compares returns over the user's own window, against peers who have that same window", () => {
@@ -700,7 +750,8 @@ describe("buildObservation", () => {
       consistency: "Contribution consistency",
       diversification: "Diversification score",
       return: "Portfolio return",
-      returnPerRisk: "Return per unit of risk",
+      monthlyReturn: "Monthly portfolio return",
+      value: "Portfolio value",
     }[key],
     unit: "%",
     status: "ok",

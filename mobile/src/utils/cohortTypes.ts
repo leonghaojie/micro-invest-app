@@ -1,5 +1,5 @@
 /** Shapes of the peer comparison cards, as GET /peers/cohort returns them (DECISIONS.md #18). */
-export type MetricKey = "investmentRate" | "consistency" | "diversification" | "return" | "returnPerRisk";
+export type MetricKey = "value" | "return" | "monthlyReturn" | "investmentRate" | "consistency" | "diversification";
 
 /** What the peers hold (DECISIONS.md #21): aggregate only. */
 export interface HoldingsSummary {
@@ -14,7 +14,7 @@ export interface HoldingsSummary {
 export interface Card {
   key: MetricKey;
   label: string;
-  unit: "%" | "score" | "ratio";
+  unit: "%" | "score" | "currency";
   status: "ok" | "unavailable" | "withheld";
   /** Why a card has no figures, in words for the user. */
   message?: string;

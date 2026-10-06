@@ -153,6 +153,7 @@ export function PeerDashboard({ onStartPlan }: { onStartPlan: () => void }) {
           <Chip key={m.key} label={m.label} selected={metric === m.key} onPress={() => setMetric(m.key)} />
         ))}
       </View>
+      <Text style={styles.metricWhat}>{meta.what}</Text>
 
       {group.suppressed && (
         <View style={[styles.card, styles.warnCard]}>
@@ -319,6 +320,7 @@ const styles = StyleSheet.create({
   strong: { fontWeight: "700", color: "#333" },
   bigStat: { fontSize: 26, fontWeight: "700", color: "#2e6fdb" },
   hint: { fontSize: 12, color: "#777" },
+  metricWhat: { fontSize: 13, color: "#555", textAlign: "center", maxWidth: 360 },
   footnote: { fontSize: 11, color: "#999", textAlign: "center", maxWidth: 360, marginTop: 4 },
   error: { color: "#c0392b", textAlign: "center" },
   card: {

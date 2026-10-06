@@ -17,11 +17,11 @@ import { apiFetch, ApiError } from "../api/client";
 import { KeyboardScreen } from "../components/KeyboardScreen";
 
 interface SharingSettings {
-  shareValue: boolean;
+  shareInvestmentRate: boolean;
+  shareConsistency: boolean;
+  shareDiversification: boolean;
   shareReturn: boolean;
-  shareContributionRate: boolean;
-  shareSavingsRate: boolean;
-  shareEmergencyBuffer: boolean;
+  shareMonthlyReturn: boolean;
   shareHoldings: boolean;
 }
 
@@ -39,11 +39,11 @@ interface FriendsOverview {
 }
 
 const SHARE_OPTIONS: { key: keyof SharingSettings; label: string; hint: string }[] = [
-  { key: "shareValue", label: "Portfolio value", hint: "Your plan's current value" },
-  { key: "shareReturn", label: "Return", hint: "Growth as a % of what you've contributed" },
-  { key: "shareContributionRate", label: "Contribution rate", hint: "Monthly contribution as a % of your income" },
-  { key: "shareSavingsRate", label: "Savings rate", hint: "(income − expense) / income" },
-  { key: "shareEmergencyBuffer", label: "Emergency buffer", hint: "How many months of expenses your wallet covers" },
+  { key: "shareReturn", label: "Portfolio return", hint: "How much your portfolio has grown or shrunk, as a %" },
+  { key: "shareMonthlyReturn", label: "Monthly portfolio return", hint: "How much your portfolio grew or shrank in the latest month, as a %" },
+  { key: "shareInvestmentRate", label: "Monthly investment rate", hint: "How much of your income you put into investments each month, as a %" },
+  { key: "shareConsistency", label: "Contribution consistency", hint: "The share of recent months in which you bought something" },
+  { key: "shareDiversification", label: "Diversification score", hint: "How widely your money is spread, 0 to 100" },
   {
     key: "shareHoldings",
     label: "Holdings",

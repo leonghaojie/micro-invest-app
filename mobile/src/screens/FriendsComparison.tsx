@@ -24,6 +24,8 @@ import { apiFetch, ApiError } from "../api/client";
 import { MixBar, MixLegend } from "../components/charts/MixBar";
 import type { RootStackParamList } from "../navigation/AppNavigator";
 import { KeyboardScreen } from "../components/KeyboardScreen";
+import type { MetricKey as CohortMetricKey } from "../utils/cohortTypes";
+import { METRIC_INFO } from "../utils/metricInfo";
 
 interface HoldingsSummary {
   /** null for the user themselves (opened as "me"). */
@@ -44,8 +46,6 @@ interface HoldingsOverview {
   noPlanCount: number;
 }
 
-type MetricKey = "value" | "returnPct" | "contributionRatePct" | "savingsRatePct" | "emergencyBuffer";
-
 interface BoardRow {
   displayName: string;
   isMe: boolean;
@@ -61,16 +61,35 @@ interface MetricBoard {
 
 interface Comparison {
   friendCount: number;
+  /** How many months the return measures cover (0 when the user has no history yet). */
+  windowMonths: number;
   metrics: Record<MetricKey, MetricBoard>;
 }
 
-const METRICS: { key: MetricKey; label: string; format: (v: number) => string }[] = [
-  { key: "value", label: "Value", format: formatCurrency },
-  { key: "returnPct", label: "Return", format: (v) => `${v.toFixed(1)}%` },
-  { key: "contributionRatePct", label: "Contribution rate", format: (v) => `${v.toFixed(1)}%` },
-  { key: "savingsRatePct", label: "Savings rate", format: (v) => `${v.toFixed(1)}%` },
-  { key: "emergencyBuffer", label: "Emergency buffer", format: (v) => `${v.toFixed(1)}x` },
+/** Friends never see the portfolio's value (DECISIONS.md #22), so it is not one of their measures. */
+type MetricKey = Exclude<CohortMetricKey, "value">;
+
+/** The same five measures, names and units as the cohort comparison (DECISIONS.md #22). */
+const METRICS: { key: MetricKey; label: string; chip: string; format: (v: number) => string }[] = [
+  { key: "return", label: "Portfolio return", chip: "Return", format: (v) => `${v.toFixed(1)}%` },
+  { key: "monthlyReturn", label: "Monthly portfolio return", chip: "Monthly return", format: (v) => `${v.toFixed(1)}%` },
+  { key: "investmentRate", label: "Monthly investment rate", chip: "Investment rate", format: (v) => `${v.toFixed(1)}%` },
+  { key: "consistency", label: "Contribution consistency", chip: "Consistency", format: (v) => `${v.toFixed(1)}%` },
+  { key: "diversification", label: "Diversification score", chip: "Diversification", format: (v) => `${Math.round(v)}/100` },
 ];
+
+/** The cohort page's explanations, except where they describe the cohort's like-for-like risk groups. */
+const FRIEND_INFO: Partial<Record<MetricKey, (typeof METRIC_INFO)[MetricKey]>> = {
+  return: {
+    ...METRIC_INFO.return,
+    how: "Each month's return compounded together over the months shown above, so adding or withdrawing money does not distort it.",
+    meaning: "Positive means the portfolio grew, negative that it shrank. A friend holding riskier investments is expected to swing more, so a higher figure is not automatically better.",
+  },
+  monthlyReturn: {
+    ...METRIC_INFO.monthlyReturn,
+    meaning: "Positive means the portfolio grew that month, negative that it shrank. A single month swings a lot, so it is a snapshot and not a trend, and a friend holding riskier investments is expected to swing more.",
+  },
+};
 
 // Keep each page short however many friends there are.
 const BOARD_TOP = 5; // rankings rows shown before "Show all"
@@ -82,7 +101,7 @@ export function FriendsComparison({ onManage }: { onManage: () => void }) {
   const [holdings, setHoldings] = useState<HoldingsOverview | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [metric, setMetric] = useState<MetricKey>("value");
+  const [metric, setMetric] = useState<MetricKey>("return");
   const [view, setView] = useState<"rankings" | "holdings">("rankings");
 
   const load = useCallback(() => {
@@ -181,11 +200,11 @@ export function FriendsComparison({ onManage }: { onManage: () => void }) {
       <View style={styles.chipWrap}>
         {METRICS.map((m) => (
           <Pressable key={m.key} style={[styles.chip, metric === m.key && styles.chipSelected]} onPress={() => setMetric(m.key)}>
-            <Text style={[styles.chipText, metric === m.key && styles.chipTextSelected]}>{m.label}</Text>
+            <Text style={[styles.chipText, metric === m.key && styles.chipTextSelected]}>{m.chip}</Text>
           </Pressable>
         ))}
       </View>
-      <RankingsBoard board={data.metrics[metric]} metric={METRICS.find((m) => m.key === metric)!} />
+      <RankingsBoard board={data.metrics[metric]} metric={METRICS.find((m) => m.key === metric)!} metricKey={metric} windowMonths={data.windowMonths} />
       {footer}
     </ScrollView>
   );
@@ -193,8 +212,21 @@ export function FriendsComparison({ onManage }: { onManage: () => void }) {
 
 /** One metric's ranking. With many friends it shows the top few plus the
  * user's own row (so they can always find themselves), and a toggle for the rest. */
-function RankingsBoard({ board, metric }: { board: MetricBoard; metric: { label: string; format: (v: number) => string } }) {
+function RankingsBoard({
+  board,
+  metric,
+  metricKey,
+  windowMonths,
+}: {
+  board: MetricBoard;
+  metric: { label: string; format: (v: number) => string };
+  metricKey: MetricKey;
+  windowMonths: number;
+}) {
   const [expanded, setExpanded] = useState(false);
+  const [explaining, setExplaining] = useState(false);
+  const info = FRIEND_INFO[metricKey] ?? METRIC_INFO[metricKey];
+  const overWindow = metricKey === "return" && windowMonths > 0;
 
   const collapsible = board.rows.length > BOARD_TOP + 1;
   const top = board.rows.slice(0, BOARD_TOP);
@@ -205,6 +237,12 @@ function RankingsBoard({ board, metric }: { board: MetricBoard; metric: { label:
   return (
     <View style={styles.card}>
       <Text style={styles.cardHeading}>{metric.label}</Text>
+      <Text style={styles.metricWhat}>{info.what}</Text>
+      {overWindow && (
+        <Text style={styles.note}>
+          Everyone is measured over your last {windowMonths} month{windowMonths === 1 ? "" : "s"}, so the comparison is like for like.
+        </Text>
+      )}
 
       {board.rows.length === 0 && <Text style={styles.body}>Nothing to rank yet for this stat.</Text>}
 
@@ -223,6 +261,16 @@ function RankingsBoard({ board, metric }: { board: MetricBoard; metric: { label:
         <Pressable onPress={() => setExpanded((e) => !e)}>
           <Text style={styles.toggleLink}>{expanded ? `Show top ${BOARD_TOP}` : `Show all ${board.rows.length}`}</Text>
         </Pressable>
+      )}
+
+      <Pressable onPress={() => setExplaining((e) => !e)} accessibilityRole="button">
+        <Text style={styles.toggleLink}>{explaining ? "Hide explanation" : "What does this mean?"}</Text>
+      </Pressable>
+      {explaining && (
+        <View style={styles.explain}>
+          <Text style={styles.explainText}>{info.how}</Text>
+          <Text style={styles.explainText}>{info.meaning}</Text>
+        </View>
       )}
 
       {board.hiddenCount > 0 && (
@@ -354,10 +402,6 @@ function HoldingsRow({ person, isMe, onPress }: { person: HoldingsSummary; isMe?
   );
 }
 
-function formatCurrency(value: number): string {
-  return `$${value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-}
-
 function describeError(err: unknown): string {
   if (err instanceof ApiError) {
     const body = err.body as { error?: string } | undefined;
@@ -387,6 +431,9 @@ const styles = StyleSheet.create({
     padding: 16,
     gap: 8,
   },
+  metricWhat: { fontSize: 13, color: "#555" },
+  explain: { gap: 6, backgroundColor: "#f7f7f7", borderRadius: 6, padding: 10 },
+  explainText: { fontSize: 13, color: "#444" },
   cardMe: { backgroundColor: "#f5f9ff", borderColor: "#2e6fdb" },
   cardHeading: { fontSize: 16, fontWeight: "600" },
   row: { flexDirection: "row", alignItems: "center", gap: 12, paddingVertical: 8, paddingHorizontal: 8, borderRadius: 6 },

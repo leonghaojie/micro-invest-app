@@ -110,7 +110,7 @@ describe("PeerCohortService.getCohort", () => {
     expect(plans.getActivePlan.mock.invocationCallOrder[0]).toBeLessThan(db.plan.findMany.mock.invocationCallOrder[0]);
   });
 
-  it("returns a full report: identity, group, a headline with a benchmark, and five cards", async () => {
+  it("returns a full report: identity, group, a headline with a benchmark, and six cards", async () => {
     const res = await peerCohortService.getCohort("user-0");
 
     if (res.status !== "ok") throw new Error("expected ok");
@@ -118,9 +118,16 @@ describe("PeerCohortService.getCohort", () => {
     expect(res.report.suppressed).toBe(false);
     expect(res.report.identity).toHaveLength(4);
     expect(res.report.group!.size).toBeGreaterThan(0);
-    expect(res.report.cards.map((c) => c.key)).toEqual(["investmentRate", "consistency", "diversification", "return", "returnPerRisk"]);
+    expect(res.report.cards.map((c) => c.key)).toEqual(["value", "return", "monthlyReturn", "investmentRate", "consistency", "diversification"]);
     expect(res.report.headline).toMatchObject({ windowMonths: 12 });
     expect(res.report.headline!.benchmark).not.toBeNull();
+  });
+
+  it("takes the value at the latest month on record (as Explore does) and the latest month's return", async () => {
+    const res = await peerCohortService.getCohort("user-0");
+    if (res.status !== "ok") throw new Error("expected ok");
+    expect(res.report.cards.find((c) => c.key === "value")!.you).toBe(5000);
+    expect(res.report.cards.find((c) => c.key === "monthlyReturn")!.you).toBe(0.4);
   });
 
   it("works out contribution consistency from the months each account bought in", async () => {

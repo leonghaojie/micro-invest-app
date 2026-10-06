@@ -12,6 +12,12 @@
  *    fewer than 3 members are merged / withheld, so no cell describes one
  *    or two identifiable people.
  *
+ * The metrics (DECISIONS.md #23): value, return, investment rate, contribution consistency,
+ * diversification score and savings rate. The first three and the savings rate are SQL
+ * expressions; consistency and diversification need the ledger and the holdings, so for those
+ * the segment's members are picked in SQL and the figures worked out by the same code the
+ * cohort comparison uses (memberLoader / peerCohort), then summarised here.
+ *
  * All aggregation is pushed into PostgreSQL (percentile_cont, width_bucket,
  * window functions) rather than loading peers into JS — Decision #5 — via one
  * shared peer-population fragment, so every panel describes exactly the same
@@ -22,6 +28,8 @@
 import { Prisma } from "@prisma/client";
 import { env } from "../config/env";
 import { prisma } from "../config/prisma";
+import { ComparisonKey, memberFigures, quantile } from "../utils/peerCohort";
+import { loadMembers } from "./memberLoader";
 import { describeSegment, PeerGroupAssignment, PeerDimension } from "./peerGrouping.service";
 
 // ── Constants & types ──────────────────────────────────────────────────
@@ -30,11 +38,17 @@ export const MIN_CELL_COUNT = 3;
 const HISTOGRAM_BINS = 10;
 const TOP_FUNDS = 5;
 
-export const PEER_METRICS = ["value", "returnPct", "contributionRatePct", "savingsRatePct", "emergencyBuffer"] as const;
+export const PEER_METRICS = ["value", "returnPct", "monthlyReturnPct", "investmentRatePct", "consistencyPct", "diversificationScore", "savingsRatePct"] as const;
 export type PeerMetric = (typeof PEER_METRICS)[number];
 
+// Metrics worked out in application code with the cohort comparison's own rules.
+const MEMBER_METRICS: Partial<Record<PeerMetric, ComparisonKey>> = {
+  consistencyPct: "consistency",
+  diversificationScore: "diversification",
+};
+
 // Metrics that change month to month, so a trajectory is meaningful.
-const TRAJECTORY_METRICS: readonly PeerMetric[] = ["value", "returnPct", "emergencyBuffer"];
+const TRAJECTORY_METRICS: readonly PeerMetric[] = ["value", "returnPct", "monthlyReturnPct"];
 
 export interface HistogramBin {
   from: number;
@@ -122,6 +136,37 @@ export function percentileRank(below: number, equal: number, total: number): num
   return Math.round(((below + equal / 2) / total) * 1000) / 10;
 }
 
+/** The distribution of a list of figures: percentile bounds, quartiles, a histogram with small bins
+ * merged, and where `mine` sits. The same arithmetic as the SQL path (percentile_cont, width_bucket),
+ * for metrics that are worked out in code. Null with fewer than `minGroup` figures. */
+export function summariseValues(values: number[], mine: number | null, minGroup: number): { distribution: Distribution | null; rank: number | null } {
+  const present = values.filter((v) => Number.isFinite(v)).sort((a, b) => a - b);
+  if (present.length < minGroup) return { distribution: null, rank: null };
+
+  const lo = quantile(present, 0.05);
+  const hiRaw = quantile(present, 0.95);
+  const hi = hiRaw > lo ? hiRaw : lo + 1;
+  const counts = new Array<number>(HISTOGRAM_BINS).fill(0);
+  for (const v of present) {
+    const clamped = Math.min(Math.max(v, lo), hi);
+    const bucket = Math.min(Math.floor(((clamped - lo) / (hi - lo)) * HISTOGRAM_BINS) + 1, HISTOGRAM_BINS);
+    counts[bucket - 1]++;
+  }
+
+  return {
+    distribution: {
+      bins: buildHistogram(lo, hi, counts).map((b) => ({ from: round(b.from), to: round(b.to), count: b.count })),
+      p25: round(quantile(present, 0.25)),
+      p50: round(quantile(present, 0.5)),
+      p75: round(quantile(present, 0.75)),
+      lo: round(lo),
+      hi: round(hi),
+      peerCount: present.length,
+    },
+    rank: mine === null ? null : percentileRank(present.filter((v) => v < mine).length, present.filter((v) => v === mine).length, present.length),
+  };
+}
+
 function num(v: unknown): number | null {
   return v === null || v === undefined ? null : Number(v);
 }
@@ -138,7 +183,7 @@ const LATEST = Prisma.sql`
   latest AS (
     SELECT DISTINCT ON (p."userId")
       p.id AS plan_id, p."userId", p."portfolioId", p."contributionAmount", p."startMonth",
-      pm."endingBalance", pm."totalInvested", pm."walletBalance"
+      pm."endingBalance", pm."totalInvested", pm."walletBalance", pm."portfolioReturnPct", pm."hasPosition"
     FROM plans p
     JOIN plan_months pm ON pm."planId" = p.id
     -- only accounts that have invested (DECISIONS.md #19): an account holding only cash is not a peer
@@ -160,7 +205,7 @@ function peersCte(userId: string, group: PeerGroupAssignment): Prisma.Sql {
   return Prisma.sql`${LATEST},
   peers AS (
     SELECT l.plan_id, l."userId", l."portfolioId", l."contributionAmount", l."startMonth",
-           l."endingBalance", l."totalInvested", l."walletBalance",
+           l."endingBalance", l."totalInvested", l."walletBalance", l."portfolioReturnPct", l."hasPosition",
            up."monthlyIncome", up."monthlyExpense"
     FROM latest l
     JOIN user_profiles up ON up."userId" = l."userId"
@@ -181,19 +226,20 @@ function holdingsCte(userId: string, group: PeerGroupAssignment): Prisma.Sql {
 }
 
 // Per-metric SQL over a row exposing the snapshot columns (peers / me CTEs).
-const SNAPSHOT_SQL: Record<PeerMetric, Prisma.Sql> = {
+const SNAPSHOT_SQL: Partial<Record<PeerMetric, Prisma.Sql>> = {
   value: Prisma.sql`"endingBalance"`,
   returnPct: Prisma.sql`(("endingBalance" - "totalInvested") / NULLIF("totalInvested", 0) * 100)`,
-  contributionRatePct: Prisma.sql`("contributionAmount" / NULLIF("monthlyIncome", 0) * 100)`,
+  // The latest month's return (a fraction in the table), only for a month the account held something.
+  monthlyReturnPct: Prisma.sql`(CASE WHEN "hasPosition" THEN "portfolioReturnPct" * 100 END)`,
+  investmentRatePct: Prisma.sql`("contributionAmount" / NULLIF("monthlyIncome", 0) * 100)`,
   savingsRatePct: Prisma.sql`(("monthlyIncome" - "monthlyExpense") / NULLIF("monthlyIncome", 0) * 100)`,
-  emergencyBuffer: Prisma.sql`("walletBalance" / NULLIF("monthlyExpense", 0))`,
 };
 
 // Per-metric SQL over a single plan month (aliases: pm = plan_months, up = user_profiles).
 const SERIES_SQL: Partial<Record<PeerMetric, Prisma.Sql>> = {
   value: Prisma.sql`pm."endingBalance"`,
+  monthlyReturnPct: Prisma.sql`(CASE WHEN pm."hasPosition" THEN pm."portfolioReturnPct" * 100 END)`,
   returnPct: Prisma.sql`((pm."endingBalance" - pm."totalInvested") / NULLIF(pm."totalInvested", 0) * 100)`,
-  emergencyBuffer: Prisma.sql`(pm."walletBalance" / NULLIF(up."monthlyExpense", 0))`,
 };
 
 interface DistributionRow {
@@ -211,6 +257,9 @@ interface DistributionRow {
 class PeerInsightsService {
   /** The user's own latest figure for a metric (null with no plan). */
   private async myValue(userId: string, metric: PeerMetric): Promise<number | null> {
+    const memberKey = MEMBER_METRICS[metric];
+    if (memberKey) return (await this.memberValues([userId], memberKey)).get(userId) ?? null;
+
     const rows = await prisma.$queryRaw<{ v: unknown }[]>`
       WITH ${LATEST},
       me AS (
@@ -218,12 +267,32 @@ class PeerInsightsService {
         FROM latest l JOIN user_profiles up ON up."userId" = l."userId"
         WHERE l."userId" = ${userId}
       )
-      SELECT ${SNAPSHOT_SQL[metric]} AS v FROM me`;
+      SELECT ${SNAPSHOT_SQL[metric]!} AS v FROM me`;
     return num(rows[0]?.v);
   }
 
+  /** Each given user's figure for a measure the cohort comparison also uses (null: they have none). */
+  private async memberValues(userIds: string[], key: ComparisonKey): Promise<Map<string, number | null>> {
+    const loaded = await loadMembers(userIds);
+    const out = new Map<string, number | null>();
+    const wanted = new Set(userIds);
+    for (const m of loaded?.members ?? []) if (wanted.has(m.id)) out.set(m.id, memberFigures(m, { months: [], n: 0 })[key]);
+    return out;
+  }
+
+  /** The distribution for a measure worked out in code: the segment's members are chosen in SQL. */
+  private async memberDistribution(userId: string, group: PeerGroupAssignment, key: ComparisonKey, mine: number | null): Promise<{ distribution: Distribution | null; rank: number | null }> {
+    const rows = await prisma.$queryRaw<{ userId: string }[]>`WITH ${peersCte(userId, group)} SELECT "userId" FROM peers`;
+    const figures = await this.memberValues(rows.map((r) => r.userId), key);
+    const values = [...figures.values()].filter((v): v is number => v !== null);
+    return summariseValues(values, mine, env.minGroupSize);
+  }
+
   private async distribution(userId: string, group: PeerGroupAssignment, metric: PeerMetric, mine: number | null): Promise<{ distribution: Distribution | null; rank: number | null }> {
-    const expr = SNAPSHOT_SQL[metric];
+    const memberKey = MEMBER_METRICS[metric];
+    if (memberKey) return this.memberDistribution(userId, group, memberKey, mine);
+
+    const expr = SNAPSHOT_SQL[metric]!;
     const rows = await prisma.$queryRaw<DistributionRow[]>`
       WITH ${peersCte(userId, group)},
       vals AS (SELECT ${expr} AS v FROM peers),

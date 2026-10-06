@@ -16,6 +16,12 @@ export interface MetricInfo {
 }
 
 export const METRIC_INFO: Record<MetricKey, MetricInfo> = {
+  value: {
+    what: "What the securities in your portfolio are worth now.",
+    how: "The market value of everything you hold at the end of the latest month of fund data. Cash you have not invested is not counted, and anything you bought since shows once that month's data arrives.",
+    meaning:
+      "A higher figure means a larger portfolio. It depends a lot on how long you have been investing and how much you put in, so on its own it says little about how well the investments did. It is compared with investors of similar income, spare income and age.",
+  },
   investmentRate: {
     what: "How much of your income you put into investments each month.",
     how: "Your average monthly purchases over the last 12 months (or since you started), divided by your monthly income.",
@@ -36,10 +42,11 @@ export const METRIC_INFO: Record<MetricKey, MetricInfo> = {
     how: "Your total return over the same period as the headline (up to 12 months): each month's return is compounded together, so adding or withdrawing money does not distort it.",
     meaning: "Positive means your portfolio grew, negative that it shrank. It is compared with investors who took the same level of risk, because a higher-risk portfolio is expected to swing more.",
   },
-  returnPerRisk: {
-    what: "How much return you got for the ups and downs you went through.",
-    how: "Your annualised return divided by your annualised volatility, which is how much your monthly returns bounce around. It needs at least 6 months of history.",
-    meaning: "A higher number means more return for each unit of ups and downs. A negative number means the portfolio lost money overall.",
+  monthlyReturn: {
+    what: "How much your portfolio grew or shrank in the latest month.",
+    how: "Your portfolio's return for the most recent month of fund data. Money you add or take out is not counted as a gain or a loss.",
+    meaning:
+      "Positive means the portfolio grew that month, negative that it shrank. A single month swings a lot, so it is a snapshot and not a trend. It is compared with investors who took the same level of risk.",
   },
 };
 
@@ -52,7 +59,7 @@ export function positionText(percentile: number, topPct: number): string {
 /** A figure in the unit of its measure. */
 export function formatMetric(card: Pick<Card, "unit">, v: number): string {
   if (card.unit === "score") return `${Math.round(v)}/100`;
-  if (card.unit === "ratio") return v.toFixed(2);
+  if (card.unit === "currency") return `$${Math.round(v).toLocaleString()}`;
   return `${v.toFixed(1)}%`;
 }
 

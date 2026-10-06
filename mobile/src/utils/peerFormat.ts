@@ -2,7 +2,7 @@
  * Metric labels and number formatting for the peer dashboard
  * (DECISIONS.md #9), shared by the screen and the chart components.
  */
-export type PeerMetric = "value" | "returnPct" | "contributionRatePct" | "savingsRatePct" | "emergencyBuffer";
+export type PeerMetric = "value" | "returnPct" | "monthlyReturnPct" | "investmentRatePct" | "consistencyPct" | "diversificationScore" | "savingsRatePct";
 
 export function formatCurrency(value: number): string {
   return `$${value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -19,16 +19,20 @@ export function formatCompactCurrency(value: number): string {
 export const METRICS: {
   key: PeerMetric;
   label: string;
+  /** One line on what the measure is. */
+  what: string;
   /** Full-precision formatting, for text. */
   format: (v: number) => string;
   /** Compact formatting, for chart axes. */
   axis: (v: number) => string;
 }[] = [
-  { key: "value", label: "Value", format: formatCurrency, axis: formatCompactCurrency },
-  { key: "returnPct", label: "Return", format: (v) => `${v.toFixed(1)}%`, axis: (v) => `${Math.round(v)}%` },
-  { key: "contributionRatePct", label: "Contribution rate", format: (v) => `${v.toFixed(1)}%`, axis: (v) => `${Math.round(v)}%` },
-  { key: "savingsRatePct", label: "Savings rate", format: (v) => `${v.toFixed(1)}%`, axis: (v) => `${Math.round(v)}%` },
-  { key: "emergencyBuffer", label: "Emergency buffer", format: (v) => `${v.toFixed(1)}x`, axis: (v) => `${v.toFixed(1)}x` },
+  { key: "value", label: "Value", what: "What the securities you hold are worth now.", format: formatCurrency, axis: formatCompactCurrency },
+  { key: "returnPct", label: "Return", what: "How much your portfolio has grown or shrunk compared with the money you put in.", format: (v) => `${v.toFixed(1)}%`, axis: (v) => `${Math.round(v)}%` },
+  { key: "monthlyReturnPct", label: "Monthly return", what: "How much your portfolio grew or shrank in the latest month.", format: (v) => `${v.toFixed(1)}%`, axis: (v) => `${Math.round(v)}%` },
+  { key: "investmentRatePct", label: "Investment rate", what: "How much of your income you put into investments each month, on average.", format: (v) => `${v.toFixed(1)}%`, axis: (v) => `${Math.round(v)}%` },
+  { key: "consistencyPct", label: "Consistency", what: "The share of recent months, from your first purchase, in which you bought something.", format: (v) => `${v.toFixed(0)}%`, axis: (v) => `${Math.round(v)}%` },
+  { key: "diversificationScore", label: "Diversification", what: "How widely your money is spread across kinds of assets and funds, from 0 to 100.", format: (v) => `${Math.round(v)}/100`, axis: (v) => `${Math.round(v)}` },
+  { key: "savingsRatePct", label: "Savings rate", what: "The share of your income left after expenses, from your profile.", format: (v) => `${v.toFixed(1)}%`, axis: (v) => `${Math.round(v)}%` },
 ];
 
 export function metricMeta(key: PeerMetric) {
