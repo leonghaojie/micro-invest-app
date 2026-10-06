@@ -54,9 +54,14 @@ export interface Member {
   holdings: { assetClass: string; weight: number; ticker?: string; name?: string }[];
   /** The portfolio's monthly return (a fraction) by month, "YYYY-MM". Recent months only. */
   monthlyReturns: Record<string, number>;
+  /** What the securities held are worth now. Only the anonymous comparisons use it, never the friends ranking. */
+  value?: number;
 }
 
-export type MetricKey = "investmentRate" | "consistency" | "diversification" | "return" | "returnPerRisk";
+export type MetricKey = "value" | "return" | "monthlyReturn" | "investmentRate" | "consistency" | "diversification";
+
+/** The measures that can be compared between named people (friends): everything but the portfolio's value. */
+export type ComparisonKey = Exclude<MetricKey, "value">;
 
 type Feature = "income" | "capacity" | "life" | "risk";
 export type Weights = Partial<Record<Feature, number>>;
@@ -67,6 +72,8 @@ export type Weights = Partial<Record<Feature, number>>;
 export const GENERAL_WEIGHTS: Weights = { income: 0.35, capacity: 0.35, life: 0.2, risk: 0.1 };
 
 export const METRIC_WEIGHTS: Record<MetricKey, Weights> = {
+  // How large a portfolio is follows means and age (how long someone could have been investing), not risk appetite.
+  value: { income: 0.4, capacity: 0.4, life: 0.2 },
   // Contribution / saving behaviour: financial resources matter, risk barely does.
   investmentRate: { income: 0.4, capacity: 0.4, life: 0.2 },
   // How regularly someone invests is behaviour like how much: the same financial position matters.
@@ -76,11 +83,11 @@ export const METRIC_WEIGHTS: Record<MetricKey, Weights> = {
   // Returns: compare mainly among people taking similar risk; with the hard same-risk
   // filter on, the rest orders those people by how alike their circumstances are.
   return: { risk: 0.5, life: 0.2, income: 0.15, capacity: 0.15 },
-  returnPerRisk: { risk: 0.5, life: 0.2, income: 0.15, capacity: 0.15 },
+  monthlyReturn: { risk: 0.5, life: 0.2, income: 0.15, capacity: 0.15 },
 };
 
 /** Return comparisons are only meaningful among people taking similar risk (framework §2). */
-const HARD_RISK: Record<MetricKey, boolean> = { investmentRate: false, consistency: false, diversification: false, return: true, returnPerRisk: true };
+const HARD_RISK: Record<MetricKey, boolean> = { value: false, investmentRate: false, consistency: false, diversification: false, return: true, monthlyReturn: true };
 
 /** An age gap of this many years counts as "completely different" for life stage. */
 export const LIFE_STAGE_SPAN_YEARS = 15;
@@ -189,25 +196,6 @@ export function windowReturns(m: Pick<Member, "monthlyReturns">, months: string[
 /** Compounded return over the months, as a percent (time-weighted: contributions do not distort it). */
 export function compoundedReturnPct(returns: number[]): number {
   return round2((returns.reduce((acc, r) => acc * (1 + r), 1) - 1) * 100);
-}
-
-/** The shortest window over which return-per-risk is meaningful. */
-export const MIN_MONTHS_FOR_RISK_ADJUSTED = 6;
-
-/**
- * Annualised return divided by annualised volatility (a Sharpe-like ratio with no
- * risk-free rate): how much return each unit of ups-and-downs bought. null if the window
- * is too short or the returns never moved.
- */
-export function returnPerRisk(returns: number[]): number | null {
-  const n = returns.length;
-  if (n < MIN_MONTHS_FOR_RISK_ADJUSTED) return null;
-  const growth = returns.reduce((acc, r) => acc * (1 + r), 1);
-  const annualReturn = Math.pow(growth, 12 / n) - 1;
-  const mean = returns.reduce((a, b) => a + b, 0) / n;
-  const variance = returns.reduce((a, r) => a + (r - mean) ** 2, 0) / (n - 1);
-  const annualVol = Math.sqrt(variance) * Math.sqrt(12);
-  return annualVol > 1e-9 ? round2(annualReturn / annualVol) : null;
 }
 
 // ── Benchmark ──────────────────────────────────────────────────────────
@@ -456,7 +444,7 @@ export function describeGroup(peers: Member[]): GroupDescription {
 export interface Card {
   key: MetricKey;
   label: string;
-  unit: "%" | "score" | "ratio";
+  unit: "%" | "score" | "currency";
   status: "ok" | "unavailable" | "withheld";
   /** Why a card has no figures, in words for the user. */
   message?: string;
@@ -590,12 +578,72 @@ interface MetricDef {
 }
 
 const CARD_DEFS: MetricDef[] = [
+  { key: "value", label: "Portfolio value", unit: "currency" },
+  { key: "return", label: "Portfolio return", unit: "%" },
+  { key: "monthlyReturn", label: "Monthly portfolio return", unit: "%" },
   { key: "investmentRate", label: "Monthly investment rate", unit: "%" },
   { key: "consistency", label: "Contribution consistency", unit: "%" },
   { key: "diversification", label: "Diversification score", unit: "score" },
-  { key: "return", label: "Portfolio return", unit: "%" },
-  { key: "returnPerRisk", label: "Return per unit of risk", unit: "ratio" },
 ];
+
+/** How a metric reads off a member over a comparison window (null: the member cannot be compared on it). */
+export function metricReader(key: MetricKey, months: string[], n: number): (m: Member) => number | null {
+  return (m) => {
+    switch (key) {
+      case "value":
+        return m.value !== undefined && m.value > 0 ? round2(m.value) : null;
+      case "monthlyReturn": {
+        // The latest month of data: the last month of the window, which always ends there.
+        const r = n > 0 ? m.monthlyReturns[months[months.length - 1]] : undefined;
+        return r === undefined ? null : round2(r * 100);
+      }
+      case "investmentRate":
+        return investmentRatePct(m);
+      case "consistency":
+        return m.consistencyPct;
+      case "diversification":
+        return m.holdings.length === 0 ? null : diversificationScore(m.holdings);
+      case "return": {
+        const r = n > 0 ? windowReturns(m, months) : null;
+        return r ? compoundedReturnPct(r) : null;
+      }
+    }
+  };
+}
+
+/** The measures that can be compared between people, in the order they are shown everywhere (results first, then habits and choices). */
+export const COMPARISON_METRICS: ComparisonKey[] = ["return", "monthlyReturn", "investmentRate", "consistency", "diversification"];
+
+export interface ComparisonWindow {
+  /** The calendar months returns are compared over, oldest first. */
+  months: string[];
+  /** How many of them the viewer has returns for (0 when they have none). */
+  n: number;
+}
+
+/** The window everyone is measured over for one viewer: the longest recent run (up to a year) the viewer has. */
+export function comparisonWindow(viewer: Member | null | undefined, asOf: string): ComparisonWindow {
+  const n = viewer ? windowLength(viewer, asOf) : 0;
+  return { months: trailingMonths(asOf, Math.max(n, 1)), n };
+}
+
+/**
+ * Every comparable measure for one member, over the viewer's window. A measure the member
+ * cannot be compared on (no history, no holdings, not the same months) is null. The friends
+ * ranking uses this so it ranks on exactly what the cohort comparison measures (DECISIONS.md #22).
+ */
+export function memberFigures(member: Member | null | undefined, window: ComparisonWindow): Record<ComparisonKey, number | null> {
+  const out = {} as Record<ComparisonKey, number | null>;
+  for (const key of COMPARISON_METRICS) out[key] = member ? metricReader(key, window.months, window.n)(member) : null;
+  return out;
+}
+
+/** Why the user has no figure for a metric, in words for them. */
+function unavailableMessage(key: MetricKey, n: number): string {
+  if (key === "return" || key === "monthlyReturn") return "Needs at least 1 full month of investing history.";
+  if (key === "value") return "Make your first investment to see the value of your portfolio.";
+  return key === "consistency" ? "Needs at least 3 months of investing to show how regularly you invest." : "Not available yet.";
+}
 
 export function buildCohortReport(pop: Population, me: Member, ctx: ReportContext): CohortReport {
   const base = { minGroup: ctx.minGroup, k: ctx.k, minCohort: ctx.minCohort };
@@ -617,41 +665,10 @@ export function buildCohortReport(pop: Population, me: Member, ctx: ReportContex
     const weights = METRIC_WEIGHTS[def.key];
     const card: Card = { key: def.key, label: def.label, unit: def.unit, status: "ok", basis: describeBasis(weights), filter: null, relaxations: [] };
 
-    // How each metric reads off a member (null: the member cannot be compared on it).
-    const value = (m: Member): number | null => {
-      switch (def.key) {
-        case "investmentRate":
-          return investmentRatePct(m);
-        case "consistency":
-          return m.consistencyPct;
-        case "diversification":
-          return m.holdings.length === 0 ? null : diversificationScore(m.holdings);
-        case "return": {
-          const r = n > 0 ? windowReturns(m, months) : null;
-          return r ? compoundedReturnPct(r) : null;
-        }
-        case "returnPerRisk": {
-          const r = n > 0 ? windowReturns(m, months) : null;
-          return r ? returnPerRisk(r) : null;
-        }
-      }
-    };
+    const value = metricReader(def.key, months, n);
 
     const mine = value(me);
-    if (mine === null) {
-      return {
-        ...card,
-        status: "unavailable",
-        message:
-          def.key === "return" || def.key === "returnPerRisk"
-            ? def.key === "returnPerRisk" && n > 0
-              ? `Needs at least ${MIN_MONTHS_FOR_RISK_ADJUSTED} months of history (you have ${n}).`
-              : "Needs at least 1 full month of investing history."
-            : def.key === "consistency"
-              ? "Needs at least 3 months of investing to show how regularly you invest."
-              : "Not available yet.",
-      };
-    }
+    if (mine === null) return { ...card, status: "unavailable", message: unavailableMessage(def.key, n) };
 
     const sel = selectPeers(pop, me, weights, { ...base, hardRisk: HARD_RISK[def.key], eligible: (m) => value(m) !== null });
     if (sel.suppressed) {

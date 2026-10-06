@@ -98,11 +98,13 @@ model Friendship {
 model FriendSharing {
   id                    String  @id @default(uuid())
   userId                String  @unique
-  shareValue            Boolean @default(false)
+  // DECISIONS.md #22: friends rank on the cohort comparison's measures. Value, savings rate and
+  // emergency buffer are not offered at all. Every flag is off by default.
+  shareInvestmentRate   Boolean @default(false)
+  shareConsistency      Boolean @default(false)
+  shareDiversification  Boolean @default(false)
   shareReturn           Boolean @default(false)
-  shareContributionRate Boolean @default(false)
-  shareSavingsRate      Boolean @default(false)
-  shareEmergencyBuffer  Boolean @default(false)
+  shareMonthlyReturn    Boolean @default(false)
   // DECISIONS.md #12: whether accepted friends may see which funds are in
   // this user's plan and each fund's weight (percent only, never amounts).
   // Off by default like every other flag here.

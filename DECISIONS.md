@@ -1941,6 +1941,204 @@ Implements: UC-05 amended (FR51, FR52). Owner: `backend/src/utils/peerCohort.ts`
 (`summarizeHoldings`), `backend/src/services/peerCohort.service.ts`, mobile
 `PeerHoldings.tsx`, `MetricsTable.tsx`.
 
+## 22. Friends rank on the cohort comparison's measures; value and the other portfolio figures are gone (7 Oct 2026)
+
+*Amended by #24: return per unit of risk was removed and the monthly portfolio return added to this list.*
+
+**Problem.** The Friends view (#8) ranked five figures that had grown up separately from the
+cohort comparison: portfolio **value**, **return** (growth over what was contributed),
+**contribution rate**, **savings rate** and **emergency buffer**. Three problems:
+
+- A user's **portfolio value** is shown against their display name. Even as an opt-in, an
+  account balance is not something that should be on a leaderboard, and the switch only made it
+  one tap away from a mistake.
+- The **emergency buffer** says little about how someone invests (it is wallet cash over
+  expenses), and the **savings rate** is a profile figure ((income - expense) / income), not
+  something done on the platform.
+- The ones that did overlap the cohort comparison (contribution rate, return) were calculated
+  a different way, so the same person could have one number on the Cohort view and another on
+  the Friends view.
+
+**Decision.**
+
+1. Friends rank on **exactly the five measures of the cohort comparison**: monthly investment
+   rate, contribution consistency, diversification score, portfolio return and return per unit
+   of risk. They use the **same code** (`metricReader` in `utils/peerCohort.ts`, via
+   `memberFigures`), the same names, units and explanations, so there is one definition of each.
+2. **Value, savings rate and emergency buffer are removed**, not hidden: they are not
+   calculated for friends, not offered as sharing switches and not stored (the columns are
+   dropped). There is nothing to toggle or leak.
+3. **One sharing switch per measure**, all off by default, plus Holdings (#12). The old
+   contribution-rate choice carries over as the investment-rate choice; the three new
+   measures start off for everyone.
+4. **Like for like.** Return and return per risk are worked out over the **viewer's window**
+   (the longest recent run, up to 12 months, for which the viewer has returns), the same rule as
+   the cohort headline. The screen says how many months. A friend without returns for those
+   months has no figure on these two measures (counted as "no figure yet", never given a
+   different period).
+5. The Friends rankings keep their interface (a board per measure, competition ranking, top five
+   plus your row, hidden friends counted and never named), and gain the cohort's one-line "what
+   it is" and a "What does this mean?" link (the cohort wording, except the return explanation,
+   which no longer talks about the cohort's risk groups).
+
+**Privacy.** Unchanged in kind (#8): accepted friends only, opted-in measures only, display
+names only, no ids or emails in any response (a test checks the whole response). It is
+strictly less than before: no amounts of any kind are exposed now.
+
+**Where it lives.** `backend/src/services/memberLoader.ts` (new; the loader the cohort used,
+now shared, optionally for a set of users), `peerCohort.service.ts` (uses it),
+`friends.service.ts` (`getComparison`, `buildComparison`, `SharingSettings`), engine helpers
+`comparisonWindow` / `memberFigures` / `COMPARISON_METRICS` in `utils/peerCohort.ts`; migration
+`20261007120000_friends_cohort_metrics` (drops three columns, renames one, adds three); seed
+turns the new switches on for the demo friends. Mobile: `FriendsComparison.tsx`,
+`FriendsScreen.tsx`.
+
+**Verification.**
+- 739 backend tests pass (30 suites). The friends tests were rewritten for the new measures:
+  exactly five measures and no value/savings/emergency key or text anywhere in a response; a
+  switch per measure and one never reveals another; the removed switches are ignored if sent;
+  figures are the cohort's (investment rate, consistency, diversification, compounded return,
+  return per risk needing 6 months); the viewer's window and a friend lacking those months; a
+  friend who has not invested; the viewer's own account is refreshed and friends' read as
+  stored. Six new engine tests cover `comparisonWindow` and `memberFigures`.
+- The migration was checked against `schema.prisma` on a throwaway shadow database (never the
+  dev database) and applied to dev.
+- **Live API** with an account that has friends: the investment-rate board matches each
+  friend's stored contribution over income for all five demo friends.
+- **UI (Expo web):** five chips with the cohort names, the board per measure, the "measured over
+  your last 7 months" note on Return, the explanation opening, and the sharing screen listing
+  the five measures plus Holdings with no value, savings rate or buffer.
+
+**Limits.**
+- The demo friends are simulated accounts, so the demo boards show their
+  assumptions, not real behaviour (#9).
+- A friend who joined after the viewer started cannot be compared on return over a long window;
+  the board then has fewer rows, by design.
+- Choices made under the old switches (value, savings rate, emergency buffer) are discarded by
+  the migration, not mapped to anything.
+
+Implements: UC-08 amended (FR53, FR54). Owner: `backend/src/services/friends.service.ts`,
+`backend/src/services/memberLoader.ts`, `backend/src/utils/peerCohort.ts`, mobile
+`FriendsComparison.tsx`, `FriendsScreen.tsx`.
+
+## 23. Explore keeps its charts, with the measures you asked for (7 Oct 2026)
+
+**Problem.** The Explore view (#9: choose what a peer is, a histogram with your percentile, a
+month-by-month chart, what peers hold) is the part of the Peers tab with the most to look at,
+and it was kept as it is after the cohort comparison became a table (#20). Its measures,
+however, were value, return, contribution rate, savings rate and emergency buffer: the last
+says little about how someone invests, and nothing showed *how regularly* or *how widely*.
+
+**Decision.** The view and its charts are unchanged. The measures are now **value, return,
+investment rate, contribution consistency, diversification score and savings rate**
+(`PEER_METRICS`); the emergency buffer is no longer offered and the contribution rate is called
+the investment rate. Each chip has a one-line description of the measure.
+
+**One order everywhere.** Results first, then habits and choices: value, return, return per unit
+of risk, investment rate, consistency, diversification, savings rate. Each page shows the
+measures it has in that order: the Cohort table (return, return per risk, investment rate,
+consistency, diversification), Explore (value, return, investment rate, consistency,
+diversification, savings rate), and the Friends chips and sharing switches (return, return per
+risk, investment rate, consistency, diversification). Before, the Cohort table and Friends led
+with the investment rate. Friends now opens on Return.
+
+- Value, return, investment rate and savings rate stay SQL expressions over the peers' latest
+  month, as in #9.
+- **Consistency and diversification** are worked out in code by the same rules as the cohort
+  comparison (#19, #18): `memberFigures` over `memberLoader` (shared since #22). The segment's
+  members are still chosen in SQL, from the same peer set as every other panel, so all panels
+  describe the same people; their figures are then summarised by `summariseValues`, which does
+  the same arithmetic as the SQL path (percentile_cont, width_bucket, mid-rank percentile).
+- The month-by-month chart is offered for **value and return** only (the others do not change
+  month to month in a way a trajectory would show); the emergency buffer's trajectory is gone with it.
+- The loader is asked only for the user and the segment's members, never everyone.
+
+**Privacy.** Unchanged (NFR-03): aggregates only, no group under 10, histogram bins under 3
+merged, no identifier in a response. Peers with no figure for a measure (consistency needs 3 months
+of buying) are left out, and a measure with fewer than 10 figures shows no distribution.
+
+**Verification.**
+- 750 backend tests pass; 11 are new: `summariseValues` (below the floor, quartiles and axis
+  bounds, every figure counted and small bins merged, mid-rank, no figure, identical figures)
+  and the service for both new measures (the peers' figures and the user's rank, one fund scores
+  0, peers without a figure left out, only the segment loaded, no data at all, a suppressed
+  segment runs no peer query and still shows the user's own figure).
+- **Independent recomputation** of the consistency distribution from the raw ledger (own
+  implementation of the 12-month rule, minimum months and open trade month) for the income band
+  of a demo account: 44 peers, 25th/50th/75th percentiles 72.7 / 90.9 / 100 in both the API
+  and the recomputation. The old emergency-buffer request is rejected with a 400.
+- **UI (Expo web, phone size):** six chips with descriptions; Consistency shows "25th percentile of
+  47 peers", the histogram with the median and your marker, and the holdings panel.
+
+**Limits.**
+- A user whose only purchases are in the open month has no figures yet for the measures that need
+  a closed month of data (value, return, investment rate, savings rate, consistency), as before.
+- The peers are simulated (#9), so the distributions show the generator's assumptions (for
+  consistency the median of the demo income band is 90.9%).
+- Diversification is shared code with the cohort page, so it inherits that page's definition
+  (a single fund scores 0).
+
+Implements: UC-05 amended (FR55). Owner: `backend/src/services/peerInsights.service.ts`,
+`backend/src/utils/peerCohort.ts`, mobile `PeerDashboard.tsx`, `utils/peerFormat.ts`.
+
+## 24. Return per risk out; portfolio value and monthly return in (7 Oct 2026)
+
+**Problem.** Return per unit of risk was the hardest measure to explain ("annualised return over
+annualised volatility") and needs six months of history, so most people saw "not available". The
+two things people most want to know, what their portfolio is worth and how it did lately, were
+either missing from the Cohort table (value) or only available as a long-run figure (return).
+
+**Decision.**
+
+1. **Return per unit of risk is removed** everywhere: the Cohort row, the Friends measure and its
+   sharing switch (the column is dropped), and the code (`returnPerRisk`, the six-month rule).
+2. **Portfolio value** is added to the **Cohort table** (Explore already had it). It is the value of
+   the securities at the **latest month-end**, the same figure Explore uses, so the two pages agree
+   (anything bought since shows once its month's data arrives, so it can be lower than the
+   Dashboard's securities value). Peers are matched on income, spare income and life stage, **not
+   on risk**, like the investment rate. **It is never offered for friends** (#22: an account value
+   is not shown against a name), and `memberFigures`, which the Friends ranking uses, cannot
+   return it.
+3. **Monthly portfolio return** is added to **all three pages**: the portfolio's return in the latest
+   month of data (money added or taken out is not counted as a gain or loss), only for a month the
+   account held something. Cohort: peers of the same risk level, as for the return. Explore: a SQL
+   metric over the peers' latest month, with a month-by-month chart. Friends: a measure with its own
+   sharing switch, off by default (`shareMonthlyReturn`).
+4. **One order on every page:** value, return, monthly return, investment rate, consistency,
+   diversification, then savings rate (Explore only). Pages show the ones they have.
+
+**Privacy.** Unchanged: aggregates only for Cohort and Explore (no group under 10, no identifier);
+for Friends, only accepted friends who switched the monthly return on, by display name.
+
+**Where it lives.** `utils/peerCohort.ts` (`MetricKey`, `ComparisonKey` = every measure but value,
+`CARD_DEFS`, `metricReader`), `services/memberLoader.ts` (`value`), `friends.service.ts`,
+`peerInsights.service.ts`; migration `20261007180000_friends_monthly_return` (drops
+`shareReturnPerRisk`, adds `shareMonthlyReturn`); mobile `metricInfo.ts`, `FriendsComparison.tsx`,
+`FriendsScreen.tsx`, `peerFormat.ts`.
+
+**Verification.**
+- 753 backend tests pass. New or changed: the value and monthly-return cards and their peer rules
+  (value without the risk filter, monthly return with it, nothing invested gives an explanation),
+  the friends figures never include a value (and a test greps a whole response for a known value),
+  the removed switch is ignored if sent, the Explore SQL for the monthly return only counts months
+  with a position, `PEER_METRICS` is exactly the new list, and the order on each page.
+- Migration checked against `schema.prisma` on a throwaway shadow database (never the dev one);
+  applied to dev.
+- **Independent check:** for a demo account the latest stored month return is -0.018016, and the
+  Cohort, Explore and Friends show -1.8% for it; a friend's stored 0.000717 shows as 0.07%. The Cohort
+  and Explore values for the account are both $1,528.
+- **UI (Expo web):** the Cohort table with six rows in the new order, the Friends chips
+  (Return, Monthly return, Investment rate, Consistency, Diversification) and the Explore chips.
+
+**Limits.**
+- One month swings a lot, especially at small balances, so the monthly return is a snapshot.
+- Value mostly reflects how long and how much someone has invested; the explanation says so.
+- Choices made with the old return-per-risk switch are discarded by the migration.
+
+Supersedes the measure lists of #22 and #23. Implements: UC-05 and UC-08 amended (FR56). Owner:
+`backend/src/utils/peerCohort.ts`, `backend/src/services/friends.service.ts`,
+`backend/src/services/peerInsights.service.ts`, mobile `FriendsComparison.tsx`, `MetricsTable.tsx`.
+
 ## Open items (Design Model §8, carried forward)
 
 - **`Phase2_SRS_v1.6.docx` — done, no longer open.** Produced in the same

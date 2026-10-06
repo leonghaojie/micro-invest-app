@@ -1,7 +1,6 @@
 /**
- * FriendsService unit tests — DECISIONS.md #8. Two layers:
- *  - pure functions (computeMemberMetrics, buildComparison,
- *    generateInviteCode), tested directly;
+ * FriendsService unit tests — DECISIONS.md #8, #22. Two layers:
+ *  - pure functions (buildComparison, generateInviteCode), tested directly;
  *  - the service's rules, with Prisma and PlanService mocked so these run
  *    without a live Postgres connection. The privacy properties (sharing
  *    filter, no id/email in responses, non-enumerating add-friend response)
@@ -9,14 +8,16 @@
  */
 import { prisma } from "../config/prisma";
 import { planService } from "./plan.service";
+import { loadMembers } from "./memberLoader";
+import { Member } from "../utils/peerCohort";
 import {
   buildComparison,
-  computeMemberMetrics,
   friendsService,
   generateInviteCode,
   GENERIC_REQUEST_RESPONSE,
   MAX_FRIENDS,
   MemberMetrics,
+  METRIC_KEYS,
   PortfolioSnapshot,
   SharingSettings,
   summarizeHoldings,
@@ -44,6 +45,7 @@ jest.mock("./plan.service", () => ({
   planService: { getActivePlan: jest.fn() },
   round2: (v: number) => Math.round(v * 100) / 100,
 }));
+jest.mock("./memberLoader", () => ({ loadMembers: jest.fn() }));
 
 const db = prisma as unknown as {
   user: { findUnique: jest.Mock; update: jest.Mock; findMany: jest.Mock };
@@ -61,101 +63,69 @@ const db = prisma as unknown as {
   plan: { findUnique: jest.Mock; findMany: jest.Mock };
 };
 const plans = planService as unknown as { getActivePlan: jest.Mock };
+const loader = loadMembers as unknown as jest.Mock;
 
 const ALL_ON: SharingSettings = {
-  shareValue: true,
+  shareInvestmentRate: true,
+  shareConsistency: true,
+  shareDiversification: true,
   shareReturn: true,
-  shareContributionRate: true,
-  shareSavingsRate: true,
-  shareEmergencyBuffer: true,
+  shareMonthlyReturn: true,
   shareHoldings: true,
 };
 const ALL_OFF: SharingSettings = {
-  shareValue: false,
+  shareInvestmentRate: false,
+  shareConsistency: false,
+  shareDiversification: false,
   shareReturn: false,
-  shareContributionRate: false,
-  shareSavingsRate: false,
-  shareEmergencyBuffer: false,
+  shareMonthlyReturn: false,
   shareHoldings: false,
 };
 
 function metrics(overrides: Partial<MemberMetrics> = {}): MemberMetrics {
-  return { value: 100, returnPct: 5, contributionRatePct: 10, savingsRatePct: 30, emergencyBuffer: 2, ...overrides };
+  return { investmentRate: 8, consistency: 90, diversification: 50, return: 5, monthlyReturn: 0.6, ...overrides };
 }
 
 // ── Pure functions ─────────────────────────────────────────────────────
 
-describe("computeMemberMetrics", () => {
-  it("derives all five metrics from a plan and profile", () => {
-    const result = computeMemberMetrics(
-      { contributionAmount: 100, finalValue: 810.64, totalContributed: 700, growth: 110.64, walletBalance: 9800 },
-      { monthlyIncome: 4000, monthlyExpense: 2500 }
-    );
-
-    expect(result).toEqual({
-      value: 810.64,
-      returnPct: 15.81, // 110.64 / 700 = 15.8057%
-      contributionRatePct: 2.5, // 100 / 4000
-      savingsRatePct: 37.5, // (4000 - 2500) / 4000
-      emergencyBuffer: 3.92, // 9800 / 2500
-    });
+describe("the measures friends rank on (DECISIONS.md #22)", () => {
+  it("are exactly the cohort comparison's five, and never the portfolio's value, savings rate or emergency buffer", () => {
+    expect([...METRIC_KEYS]).toEqual(["return", "monthlyReturn", "investmentRate", "consistency", "diversification"]);
+    const result = buildComparison({ displayName: "Me", metrics: metrics() }, []);
+    expect(Object.keys(result.metrics).sort()).toEqual([...METRIC_KEYS].sort());
+    const json = JSON.stringify(result);
+    for (const gone of ["savings", "emergency", "walletbalance", "portfoliovalue", "totalvalue"]) expect(json.toLowerCase()).not.toContain(gone);
+    expect(Object.keys(result.metrics)).not.toContain("value");
   });
 
-  it("leaves plan-based metrics null when there is no plan, but still derives the savings rate", () => {
-    const result = computeMemberMetrics(null, { monthlyIncome: 4000, monthlyExpense: 3000 });
-
-    expect(result).toEqual({
-      value: null,
-      returnPct: null,
-      contributionRatePct: null,
-      savingsRatePct: 25,
-      emergencyBuffer: null,
-    });
-  });
-
-  it("returns all nulls with neither plan nor profile, and never divides by zero", () => {
-    expect(computeMemberMetrics(null, null)).toEqual({
-      value: null,
-      returnPct: null,
-      contributionRatePct: null,
-      savingsRatePct: null,
-      emergencyBuffer: null,
-    });
-
-    const zeroes = computeMemberMetrics(
-      { contributionAmount: 0, finalValue: 0, totalContributed: 0, growth: 0, walletBalance: 0 },
-      { monthlyIncome: 0, monthlyExpense: 0 }
-    );
-    expect(zeroes.returnPct).toBeNull();
-    expect(zeroes.contributionRatePct).toBeNull();
-    expect(zeroes.savingsRatePct).toBeNull();
-    expect(zeroes.emergencyBuffer).toBeNull();
+  it("offer a sharing switch for each measure and for holdings, and for nothing else", () => {
+    expect(Object.keys(ALL_OFF).sort()).toEqual(["shareConsistency", "shareDiversification", "shareHoldings", "shareInvestmentRate", "shareMonthlyReturn", "shareReturn"]);
   });
 });
 
 describe("buildComparison", () => {
   it("ranks the user and sharing friends high-to-low", () => {
-    const result = buildComparison({ displayName: "Me", metrics: metrics({ value: 200 }) }, [
-      { displayName: "Ann", metrics: metrics({ value: 300 }), shared: ALL_ON },
-      { displayName: "Bob", metrics: metrics({ value: 100 }), shared: ALL_ON },
+    const result = buildComparison({ displayName: "Me", metrics: metrics({ investmentRate: 20 }) }, [
+      { displayName: "Ann", metrics: metrics({ investmentRate: 30 }), shared: ALL_ON },
+      { displayName: "Bob", metrics: metrics({ investmentRate: 10 }), shared: ALL_ON },
     ]);
 
-    expect(result.metrics.value.rows).toEqual([
-      { displayName: "Ann", isMe: false, value: 300, rank: 1 },
-      { displayName: "Me", isMe: true, value: 200, rank: 2 },
-      { displayName: "Bob", isMe: false, value: 100, rank: 3 },
+    expect(result.metrics.investmentRate.rows).toEqual([
+      { displayName: "Ann", isMe: false, value: 30, rank: 1 },
+      { displayName: "Me", isMe: true, value: 20, rank: 2 },
+      { displayName: "Bob", isMe: false, value: 10, rank: 3 },
     ]);
     expect(result.friendCount).toBe(2);
   });
 
   it("uses competition ranking for ties (shared rank, next rank skipped)", () => {
-    const result = buildComparison({ displayName: "Me", metrics: metrics({ value: 200 }) }, [
-      { displayName: "Ann", metrics: metrics({ value: 300 }), shared: ALL_ON },
-      { displayName: "Bob", metrics: metrics({ value: 200 }), shared: ALL_ON },
-      { displayName: "Cy", metrics: metrics({ value: 100 }), shared: ALL_ON },
+    const result = buildComparison({ displayName: "Me", metrics: metrics({ consistency: 80 }) }, [
+      { displayName: "Ann", metrics: metrics({ consistency: 100 }), shared: ALL_ON },
+      { displayName: "Bob", metrics: metrics({ consistency: 80 }), shared: ALL_ON },
+      { displayName: "Cy", metrics: metrics({ consistency: 50 }), shared: ALL_ON },
     ]);
 
-    expect(result.metrics.value.rows.map((r) => [r.displayName, r.rank])).toEqual([
+    expect(result.metrics.consistency.rows.map((r) => [r.displayName, r.rank])).toEqual([
       ["Ann", 1],
       ["Me", 2],
       ["Bob", 2],
@@ -164,45 +134,65 @@ describe("buildComparison", () => {
   });
 
   it("omits a friend's metric when they haven't shared it, and counts them as hidden without naming them", () => {
-    const result = buildComparison({ displayName: "Me", metrics: metrics({ value: 200, savingsRatePct: 30 }) }, [
-      { displayName: "Ann", metrics: metrics({ value: 999, savingsRatePct: 99 }), shared: { ...ALL_OFF, shareSavingsRate: true } },
-      { displayName: "Bob", metrics: metrics({ value: 888, savingsRatePct: 88 }), shared: ALL_OFF },
+    const result = buildComparison({ displayName: "Me", metrics: metrics({ investmentRate: 20, diversification: 30 }) }, [
+      { displayName: "Ann", metrics: metrics({ investmentRate: 999, diversification: 99 }), shared: { ...ALL_OFF, shareDiversification: true } },
+      { displayName: "Bob", metrics: metrics({ investmentRate: 888, diversification: 88 }), shared: ALL_OFF },
     ]);
 
-    // value: nobody but me shares it
-    expect(result.metrics.value.rows.map((r) => r.displayName)).toEqual(["Me"]);
-    expect(result.metrics.value.hiddenCount).toBe(2);
-    expect(JSON.stringify(result.metrics.value)).not.toContain("999");
-    expect(JSON.stringify(result.metrics.value)).not.toContain("888");
+    // investment rate: nobody but me shares it
+    expect(result.metrics.investmentRate.rows.map((r) => r.displayName)).toEqual(["Me"]);
+    expect(result.metrics.investmentRate.hiddenCount).toBe(2);
+    expect(JSON.stringify(result.metrics.investmentRate)).not.toContain("999");
+    expect(JSON.stringify(result.metrics.investmentRate)).not.toContain("888");
 
-    // savings rate: Ann shares, Bob doesn't
-    expect(result.metrics.savingsRatePct.rows.map((r) => r.displayName)).toEqual(["Ann", "Me"]);
-    expect(result.metrics.savingsRatePct.hiddenCount).toBe(1);
+    // diversification: Ann shares, Bob doesn't
+    expect(result.metrics.diversification.rows.map((r) => r.displayName)).toEqual(["Ann", "Me"]);
+    expect(result.metrics.diversification.hiddenCount).toBe(1);
+  });
+
+  it("each measure has its own switch: sharing one never reveals another", () => {
+    for (const [key, flag] of [
+      ["investmentRate", "shareInvestmentRate"],
+      ["consistency", "shareConsistency"],
+      ["diversification", "shareDiversification"],
+      ["return", "shareReturn"],
+      ["monthlyReturn", "shareMonthlyReturn"],
+    ] as const) {
+      const result = buildComparison({ displayName: "Me", metrics: metrics() }, [{ displayName: "Ann", metrics: metrics(), shared: { ...ALL_OFF, [flag]: true } }]);
+      for (const other of METRIC_KEYS) {
+        expect(result.metrics[other].rows.some((r) => r.displayName === "Ann")).toBe(other === key);
+      }
+    }
   });
 
   it("always shows the user their own figure regardless of any sharing setting", () => {
-    const result = buildComparison({ displayName: "Me", metrics: metrics({ value: 50 }) }, []);
+    const result = buildComparison({ displayName: "Me", metrics: metrics({ investmentRate: 5 }) }, []);
 
-    expect(result.metrics.value.rows).toEqual([{ displayName: "Me", isMe: true, value: 50, rank: 1 }]);
+    expect(result.metrics.investmentRate.rows).toEqual([{ displayName: "Me", isMe: true, value: 5, rank: 1 }]);
     expect(result.friendCount).toBe(0);
   });
 
   it("separates 'shares it but has no figure yet' from 'hides it'", () => {
     const result = buildComparison({ displayName: "Me", metrics: metrics() }, [
-      { displayName: "Ann", metrics: metrics({ value: null }), shared: ALL_ON },
+      { displayName: "Ann", metrics: metrics({ investmentRate: null }), shared: ALL_ON },
     ]);
 
-    expect(result.metrics.value.noDataCount).toBe(1);
-    expect(result.metrics.value.hiddenCount).toBe(0);
-    expect(result.metrics.value.rows.map((r) => r.displayName)).toEqual(["Me"]);
+    expect(result.metrics.investmentRate.noDataCount).toBe(1);
+    expect(result.metrics.investmentRate.hiddenCount).toBe(0);
+    expect(result.metrics.investmentRate.rows.map((r) => r.displayName)).toEqual(["Me"]);
   });
 
   it("leaves the user off a board where they have no figure", () => {
-    const result = buildComparison({ displayName: "Me", metrics: metrics({ value: null }) }, [
-      { displayName: "Ann", metrics: metrics({ value: 10 }), shared: ALL_ON },
+    const result = buildComparison({ displayName: "Me", metrics: metrics({ return: null }) }, [
+      { displayName: "Ann", metrics: metrics({ return: 10 }), shared: ALL_ON },
     ]);
 
-    expect(result.metrics.value.rows.map((r) => r.displayName)).toEqual(["Ann"]);
+    expect(result.metrics.return.rows.map((r) => r.displayName)).toEqual(["Ann"]);
+  });
+
+  it("carries the number of months the return measures cover", () => {
+    expect(buildComparison({ displayName: "Me", metrics: metrics() }, [], 7).windowMonths).toBe(7);
+    expect(buildComparison({ displayName: "Me", metrics: metrics() }, []).windowMonths).toBe(0);
   });
 });
 
@@ -426,19 +416,38 @@ describe("FriendsService.getOverview", () => {
 describe("FriendsService.updateSettings", () => {
   it("saves a trimmed display name and the toggles", async () => {
     db.user.update.mockResolvedValue({});
-    db.friendSharing.upsert.mockResolvedValue({ ...ALL_OFF, shareValue: true });
+    db.friendSharing.upsert.mockResolvedValue({ ...ALL_OFF, shareInvestmentRate: true });
     db.user.findUnique.mockResolvedValue({ displayName: "Hao" });
 
-    const result = await friendsService.updateSettings("me", { displayName: "  Hao  ", shareValue: true });
+    const result = await friendsService.updateSettings("me", { displayName: "  Hao  ", shareInvestmentRate: true });
 
     expect(db.user.update).toHaveBeenCalledWith({ where: { id: "me" }, data: { displayName: "Hao" } });
     expect(db.friendSharing.upsert).toHaveBeenCalledWith({
       where: { userId: "me" },
-      create: { userId: "me", shareValue: true },
-      update: { shareValue: true },
+      create: { userId: "me", shareInvestmentRate: true },
+      update: { shareInvestmentRate: true },
     });
-    expect(result.sharing.shareValue).toBe(true);
-    expect(result.sharing.shareSavingsRate).toBe(false);
+    expect(result.sharing.shareInvestmentRate).toBe(true);
+    expect(result.sharing.shareConsistency).toBe(false);
+  });
+
+  it("saves each new measure's switch, independently", async () => {
+    db.friendSharing.upsert.mockResolvedValue({ ...ALL_OFF });
+    db.user.findUnique.mockResolvedValue({ displayName: "Hao" });
+    await friendsService.updateSettings("me", { shareConsistency: true, shareDiversification: true, shareMonthlyReturn: true, shareReturn: false });
+    expect(db.friendSharing.upsert).toHaveBeenCalledWith({
+      where: { userId: "me" },
+      create: { userId: "me", shareConsistency: true, shareDiversification: true, shareMonthlyReturn: true, shareReturn: false },
+      update: { shareConsistency: true, shareDiversification: true, shareMonthlyReturn: true, shareReturn: false },
+    });
+  });
+
+  it("ignores the removed switches (value, savings rate, emergency buffer): they can no longer be stored", async () => {
+    db.friendSharing.upsert.mockResolvedValue({ ...ALL_OFF });
+    db.user.findUnique.mockResolvedValue({ displayName: "Hao" });
+    db.friendSharing.upsert.mockClear();
+    await friendsService.updateSettings("me", { shareValue: true, shareSavingsRate: true, shareEmergencyBuffer: true, shareContributionRate: true, shareReturnPerRisk: true });
+    expect(JSON.stringify(db.friendSharing.upsert.mock.calls)).not.toMatch(/shareValue|shareSavingsRate|shareEmergencyBuffer|shareContributionRate|shareReturnPerRisk/);
   });
 
   it("saves the holdings toggle on its own, and it defaults to off", async () => {
@@ -453,7 +462,7 @@ describe("FriendsService.updateSettings", () => {
       update: { shareHoldings: true },
     });
     expect(result.sharing.shareHoldings).toBe(true);
-    expect(result.sharing.shareValue).toBe(false); // the metric toggles are independent
+    expect(result.sharing.shareReturn).toBe(false); // the metric toggles are independent
   });
 
   it("rejects a non-boolean holdings flag", async () => {
@@ -467,11 +476,35 @@ describe("FriendsService.updateSettings", () => {
 });
 
 describe("FriendsService.getComparison", () => {
-  function plan(finalValue: number) {
-    return { contributionAmount: 100, finalValue, totalContributed: 500, growth: finalValue - 500, walletBalance: 1000 };
+  const ASOF = "2026-09";
+  const MONTHS = ["2026-07", "2026-08", "2026-09"];
+
+  /** An investor with returns for `months` (default the last three). */
+  function member(id: string, over: Partial<Member> = {}, months: string[] = MONTHS): Member {
+    return {
+      id,
+      age: 28,
+      income: 4000,
+      expense: 2400,
+      risk: "MEDIUM",
+      contribution: 400,
+      consistencyPct: 90,
+      value: 987654,
+      holdings: [
+        { assetClass: "EQUITY", weight: 0.6 },
+        { assetClass: "BOND", weight: 0.4 },
+      ],
+      monthlyReturns: Object.fromEntries(months.map((m) => [m, 0.01])),
+      ...over,
+    };
   }
 
-  it("ranks accepted friends, applies each friend's sharing choices, and leaks no ids or emails", async () => {
+  function arrange(members: Member[], asOf: string | null = ASOF) {
+    loader.mockResolvedValue(asOf ? { asOf, members, simulated: 0, fundReturns: {} } : null);
+  }
+
+  beforeEach(() => {
+    plans.getActivePlan.mockResolvedValue({});
     db.friendship.findMany.mockResolvedValue([
       { requesterId: "me", addresseeId: "u-ann" },
       { requesterId: "u-bob", addresseeId: "me" },
@@ -479,58 +512,103 @@ describe("FriendsService.getComparison", () => {
     db.user.findMany.mockResolvedValue([
       { id: "me", displayName: "Me", sharing: null },
       { id: "u-ann", displayName: "Ann", sharing: { ...ALL_ON } },
-      { id: "u-bob", displayName: "Bob", sharing: { ...ALL_OFF, shareValue: true } },
+      { id: "u-bob", displayName: "Bob", sharing: { ...ALL_OFF, shareInvestmentRate: true } },
     ]);
-    db.userProfile.findMany.mockResolvedValue([
-      { userId: "me", monthlyIncome: "4000", monthlyExpense: "2500" },
-      { userId: "u-ann", monthlyIncome: "5000", monthlyExpense: "2000" },
-      { userId: "u-bob", monthlyIncome: "3000", monthlyExpense: "2400" },
-    ]);
-    plans.getActivePlan.mockImplementation((id: string) =>
-      Promise.resolve(id === "me" ? plan(700) : id === "u-ann" ? plan(900) : plan(600))
-    );
-
-    const result = await friendsService.getComparison("me");
-
-    // value: all three share/see it
-    expect(result.metrics.value.rows.map((r) => [r.displayName, r.rank])).toEqual([
-      ["Ann", 1],
-      ["Me", 2],
-      ["Bob", 3],
-    ]);
-    // savings rate: Bob shares only value, so he's absent here
-    expect(result.metrics.savingsRatePct.rows.map((r) => r.displayName)).toEqual(["Ann", "Me"]);
-    expect(result.metrics.savingsRatePct.hiddenCount).toBe(1);
-
-    const json = JSON.stringify(result);
-    for (const secret of ["u-ann", "u-bob", "@"]) expect(json).not.toContain(secret);
   });
 
-  it("treats a friend whose plan can't be computed as having no figures instead of failing", async () => {
-    db.friendship.findMany.mockResolvedValue([{ requesterId: "me", addresseeId: "u-ann" }]);
-    db.user.findMany.mockResolvedValue([
-      { id: "me", displayName: "Me", sharing: null },
-      { id: "u-ann", displayName: "Ann", sharing: { ...ALL_ON } },
+  it("ranks accepted friends on the cohort measures, applies each friend's sharing choices, and leaks no ids or emails", async () => {
+    arrange([
+      member("me", { contribution: 400, consistencyPct: 80 }),
+      member("u-ann", { contribution: 800, consistencyPct: 100 }),
+      member("u-bob", { contribution: 200, consistencyPct: 60 }),
     ]);
-    db.userProfile.findMany.mockResolvedValue([{ userId: "me", monthlyIncome: "4000", monthlyExpense: "2500" }]);
-    plans.getActivePlan.mockImplementation((id: string) => (id === "me" ? Promise.resolve(plan(700)) : Promise.reject(new Error("boom"))));
 
     const result = await friendsService.getComparison("me");
 
-    expect(result.metrics.value.rows.map((r) => r.displayName)).toEqual(["Me"]);
-    expect(result.metrics.value.noDataCount).toBe(1);
+    // investment rate (contribution / income): all three share/see it
+    expect(result.metrics.investmentRate.rows.map((r) => [r.displayName, r.value, r.rank])).toEqual([
+      ["Ann", 20, 1],
+      ["Me", 10, 2],
+      ["Bob", 5, 3],
+    ]);
+    // consistency: Bob shares only the investment rate, so he is absent here
+    expect(result.metrics.consistency.rows.map((r) => [r.displayName, r.value])).toEqual([
+      ["Ann", 100],
+      ["Me", 80],
+    ]);
+    expect(result.metrics.consistency.hiddenCount).toBe(1);
+
+    const json = JSON.stringify(result);
+    for (const secret of ["u-ann", "u-bob", "@", "987654"]) expect(json).not.toContain(secret);
+  });
+
+  it("works every measure out with the cohort's own logic: diversification, return and the latest month's return", async () => {
+    arrange([member("me"), member("u-ann", { holdings: [{ assetClass: "EQUITY", weight: 1 }] }), member("u-bob")]);
+
+    const result = await friendsService.getComparison("me");
+
+    expect(result.windowMonths).toBe(3);
+    // a single holding scores 0 on diversification; the 60/40 mix scores higher
+    const div = Object.fromEntries(result.metrics.diversification.rows.map((r) => [r.displayName, r.value]));
+    expect(div.Ann).toBe(0);
+    expect(div.Me).toBeGreaterThan(0);
+    // three months of +1% compound to 3.03%
+    expect(result.metrics.return.rows.find((r) => r.isMe)!.value).toBe(3.03);
+    // the latest month: +1%
+    expect(result.metrics.monthlyReturn.rows.find((r) => r.isMe)!.value).toBe(1);
+  });
+
+  it("measures friends over the viewer's months: a friend without those months cannot be ranked on return", async () => {
+    arrange([member("me"), member("u-ann", {}, ["2026-09"]), member("u-bob")]);
+
+    const result = await friendsService.getComparison("me");
+
+    expect(result.metrics.return.rows.map((r) => r.displayName).sort()).toEqual(["Me"]);
+    expect(result.metrics.return.noDataCount).toBe(1); // Ann shares it but cannot be measured over the same months
+    expect(result.metrics.investmentRate.rows.map((r) => r.displayName).sort()).toEqual(["Ann", "Bob", "Me"]); // other measures are unaffected
+  });
+
+  it("treats a friend who has not invested as having no figures instead of failing", async () => {
+    arrange([member("me")]); // Ann and Bob have no holdings or returns: not members
+
+    const result = await friendsService.getComparison("me");
+
+    expect(result.metrics.investmentRate.rows.map((r) => r.displayName)).toEqual(["Me"]);
+    expect(result.metrics.consistency.noDataCount).toBe(1); // Ann shares it, has nothing to show
+    expect(result.metrics.consistency.hiddenCount).toBe(1); // Bob does not share it
+  });
+
+  it("brings only the viewer's own account up to date and reads friends' as stored", async () => {
+    arrange([member("me")]);
+    await friendsService.getComparison("me");
+    expect(plans.getActivePlan).toHaveBeenCalledTimes(1);
+    expect(plans.getActivePlan).toHaveBeenCalledWith("me");
+    expect(loader).toHaveBeenCalledWith(["me", "u-ann", "u-bob"]);
   });
 
   it("handles a user with no friends", async () => {
     db.friendship.findMany.mockResolvedValue([]);
     db.user.findMany.mockResolvedValue([{ id: "me", displayName: "Me", sharing: null }]);
-    db.userProfile.findMany.mockResolvedValue([]);
-    plans.getActivePlan.mockResolvedValue(null);
+    arrange([member("me")]);
 
     const result = await friendsService.getComparison("me");
 
     expect(result.friendCount).toBe(0);
-    expect(result.metrics.value.rows).toEqual([]);
+    expect(result.metrics.investmentRate.rows).toEqual([{ displayName: "Me", isMe: true, value: 10, rank: 1 }]);
+  });
+
+  it("handles a user who has not invested yet: no boards of their own, friends still counted", async () => {
+    arrange([member("u-ann")]);
+    const result = await friendsService.getComparison("me");
+    expect(result.windowMonths).toBe(0);
+    expect(result.metrics.investmentRate.rows.map((r) => r.displayName)).toEqual(["Ann"]);
+  });
+
+  it("copes with no fund data at all", async () => {
+    arrange([], null);
+    const result = await friendsService.getComparison("me");
+    expect(result.friendCount).toBe(2);
+    for (const key of METRIC_KEYS) expect(result.metrics[key].rows).toEqual([]);
   });
 });
 

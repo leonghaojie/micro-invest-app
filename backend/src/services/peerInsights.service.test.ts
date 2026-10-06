@@ -10,12 +10,17 @@
  */
 import { env } from "../config/env";
 import { prisma } from "../config/prisma";
-import { buildHistogram, MIN_CELL_COUNT, peerInsightsService, percentileRank } from "./peerInsights.service";
+import { buildHistogram, MIN_CELL_COUNT, PEER_METRICS, peerInsightsService, percentileRank, summariseValues } from "./peerInsights.service";
+import { loadMembers } from "./memberLoader";
+import type { Member } from "../utils/peerCohort";
 import type { PeerGroupAssignment } from "./peerGrouping.service";
 
 jest.mock("../config/prisma", () => ({
   prisma: { $queryRaw: jest.fn(), plan: { findUnique: jest.fn() } },
 }));
+
+jest.mock("./memberLoader", () => ({ loadMembers: jest.fn() }));
+const loader = loadMembers as unknown as jest.Mock;
 
 const db = prisma as unknown as { $queryRaw: jest.Mock; plan: { findUnique: jest.Mock } };
 
@@ -89,6 +94,39 @@ describe("percentileRank", () => {
   });
 });
 
+describe("summariseValues (the distribution for measures worked out in code)", () => {
+  const ten = [10, 20, 30, 40, 50, 60, 70, 80, 90, 100];
+
+  it("is null below the group floor, with no rank", () => {
+    expect(summariseValues([1, 2, 3], 2, 10)).toEqual({ distribution: null, rank: null });
+  });
+
+  it("gives the quartiles of percentile_cont, the axis bounds at the 5th and 95th percentile and the peer count", () => {
+    const { distribution: d } = summariseValues(ten, 55, 10);
+    expect(d).toMatchObject({ p25: 32.5, p50: 55, p75: 77.5, peerCount: 10 });
+    expect(d!.lo).toBeCloseTo(14.5, 5);
+    expect(d!.hi).toBeCloseTo(95.5, 5);
+  });
+
+  it("counts every figure into a bin, merges bins smaller than the cell size, and covers the axis", () => {
+    const { distribution: d } = summariseValues([...ten, 12, 14, 300], 55, 10);
+    expect(d!.bins.reduce((s, b) => s + b.count, 0)).toBe(13);
+    for (const b of d!.bins) expect(b.count === 0 || b.count >= MIN_CELL_COUNT).toBe(true);
+  });
+
+  it("ranks by mid-rank: those below plus half of those tied", () => {
+    expect(summariseValues(ten, 55, 10).rank).toBe(50);
+    expect(summariseValues([...ten.slice(0, 9), 50], 50, 10).rank).toBe(50); // 4 below, 2 tied: (4 + 2/2) / 10
+  });
+
+  it("gives no rank when the user has no figure, and handles figures that are all the same", () => {
+    expect(summariseValues(ten, null, 10).rank).toBeNull();
+    const same = summariseValues(Array(12).fill(100), 100, 10);
+    expect(same.distribution!.hi).toBeGreaterThan(same.distribution!.lo);
+    expect(same.distribution!.bins.reduce((s, b) => s + b.count, 0)).toBe(12);
+  });
+});
+
 // ── Service ────────────────────────────────────────────────────────────
 
 const GROUP: PeerGroupAssignment = { bandPct: 10, lo: 3600, hi: 4400, memberCount: 44, dims: ["income"], filters: {}, suppressed: false };
@@ -101,12 +139,14 @@ interface Rows {
   mix?: unknown[];
   funds?: unknown[];
   holdings?: unknown[];
+  peerIds?: unknown[];
 }
 
 /** Routes the service's raw queries by distinctive text in the template. */
 function mockQueries(rows: Rows) {
   db.$queryRaw.mockImplementation((strings: TemplateStringsArray) => {
     const text = strings.join("?");
+    if (text.includes('SELECT "userId" FROM peers')) return Promise.resolve(rows.peerIds ?? []);
     if (text.includes("width_bucket")) return Promise.resolve(rows.dist ?? []);
     if (text.includes("PARTITION BY pm")) return Promise.resolve(rows.trajPeers ?? []);
     if (text.includes("OVER (ORDER BY pm")) return Promise.resolve(rows.trajMine ?? []);
@@ -226,6 +266,28 @@ describe("PeerInsightsService.getDashboard", () => {
     ]);
   });
 
+  it("offers the latest month's return as a SQL metric with a trajectory, counting only months the account held something", async () => {
+    mockQueries({
+      mine: [{ v: "1.2" }],
+      dist: [DIST_ROW],
+      trajPeers: [{ k: 1, p25: "-1", p50: "0.5", p75: "2" }],
+      trajMine: [{ k: 1, v: "1.2" }],
+    });
+
+    const result = await peerInsightsService.getDashboard("u", GROUP, "monthlyReturnPct");
+
+    expect(result.me.value).toBe(1.2);
+    expect(result.trajectory).toEqual([{ k: 1, p25: -1, p50: 0.5, p75: 2, mine: 1.2 }]);
+    // the metric's expression is an interpolated Prisma.Sql fragment, so read it from the arguments too
+    const sql = db.$queryRaw.mock.calls.map((c) => [(c[0] as TemplateStringsArray).join("?"), ...c.slice(1).map((a: { sql?: string }) => a?.sql ?? "")].join(" ")).join(" ");
+    expect(sql).toMatch(/CASE WHEN "hasPosition" THEN "portfolioReturnPct" \* 100 END/);
+    expect(sql).toMatch(/CASE WHEN pm\."hasPosition" THEN pm\."portfolioReturnPct" \* 100 END/);
+  });
+
+  it("no longer offers return per risk or the emergency buffer", () => {
+    expect([...PEER_METRICS]).toEqual(["value", "returnPct", "monthlyReturnPct", "investmentRatePct", "consistencyPct", "diversificationScore", "savingsRatePct"]);
+  });
+
   it("returns no trajectory when no month has enough peers", async () => {
     mockQueries({ mine: [{ v: "1" }], dist: [DIST_ROW], trajPeers: [] });
 
@@ -265,6 +327,101 @@ describe("PeerInsightsService.getDashboard", () => {
         { assetClass: "EQUITY", pct: 60 },
         { assetClass: "BOND", pct: 40 },
       ],
+    });
+  });
+
+  describe("measures worked out with the cohort comparison's rules (consistency, diversification)", () => {
+    const member = (id: string, over: Partial<Member> = {}): Member => ({
+      id,
+      age: 28,
+      income: 4000,
+      expense: 2400,
+      risk: "MEDIUM",
+      contribution: 400,
+      consistencyPct: 80,
+      holdings: [
+        { assetClass: "EQUITY", weight: 0.6 },
+        { assetClass: "BOND", weight: 0.4 },
+      ],
+      monthlyReturns: {},
+      ...over,
+    });
+    const peerRows = Array.from({ length: 12 }, (_, i) => ({ userId: `p${i}` }));
+    const peers = (f: (i: number) => Partial<Member>) => Array.from({ length: 12 }, (_, i) => member(`p${i}`, f(i)));
+
+    beforeEach(() => loader.mockReset());
+
+    it("uses each peer's contribution consistency and ranks the user among them", async () => {
+      mockQueries({ peerIds: peerRows });
+      loader.mockResolvedValue({ asOf: "2026-09", simulated: 0, fundReturns: {}, members: [member("u", { consistencyPct: 75 }), ...peers((i) => ({ consistencyPct: 50 + i * 4 }))] });
+
+      const result = await peerInsightsService.getDashboard("u", GROUP, "consistencyPct");
+
+      expect(result.me.value).toBe(75);
+      expect(result.distribution!.peerCount).toBe(12);
+      expect(result.distribution!.p50).toBe(72); // figures 50, 54, ... 94
+      expect(result.me.percentileRank).toBe(58.3); // 7 of the 12 (50 to 74) are below 75
+      expect(result.trajectory).toBeNull();
+    });
+
+    it("scores each peer's diversification from what they hold; one fund scores 0", async () => {
+      mockQueries({ peerIds: peerRows });
+      loader.mockResolvedValue({
+        asOf: "2026-09",
+        simulated: 0,
+        fundReturns: {},
+        members: [member("u", { holdings: [{ assetClass: "EQUITY", weight: 1 }] }), ...peers(() => ({}))],
+      });
+
+      const result = await peerInsightsService.getDashboard("u", GROUP, "diversificationScore");
+
+      expect(result.me.value).toBe(0);
+      expect(result.distribution!.p50).toBeGreaterThan(0);
+      expect(result.me.percentileRank).toBe(0);
+    });
+
+    it("leaves out peers with no figure (consistency needs at least 3 months) and withholds when too few remain", async () => {
+      mockQueries({ peerIds: peerRows });
+      loader.mockResolvedValue({ asOf: "2026-09", simulated: 0, fundReturns: {}, members: [member("u"), ...peers((i) => ({ consistencyPct: i < 5 ? 90 : null }))] });
+
+      const result = await peerInsightsService.getDashboard("u", GROUP, "consistencyPct");
+
+      expect(result.distribution).toBeNull();
+      expect(result.me.percentileRank).toBeNull();
+      expect(result.me.value).toBe(80);
+    });
+
+    it("never describes the user's own account in the peers, and asks the loader only for the segment and the user", async () => {
+      mockQueries({ peerIds: peerRows });
+      loader.mockResolvedValue({ asOf: "2026-09", simulated: 0, fundReturns: {}, members: [member("u"), ...peers(() => ({}))] });
+
+      await peerInsightsService.getDashboard("u", GROUP, "consistencyPct");
+
+      const asked = loader.mock.calls.flatMap((c) => c[0] as string[]);
+      expect(asked).toContain("u");
+      expect(asked).toContain("p3");
+      expect(loader.mock.calls.some((c) => c[0] === undefined)).toBe(false); // never loads everyone
+    });
+
+    it("gives the user no figure when they have not invested (the loader does not return them) and handles no data at all", async () => {
+      mockQueries({ peerIds: peerRows });
+      loader.mockResolvedValue(null);
+
+      const result = await peerInsightsService.getDashboard("u", GROUP, "diversificationScore");
+
+      expect(result.me).toEqual({ value: null, percentileRank: null });
+      expect(result.distribution).toBeNull();
+    });
+
+    it("a suppressed segment runs no peer query and still shows the user's own figure", async () => {
+      mockQueries({});
+      loader.mockResolvedValue({ asOf: "2026-09", simulated: 0, fundReturns: {}, members: [member("u", { consistencyPct: 66 })] });
+
+      const result = await peerInsightsService.getDashboard("u", { ...GROUP, suppressed: true, memberCount: 4 }, "consistencyPct");
+
+      expect(result.me).toEqual({ value: 66, percentileRank: null });
+      expect(result.distribution).toBeNull();
+      expect(db.$queryRaw).not.toHaveBeenCalled();
     });
   });
 

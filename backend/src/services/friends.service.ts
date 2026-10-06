@@ -13,7 +13,11 @@
  *    belong to real accounts (for the same reason outgoing requests are
  *    never listed back to the sender);
  *  - each user opts in, per metric, to what friends can see (all off by
- *    default); a metric a friend hasn't shared never appears in a response;
+ *    default); a metric a friend hasn't shared never appears in a response.
+ *    The metrics are exactly the ones the cohort comparison measures (investment
+ *    rate, contribution consistency, diversification, return, return per unit of
+ *    risk; DECISIONS.md #22). The portfolio's value, savings rate and emergency
+ *    buffer are not offered at all, so there is nothing to toggle or leak;
  *  - holdings (which funds a friend's plan contains, and their weights) are
  *    a separate opt-in, shareHoldings, off by default (DECISIONS.md #12):
  *    percentages only, never amounts, and a custom portfolio's name (free
@@ -25,20 +29,22 @@ import { randomInt } from "crypto";
 import { z } from "zod";
 import { prisma } from "../config/prisma";
 import { HttpError } from "../utils/httpError";
-import { planService, round2 } from "./plan.service";
+import { COMPARISON_METRICS, comparisonWindow, memberFigures, ComparisonKey } from "../utils/peerCohort";
+import { loadMembers } from "./memberLoader";
+import { planService } from "./plan.service";
 
 // ── Metrics ────────────────────────────────────────────────────────────
 
-export const METRIC_KEYS = ["value", "returnPct", "contributionRatePct", "savingsRatePct", "emergencyBuffer"] as const;
-export type MetricKey = (typeof METRIC_KEYS)[number];
+export const METRIC_KEYS = COMPARISON_METRICS;
+export type MetricKey = ComparisonKey;
 export type MemberMetrics = Record<MetricKey, number | null>;
 
 export interface SharingSettings {
-  shareValue: boolean;
+  shareInvestmentRate: boolean;
+  shareConsistency: boolean;
+  shareDiversification: boolean;
   shareReturn: boolean;
-  shareContributionRate: boolean;
-  shareSavingsRate: boolean;
-  shareEmergencyBuffer: boolean;
+  shareMonthlyReturn: boolean;
   shareHoldings: boolean;
 }
 
@@ -46,29 +52,29 @@ export interface SharingSettings {
  * missing is off - privacy by default. */
 function toSharingSettings(row: Partial<SharingSettings> | null | undefined): SharingSettings {
   return {
-    shareValue: row?.shareValue ?? false,
+    shareInvestmentRate: row?.shareInvestmentRate ?? false,
+    shareConsistency: row?.shareConsistency ?? false,
+    shareDiversification: row?.shareDiversification ?? false,
     shareReturn: row?.shareReturn ?? false,
-    shareContributionRate: row?.shareContributionRate ?? false,
-    shareSavingsRate: row?.shareSavingsRate ?? false,
-    shareEmergencyBuffer: row?.shareEmergencyBuffer ?? false,
+    shareMonthlyReturn: row?.shareMonthlyReturn ?? false,
     shareHoldings: row?.shareHoldings ?? false,
   };
 }
 
 const SHARE_FLAG: Record<MetricKey, keyof SharingSettings> = {
-  value: "shareValue",
-  returnPct: "shareReturn",
-  contributionRatePct: "shareContributionRate",
-  savingsRatePct: "shareSavingsRate",
-  emergencyBuffer: "shareEmergencyBuffer",
+  investmentRate: "shareInvestmentRate",
+  consistency: "shareConsistency",
+  diversification: "shareDiversification",
+  return: "shareReturn",
+  monthlyReturn: "shareMonthlyReturn",
 };
 
 const NO_SHARING: SharingSettings = {
-  shareValue: false,
+  shareInvestmentRate: false,
+  shareConsistency: false,
+  shareDiversification: false,
   shareReturn: false,
-  shareContributionRate: false,
-  shareSavingsRate: false,
-  shareEmergencyBuffer: false,
+  shareMonthlyReturn: false,
   shareHoldings: false,
 };
 
@@ -83,33 +89,6 @@ export function snapshotOf(holdings: { value: unknown; fund: { ticker: string; n
     name: null,
     isPreset: false,
     allocations: holdings.map((h) => ({ weightPct: total > 0 ? Math.round((Number(h.value) / total) * 10000) / 100 : 0, fund: h.fund })),
-  };
-}
-
-interface PlanFigures {
-  contributionAmount: number;
-  finalValue: number;
-  totalContributed: number;
-  growth: number;
-  walletBalance: number;
-}
-
-interface ProfileFigures {
-  monthlyIncome: number;
-  monthlyExpense: number;
-}
-
-/** Pure — derives the five comparable metrics from a plan and profile.
- * A metric that can't be computed (no plan yet, zero income...) is null. */
-export function computeMemberMetrics(plan: PlanFigures | null, profile: ProfileFigures | null): MemberMetrics {
-  const income = profile?.monthlyIncome ?? 0;
-  const expense = profile?.monthlyExpense ?? 0;
-  return {
-    value: plan ? plan.finalValue : null,
-    returnPct: plan && plan.totalContributed > 0 ? round2((plan.growth / plan.totalContributed) * 100) : null,
-    contributionRatePct: plan && income > 0 ? round2((plan.contributionAmount / income) * 100) : null,
-    savingsRatePct: profile && income > 0 ? round2(((income - expense) / income) * 100) : null,
-    emergencyBuffer: plan && expense > 0 ? round2(plan.walletBalance / expense) : null,
   };
 }
 
@@ -130,7 +109,12 @@ export interface MetricBoard {
   noDataCount: number;
 }
 
-export type FriendsComparison = { friendCount: number; metrics: Record<MetricKey, MetricBoard> };
+export type FriendsComparison = {
+  friendCount: number;
+  /** How many months the return measures cover: the longest recent run the viewer has (up to 12). */
+  windowMonths: number;
+  metrics: Record<MetricKey, MetricBoard>;
+};
 
 interface ComparisonMember {
   displayName: string;
@@ -144,7 +128,7 @@ interface ComparisonFriend extends ComparisonMember {
 /** Pure. For each metric: the user (always visible to themselves) plus
  * every friend who shares that metric, sorted high-to-low with standard
  * competition ranking (ties share a rank, the next rank is skipped). */
-export function buildComparison(me: ComparisonMember, friends: ComparisonFriend[]): FriendsComparison {
+export function buildComparison(me: ComparisonMember, friends: ComparisonFriend[], windowMonths = 0): FriendsComparison {
   const metrics = {} as Record<MetricKey, MetricBoard>;
 
   for (const key of METRIC_KEYS) {
@@ -179,7 +163,7 @@ export function buildComparison(me: ComparisonMember, friends: ComparisonFriend[
     metrics[key] = { rows, hiddenCount, noDataCount };
   }
 
-  return { friendCount: friends.length, metrics };
+  return { friendCount: friends.length, windowMonths, metrics };
 }
 
 // ── Invite codes ───────────────────────────────────────────────────────
@@ -293,11 +277,11 @@ function isUniqueConstraintError(err: unknown): boolean {
 
 const updateSettingsSchema = z.object({
   displayName: z.string().trim().min(1, "Display name can't be empty").max(30, "Display name is at most 30 characters").optional(),
-  shareValue: z.boolean().optional(),
+  shareInvestmentRate: z.boolean().optional(),
+  shareConsistency: z.boolean().optional(),
+  shareDiversification: z.boolean().optional(),
   shareReturn: z.boolean().optional(),
-  shareContributionRate: z.boolean().optional(),
-  shareSavingsRate: z.boolean().optional(),
-  shareEmergencyBuffer: z.boolean().optional(),
+  shareMonthlyReturn: z.boolean().optional(),
   shareHoldings: z.boolean().optional(),
 });
 
@@ -500,34 +484,18 @@ class FriendsService {
     const friendIds = links.map((l) => (l.requesterId === userId ? l.addresseeId : l.requesterId));
     const allIds = [userId, ...friendIds];
 
-    const [users, profiles] = await Promise.all([
-      prisma.user.findMany({ where: { id: { in: allIds } }, select: { id: true, displayName: true, sharing: true } }),
-      prisma.userProfile.findMany({ where: { userId: { in: allIds } } }),
-    ]);
+    const users = await prisma.user.findMany({ where: { id: { in: allIds } }, select: { id: true, displayName: true, sharing: true } });
     const userById = new Map(users.map((u) => [u.id, u]));
-    const profileById = new Map(profiles.map((p) => [p.userId, p]));
 
-    // Recompute-on-read per member so a stale PlanMonth never gets ranked.
-    // Friend count is capped (MAX_FRIENDS), so this stays cheap.
-    const plans = await Promise.all(allIds.map((id) => planService.getActivePlan(id, { advance: id === userId }).catch(() => null)));
-    const planById = new Map(allIds.map((id, i) => [id, plans[i]]));
+    // The user's own account is brought up to date first; friends' accounts are read as stored
+    // (reading someone else's never changes it), and kept current by the monthly refresh.
+    await planService.getActivePlan(userId).catch(() => null);
+    const loaded = await loadMembers(allIds);
+    const memberById = new Map((loaded?.members ?? []).map((m) => [m.id, m]));
+    // Everyone is measured over the viewer's window, as in the cohort comparison.
+    const window = loaded ? comparisonWindow(memberById.get(userId), loaded.asOf) : { months: [], n: 0 };
 
-    const metricsFor = (id: string): MemberMetrics => {
-      const plan = planById.get(id) ?? null;
-      const profile = profileById.get(id) ?? null;
-      return computeMemberMetrics(
-        plan
-          ? {
-              contributionAmount: plan.contributionAmount,
-              finalValue: plan.finalValue,
-              totalContributed: plan.totalContributed,
-              growth: plan.growth,
-              walletBalance: plan.walletBalance,
-            }
-          : null,
-        profile ? { monthlyIncome: Number(profile.monthlyIncome), monthlyExpense: Number(profile.monthlyExpense) } : null
-      );
-    };
+    const metricsFor = (id: string): MemberMetrics => memberFigures(memberById.get(id), window);
 
     const me = userById.get(userId);
     const friends: ComparisonFriend[] = friendIds.map((id) => {
@@ -540,7 +508,7 @@ class FriendsService {
       };
     });
 
-    return buildComparison({ displayName: me?.displayName ?? "You", metrics: metricsFor(userId) }, friends);
+    return buildComparison({ displayName: me?.displayName ?? "You", metrics: metricsFor(userId) }, friends, window.n);
   }
 
   /** What an account holds now, as value shares: the account's holdings, or null with nothing held. */
