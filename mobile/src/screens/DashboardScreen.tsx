@@ -375,7 +375,7 @@ function GrowthDetail({ point }: { point: GrowthPoint }) {
   const color = profit >= 0 ? "#1e8449" : LOSS;
   return (
     <View style={styles.detail}>
-      <Text style={styles.detailMonth}>{monthLabel(point.monthDate)}</Text>
+      <Text style={styles.detailMonth}>As of {monthLabel(point.monthDate)}</Text>
       <Text style={styles.detailLine}>
         Value {formatCurrency(point.portfolioValue)} · Invested {formatCurrency(point.invested)}
       </Text>
