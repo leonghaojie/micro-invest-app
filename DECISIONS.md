@@ -2104,7 +2104,9 @@ either missing from the Cohort table (value) or only available as a long-run fig
    account held something. Cohort: peers of the same risk level, as for the return. Explore: a SQL
    metric over the peers' latest month, with a month-by-month chart. Friends: a measure with its own
    sharing switch, off by default (`shareMonthlyReturn`).
-4. **One order on every page:** value, return, monthly return, investment rate, consistency,
+4. The Cohort page's "what stands out" sentence **never mentions the portfolio's value**: it mostly
+   reflects how long and how much someone has invested, so calling it a gap or a strength would mislead.
+5. **One order on every page:** value, return, monthly return, investment rate, consistency,
    diversification, then savings rate (Explore only). Pages show the ones they have.
 
 **Privacy.** Unchanged: aggregates only for Cohort and Explore (no group under 10, no identifier);

@@ -763,6 +763,12 @@ describe("buildObservation", () => {
     ...extra,
   });
 
+  it("never calls out the portfolio's value, as a strength or a gap, and is null with nothing else", () => {
+    expect(buildObservation([card("value", 5), card("return", 50), card("investmentRate", 52)])).toBe("You are close to the middle of similar investors on every measure shown.");
+    expect(buildObservation([card("value", 95), card("return", 50)])).toBe("You are close to the middle of similar investors on every measure shown.");
+    expect(buildObservation([card("value", 5)])).toBeNull();
+  });
+
   it("names the strongest and weakest, with the figure behind a diversification gap", () => {
     const text = buildObservation([
       card("investmentRate", 80),
