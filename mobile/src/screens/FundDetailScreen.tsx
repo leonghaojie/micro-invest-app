@@ -1,6 +1,6 @@
 /**
  * One fund's history and statistics (DECISIONS.md #14), opened by tapping a
- * fund in the Funds tab. Shows how the fund has actually moved so a user can
+ * fund in the Invest tab (Discover or Custom). Shows how the fund has actually moved so a user can
  * judge it before putting money in:
  *   - growth of 100 over a chosen range (dividends reinvested), drag to read;
  *   - key statistics for that range: total and annualised return, volatility,

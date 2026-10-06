@@ -1,22 +1,21 @@
 /**
- * S-03 Portfolios — UC-03, reshaped by DECISIONS.md #19 and #28. User-facing tab label "Portfolios"
- * (the tab's route key stays "Contribution" so no navigation param has to be renamed).
+ * Managed portfolios — the "Managed" view of the Invest tab (S-03, UC-03; DECISIONS.md #19, #28, #30). It was
+ * the Portfolios tab.
  *
- * The tab lists the ready-made portfolios in three groups, Low, Medium and High risk, and the user's own
- * saved mixes after them. Each is a card with its tagline, what it holds and how it has done in the past;
- * tapping one opens its page (PortfolioDetailScreen: key details, composition, past returns) where it can
- * be bought, once or every month, with any amount split across its funds by weight. Single funds are
- * bought from the Funds tab.
+ * Lists the ready-made portfolios in three groups, Low, Medium and High risk. Each is a card with its tagline,
+ * what it holds and how it has done in the past; tapping one opens its page (PortfolioDetailScreen: key
+ * details, composition, past returns) where it can be bought, once or every month, with any amount split
+ * across its funds by weight. Single funds are browsed in Discover, and the user's own mixes are built and
+ * kept in Custom.
  */
 import { useCallback, useState } from "react";
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
-import { useFocusEffect } from "@react-navigation/native";
+import { useFocusEffect, useNavigation } from "@react-navigation/native";
+import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { apiFetch, ApiError } from "../api/client";
 import { MixBar } from "../components/charts/MixBar";
-import type { MainTabScreenProps } from "../navigation/AppNavigator";
-import { formatCurrency } from "../utils/peerFormat";
-
-type Props = MainTabScreenProps<"Contribution">;
+import type { RootStackParamList } from "../navigation/AppNavigator";
+import type { InvestTab } from "../utils/investTabs";
 
 interface PortfolioSummary {
   id: string;
@@ -28,20 +27,15 @@ interface PortfolioSummary {
   allocations: { fundId: string; ticker: string; fundName: string; assetClass: string; weightPct: number }[];
 }
 
-interface Summary {
-  hasPlan: boolean;
-  latestPlan: { walletBalance: number } | null;
-}
-
 const GROUPS: { risk: string; title: string; blurb: string; color: string }[] = [
   { risk: "LOW", title: "Low risk", blurb: "Smaller ups and downs. Mostly bonds and cash-like funds.", color: "#2e8b57" },
   { risk: "MEDIUM", title: "Medium risk", blurb: "A balance of growth and steadiness: stocks with bonds, REITs or gold.", color: "#e08a2c" },
   { risk: "HIGH", title: "High risk", blurb: "The most room to grow and the biggest falls. Mostly stocks.", color: "#c0392b" },
 ];
 
-export function PortfoliosScreen({ navigation }: Props) {
+export function ManagedPortfolios({ onSelectTab }: { onSelectTab: (tab: InvestTab) => void }) {
+  const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const [portfolios, setPortfolios] = useState<PortfolioSummary[]>([]);
-  const [cash, setCash] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -49,11 +43,9 @@ export function PortfoliosScreen({ navigation }: Props) {
     let cancelled = false;
     setLoading(true);
     setError(null);
-    Promise.all([apiFetch<PortfolioSummary[]>("/portfolio/portfolios"), apiFetch<Summary>("/dashboard/summary").catch(() => null)])
-      .then(([pfs, summary]) => {
-        if (cancelled) return;
-        setPortfolios(pfs);
-        setCash(summary?.latestPlan?.walletBalance ?? null);
+    apiFetch<PortfolioSummary[]>("/portfolio/portfolios")
+      .then((pfs) => {
+        if (!cancelled) setPortfolios(pfs);
       })
       .catch((err) => {
         if (!cancelled) setError(describeError(err));
@@ -69,7 +61,7 @@ export function PortfoliosScreen({ navigation }: Props) {
   useFocusEffect(load);
 
   function open(p: PortfolioSummary) {
-    navigation.getParent()?.navigate("PortfolioDetail", { portfolioId: p.id, name: p.name });
+    navigation.navigate("PortfolioDetail", { portfolioId: p.id, name: p.name });
   }
 
   if (loading && portfolios.length === 0) {
@@ -92,19 +84,11 @@ export function PortfoliosScreen({ navigation }: Props) {
   }
 
   const presets = portfolios.filter((p) => p.isPreset);
-  const mine = portfolios.filter((p) => !p.isPreset);
 
   return (
     <ScrollView contentContainerStyle={styles.scrollContainer}>
-      <Text style={styles.title}>Portfolios</Text>
+      <Text style={styles.title}>Managed portfolios</Text>
       <Text style={styles.subtitle}>Pick a ready-made mix, learn what is in it, then buy it in one go. Your money is split across its funds by weight.</Text>
-
-      {cash !== null && (
-        <View style={styles.cashCard}>
-          <Text style={styles.cashLabel}>Cash available</Text>
-          <Text style={styles.cashValue}>{formatCurrency(cash)}</Text>
-        </View>
-      )}
 
       {portfolios.length === 0 && <Text style={styles.error}>No portfolios available yet.</Text>}
 
@@ -125,24 +109,14 @@ export function PortfoliosScreen({ navigation }: Props) {
         );
       })}
 
-      {mine.length > 0 && (
-        <View style={styles.group}>
-          <View style={styles.groupHead}>
-            <View style={[styles.dot, { backgroundColor: "#2e6fdb" }]} />
-            <Text style={styles.groupTitle}>Your own mixes</Text>
-          </View>
-          <Text style={styles.groupBlurb}>Mixes you have saved.</Text>
-          {mine.map((p) => (
-            <PortfolioCard key={p.id} p={p} onOpen={() => open(p)} />
-          ))}
-        </View>
-      )}
-
-      <Pressable style={styles.secondaryButton} onPress={() => navigation.getParent()?.navigate("Recurring")}>
+      <Pressable style={styles.secondaryButton} onPress={() => navigation.navigate("Recurring")}>
         <Text style={styles.secondaryButtonText}>Manage your monthly buys →</Text>
       </Pressable>
-      <Pressable style={styles.secondaryButton} onPress={() => navigation.navigate("Funds")}>
-        <Text style={styles.secondaryButtonText}>Want a single fund, or your own mix? Open the Funds tab →</Text>
+      <Pressable style={styles.secondaryButton} onPress={() => onSelectTab("discover")}>
+        <Text style={styles.secondaryButtonText}>Want a single fund? Open Discover →</Text>
+      </Pressable>
+      <Pressable style={styles.secondaryButton} onPress={() => onSelectTab("custom")}>
+        <Text style={styles.secondaryButtonText}>Want your own mix? Open Custom →</Text>
       </Pressable>
       <Text style={styles.disclaimer}>Past performance doesn't predict future results. This is information, not advice.</Text>
     </ScrollView>
@@ -188,9 +162,6 @@ const styles = StyleSheet.create({
   title: { fontSize: 24, fontWeight: "700" },
   subtitle: { fontSize: 14, color: "#555", textAlign: "center", maxWidth: 340 },
   error: { color: "#c0392b", textAlign: "center" },
-  cashCard: { width: "100%", maxWidth: 360, backgroundColor: "#1f3b73", borderRadius: 12, padding: 14, flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
-  cashLabel: { color: "#b8c7e6", fontSize: 13 },
-  cashValue: { color: "#fff", fontSize: 20, fontWeight: "700" },
   group: { width: "100%", maxWidth: 360, gap: 10, marginTop: 6 },
   groupHead: { flexDirection: "row", alignItems: "center", gap: 8 },
   dot: { width: 10, height: 10, borderRadius: 5 },

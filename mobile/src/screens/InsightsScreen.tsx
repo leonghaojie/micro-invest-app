@@ -84,7 +84,7 @@ export function InsightsScreen({ navigation }: Props) {
           <Text style={styles.cardTitle}>{card.title}</Text>
           <Text style={styles.cardBody}>{card.body}</Text>
           {card.showAdjustPlanAction && (
-            <Pressable style={styles.adjustButton} onPress={() => navigation.navigate("Contribution")}>
+            <Pressable style={styles.adjustButton} onPress={() => navigation.navigate("Invest", { tab: "managed" })}>
               <Text style={styles.adjustButtonText}>Adjust Plan</Text>
             </Pressable>
           )}

@@ -239,7 +239,7 @@ export function DashboardScreen({ navigation }: Props) {
         ) : (
           <>
             <Text style={styles.cardSub}>Nothing yet. You have {formatCurrency(plan.walletBalance)} in cash to invest.</Text>
-            <Pressable style={styles.submitButton} onPress={() => navigation.navigate("Funds")}>
+            <Pressable style={styles.submitButton} onPress={() => navigation.navigate("Invest", { tab: "discover" })}>
               <Text style={styles.submitButtonText}>Browse funds</Text>
             </Pressable>
           </>
@@ -289,7 +289,7 @@ export function DashboardScreen({ navigation }: Props) {
             Holdings move with the market and are not rebalanced. Anything bought this month shows at cost until {longMonth(plan.tradeMonth)} data arrives.
           </Text>
         )}
-        <Pressable onPress={() => navigation.navigate("Contribution")}>
+        <Pressable onPress={() => navigation.navigate("Invest", { tab: "managed" })}>
           <Text style={styles.secondaryButtonText}>Buy a portfolio →</Text>
         </Pressable>
       </View>

@@ -48,9 +48,9 @@ export function PeerComparisonScreen({ navigation }: Props) {
       </View>
 
       {mode === "cohort" ? (
-        <PeerCohort onStartPlan={() => navigation.navigate("Contribution")} onEditProfile={() => navigation.navigate("ProfileSetup")} />
+        <PeerCohort onStartPlan={() => navigation.navigate("Invest", { tab: "managed" })} onEditProfile={() => navigation.navigate("ProfileSetup")} />
       ) : mode === "explore" ? (
-        <PeerDashboard onStartPlan={() => navigation.navigate("Contribution")} />
+        <PeerDashboard onStartPlan={() => navigation.navigate("Invest", { tab: "managed" })} />
       ) : (
         <FriendsComparison onManage={() => navigation.navigate("Friends")} />
       )}
