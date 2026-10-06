@@ -720,11 +720,13 @@ const MIDDLE_BAND = 10;
 
 /**
  * One neutral sentence about where the user stands: the measure they are furthest ahead
- * on and the one furthest behind. Descriptive only - it states a position and, for
+ * on and the one furthest behind (not counting the portfolio's value). Descriptive only - it states a position and, for
  * diversification, the figure behind it, and never tells the user what to do.
  */
 export function buildObservation(cards: Card[]): string | null {
-  const ok = cards.filter((c) => c.status === "ok" && c.percentile !== undefined);
+  // The value of a portfolio mostly reflects how long and how much someone has invested, so it is
+  // shown in the table but never called out as a strength or a gap.
+  const ok = cards.filter((c) => c.key !== "value" && c.status === "ok" && c.percentile !== undefined);
   if (ok.length === 0) return null;
 
   const by = [...ok].sort((a, b) => (b.percentile as number) - (a.percentile as number));
