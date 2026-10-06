@@ -154,14 +154,16 @@ consent-based exception to the aggregate-only rule (NFR-03); the anonymous
 `/peers/*` endpoints are untouched. Seeded demo users can be added with the
 codes `DEMO0001`, `DEMO0002`, … (requests to them are auto-accepted).
 
-**Friends' holdings** (`friends.service.ts` — `DECISIONS.md` #12, 4 Oct 2026):
-the Friends view has a Rankings | Holdings selector. Holdings is a compact,
-searchable list of friends; tapping one opens their own screen with what they
-invest in — their funds and each fund's weight, with an asset-class bar — and
-marks funds you hold too, so a long friends list or a big portfolio never floods
-a page (Rankings likewise show the top 5 plus your own row). It is its own opt-in
-switch, off by default, and shows percentages only: never amounts, and never a
-custom portfolio's name. Friends who keep it private are counted, not named.
+**Friends' holdings and one-to-one comparison** (`friends.service.ts` — `DECISIONS.md` #12, 4 Oct
+2026; #26, 7 Oct 2026): tap a friend's name on the rankings (or in the list of friends below them) to
+open "You and <friend>": your figure and theirs for each measure, then both of your holdings
+side by side — an asset-class bar each and one table of every fund either of you holds, with the
+funds you share marked. Holdings are their own opt-in switch, off by default, and show percentages
+only: never amounts, and never a custom portfolio's name. A figure a friend keeps private looks
+exactly like a missing one, so the page never says what they switched off. (The separate Holdings
+tab is gone.) **Close friends** (`DECISIONS.md` #27): each sharing choice has an audience (Nobody,
+Close friends or All friends); you put friends on a private close-friends list with a star, and they see
+what you set to Close friends. The list is one-directional and nobody is told whether they are on it.
 
 ## Architecture
 
@@ -410,6 +412,13 @@ original Word documents, each superseding the last within its phase:
 - `Phase2_SRS_v1.23.docx` — Phase 4 amendment (7 Oct 2026): **the Dashboard shows value against
   money invested; the Savings Rate card is removed** — new FR57, S-04 amended. Not a reopened TBD
   (`DECISIONS.md` #25). Kept alongside v1.22.
+- `Phase2_SRS_v1.24.docx` — Phase 4 amendment (7 Oct 2026): **Friends: tap a name to compare one to
+  one, holdings included; the Holdings tab is removed** — new FR58, UC-08, S-05 and S-08 amended.
+  Not a reopened TBD (`DECISIONS.md` #26). Kept alongside v1.23.
+- `Phase2_SRS_v1.25.docx` — Phase 4 addition (7 Oct 2026): **close friends** — a private close-friends
+  list and, for each sharing choice, an audience of nobody, close friends or all friends; new FR59, UC-08,
+  S-05 and S-07 amended, Data Dictionary (CloseFriend, ShareAudience). Not a reopened TBD
+  (`DECISIONS.md` #27). Kept alongside v1.24.
 - `FYP Roadmap.docx` — the full Phase 0–9 plan mapped to the Lab #1–#5
   sequence and semester timeline.
 - `FYP_SRS_UseCase_UI_Lab1Style.docx` — an earlier Lab #1-formatted SRS
@@ -441,6 +450,8 @@ income-based/monthly-backtest rewrite (`DECISIONS.md` #1 third amendment,
 | — | More funds and presets (new scope) | FR29–30 | ✅ Done — 23 funds (15 added, gap-checked), 10 presets (7 diversified; originals untouched), search + asset-class filters, earliest start month per portfolio; every preset verified live (DECISIONS.md #16, SRS v1.13) |
 | — | Portfolio dashboard + account management (new scope) | FR31–34 | ✅ Done — total assets / securities value / unrealised P&L / cash / last-month P&L, holdings that open each fund, and an Account section (name, email, password, log out) with current-password checks and a 5-guess limit (DECISIONS.md #17, SRS v1.14). Email unverified; other devices stay signed in after a password change |
 | — | Peer cohort comparison (new scope) | FR35–37 | ✅ Done — default Peers view: headline vs similar investors and a benchmark, cohort labels, peer group, four per-metric cards with reasons; weighted-distance nearest neighbours per metric, same-risk filter for returns; experience stored for a future filter; verified against an independent implementation (DECISIONS.md #18, SRS v1.15). 97% of peers are simulated; consistency and goal-progress metrics left out |
+| — | Close friends (new scope) | FR59 | ✅ Done — private one-directional close-friends list; each sharing choice is Nobody / Close friends / All friends; a figure shown to a close friend looks missing to others and nobody is told who is listed (DECISIONS.md #27, SRS v1.25) |
+| — | Friends: one-to-one comparison with holdings (amendment) | FR58 | ✅ Done — tap a friend for your figure and theirs on each measure plus both portfolios side by side with shared funds marked; Holdings tab removed; private looks like missing (DECISIONS.md #26, SRS v1.24) |
 | — | Dashboard: value against money invested (amendment) | FR57 | ✅ Done — line chart of holdings value against money put in with the monthly profit or loss beneath, tap a month for its figures; Savings Rate card removed (DECISIONS.md #25, SRS v1.23) |
 | — | Comparison measures: value, monthly return, no return per risk (amendment) | FR56 | ✅ Done — Cohort gains portfolio value and monthly portfolio return, Explore and Friends gain the monthly return, Friends never shows value; one order on every page; checked against stored figures (DECISIONS.md #24, SRS v1.22) |
 | — | Explore measures (amendment) | FR55 | ✅ Done — the Explore charts kept; measures are value, return, investment rate, consistency, diversification and savings rate, the last two worked out by the cohort comparison's rules; checked against an independent recomputation (DECISIONS.md #23, SRS v1.21) |
@@ -449,11 +460,11 @@ income-based/monthly-backtest rewrite (`DECISIONS.md` #1 third amendment,
 | — | Cohort comparison as a table with explanations (new scope) | FR49–50 | ✅ Done — one row per measure (you, peer median, position); tap a row for what it is, how it is worked out, what the numbers mean, your result and who you were compared with (DECISIONS.md #20, SRS v1.18) |
 | — | Buy, sell and a ledger (new scope) | FR38–43 | ✅ Done (PR 2 and PR 3) — buy a fund or a portfolio, sell, cash credited monthly (opening credit at sign-up), profile editable any time (past months never change), real holdings with cost and profit, activity list, monthly buys you can set up, change, pause and resume, with skipped months shown, and contribution consistency in the cohort view; existing plans and the 300 synthetic peers migrated (single-fund plans identical to the cent, multi-fund within 1.23%). Verified live, including a month rollover on a throwaway database (DECISIONS.md #19, SRS v1.16). Recurring-buy screens and the consistency measure followed in PR 3 (DECISIONS.md #19) |
 | 7 | History, polish, NFRs | FR13 | ✅ Done — `GET /plan` returns the one active plan directly (trivial now that there's only ever one) |
-| 8 | Testing (Lab #4) | — | 🟡 In progress — 755 backend tests (30 suites, ~95% line coverage): per-service unit tests (basis-path coverage of the peer-grouping widening/floor branches, equivalence-class/boundary coverage of the monthly engine, reset-code limits) plus a black-box HTTP suite (`src/api.contract.test.ts`) driving every route through the real Express app — auth gate, status codes, error mapping. That suite found a real bug (malformed JSON returned 500, now 400). Still to do: package as the formal Lab #4 deliverable (documented FR-traced results, reflection report) and the coding-agent exercises |
+| 8 | Testing (Lab #4) | — | 🟡 In progress — 759 backend tests (30 suites, ~95% line coverage): per-service unit tests (basis-path coverage of the peer-grouping widening/floor branches, equivalence-class/boundary coverage of the monthly engine, reset-code limits) plus a black-box HTTP suite (`src/api.contract.test.ts`) driving every route through the real Express app — auth gate, status codes, error mapping. That suite found a real bug (malformed JSON returned 500, now 400). Still to do: package as the formal Lab #4 deliverable (documented FR-traced results, reflection report) and the coding-agent exercises |
 | 9 | Demo prep & submission | — | ⬜ Not started |
 
 There is no remaining functional gap against the SRS as of this pass —
-`Phase2_SRS_v1.6.docx`, `v1.7.docx`, `v1.8.docx`, `v1.9.docx`, `v1.10.docx`, `v1.11.docx`, `v1.12.docx`, `v1.13.docx`, `v1.14.docx`, `v1.15.docx`, `v1.16.docx`, `v1.17.docx`, `v1.18.docx`, `v1.19.docx`, `v1.20.docx`, `v1.21.docx`, `v1.22.docx` and `v1.23.docx` each land in the same
+`Phase2_SRS_v1.6.docx`, `v1.7.docx`, `v1.8.docx`, `v1.9.docx`, `v1.10.docx`, `v1.11.docx`, `v1.12.docx`, `v1.13.docx`, `v1.14.docx`, `v1.15.docx`, `v1.16.docx`, `v1.17.docx`, `v1.18.docx`, `v1.19.docx`, `v1.20.docx`, `v1.21.docx`, `v1.22.docx`, `v1.23.docx`, `v1.24.docx` and `v1.25.docx` each land in the same
 pass as the code, matching every prior amendment.
 
 The old "Budget band (B1–B4) thresholds" gap is moot, not resolved:

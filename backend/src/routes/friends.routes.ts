@@ -9,8 +9,8 @@ import { Router } from "express";
 import {
   acceptRequest,
   getComparison,
-  getHoldings,
-  getHoldingsDetail,
+  getFriendComparison,
+  setCloseFriend,
   getOverview,
   removeFriendship,
   sendRequest,
@@ -21,10 +21,10 @@ export const friendsRouter = Router();
 
 friendsRouter.get("/", getOverview);
 friendsRouter.get("/comparison", getComparison);
-// DECISIONS.md #12: what friends hold, for those who opted in.
-friendsRouter.get("/holdings", getHoldings);
-// One person's full holdings; :id is a friendship id, or "me".
-friendsRouter.get("/holdings/:id", getHoldingsDetail);
+// DECISIONS.md #26: one friend side by side with you (measures and holdings); :id is a friendship id.
+friendsRouter.get("/:id/compare", getFriendComparison);
+// DECISIONS.md #27: put a friend on, or take them off, your private close-friends list.
+friendsRouter.put("/:id/close", setCloseFriend);
 friendsRouter.put("/settings", updateSettings);
 friendsRouter.post("/requests", sendRequest);
 friendsRouter.post("/requests/:id/accept", acceptRequest);

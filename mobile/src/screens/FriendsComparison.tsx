@@ -1,52 +1,30 @@
 /**
- * Friends comparison — the "Friends" half of the Peers tab (DECISIONS.md
- * #8, 3 Oct 2026; holdings: #12, 4 Oct 2026). This is the one place named
- * individuals appear, as a consent-based exception to NFR-03 — the anonymous
- * income-range comparison next to it is untouched.
+ * Friends comparison — the "Friends" half of the Peers tab (DECISIONS.md #8, 3 Oct 2026; rankings on
+ * the cohort measures: #22, #24; one-to-one comparison: #26, 7 Oct 2026). This is the one place named
+ * individuals appear, as a consent-based exception to NFR-03 — the anonymous peer comparisons next
+ * to it are untouched.
  *
- * Two views, switched at the top:
- *  - Rankings: a ranked list, per metric, of the user plus the friends who
- *    shared that metric (GET /friends/comparison). Long boards are capped to
- *    the top few plus the user's own row, with a "Show all" toggle.
- *  - Holdings: a compact list of friends who share their holdings
- *    (GET /friends/holdings). Tapping a name opens that person's full holdings
- *    on their own screen (FriendHoldingsScreen), so a long friends list or a
- *    portfolio with dozens of funds never floods this page.
+ * A ranked list, per measure, of the user plus the friends who shared that measure
+ * (GET /friends/comparison). Long boards are capped to the top few plus the user's own row, with a
+ * "Show all" toggle. Tapping a friend's name opens FriendCompareScreen: that friend side by side
+ * with the user, measures and holdings. Below the rankings is a list of every friend, so someone who
+ * shares no measure can still be opened (and their holdings seen, if they share those).
  *
- * The user always sees their own figures; a friend's figures appear only if
- * they opted in, and friends who hide them are counted but never named.
+ * The user always sees their own figures; a friend's figures appear only if they opted in, and
+ * friends who hide them are counted but never named.
  */
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useState } from "react";
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { useFocusEffect, useNavigation } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { apiFetch, ApiError } from "../api/client";
-import { MixBar, MixLegend } from "../components/charts/MixBar";
 import type { RootStackParamList } from "../navigation/AppNavigator";
-import { KeyboardScreen } from "../components/KeyboardScreen";
-import type { MetricKey as CohortMetricKey } from "../utils/cohortTypes";
+import { FRIEND_METRICS, FriendMetric, FriendMetricKey } from "../utils/friendMetrics";
 import { METRIC_INFO } from "../utils/metricInfo";
 
-interface HoldingsSummary {
-  /** null for the user themselves (opened as "me"). */
-  friendshipId: string | null;
-  displayName: string;
-  portfolioName: string | null;
-  fundCount: number;
-  /** Funds in this portfolio that the user also holds. */
-  sharedFundCount: number;
-  mix: { assetClass: string; pct: number }[];
-}
-
-interface HoldingsOverview {
-  friendCount: number;
-  me: HoldingsSummary | null;
-  friends: HoldingsSummary[];
-  hiddenCount: number;
-  noPlanCount: number;
-}
-
 interface BoardRow {
+  /** Handle for opening the friend; null for the user's own row. */
+  friendshipId: string | null;
   displayName: string;
   isMe: boolean;
   value: number;
@@ -59,27 +37,23 @@ interface MetricBoard {
   noDataCount: number;
 }
 
-interface Comparison {
-  friendCount: number;
-  /** How many months the return measures cover (0 when the user has no history yet). */
-  windowMonths: number;
-  metrics: Record<MetricKey, MetricBoard>;
+interface FriendLink {
+  friendshipId: string;
+  displayName: string;
+  /** Whether you have put this friend on your close-friends list (only you can see this). */
+  close?: boolean;
 }
 
-/** Friends never see the portfolio's value (DECISIONS.md #22), so it is not one of their measures. */
-type MetricKey = Exclude<CohortMetricKey, "value">;
-
-/** The same five measures, names and units as the cohort comparison (DECISIONS.md #22). */
-const METRICS: { key: MetricKey; label: string; chip: string; format: (v: number) => string }[] = [
-  { key: "return", label: "Portfolio return", chip: "Return", format: (v) => `${v.toFixed(1)}%` },
-  { key: "monthlyReturn", label: "Monthly portfolio return", chip: "Monthly return", format: (v) => `${v.toFixed(1)}%` },
-  { key: "investmentRate", label: "Monthly investment rate", chip: "Investment rate", format: (v) => `${v.toFixed(1)}%` },
-  { key: "consistency", label: "Contribution consistency", chip: "Consistency", format: (v) => `${v.toFixed(1)}%` },
-  { key: "diversification", label: "Diversification score", chip: "Diversification", format: (v) => `${Math.round(v)}/100` },
-];
+interface Comparison {
+  friendCount: number;
+  friends: FriendLink[];
+  /** How many months the return measures cover (0 when the user has no history yet). */
+  windowMonths: number;
+  metrics: Record<FriendMetricKey, MetricBoard>;
+}
 
 /** The cohort page's explanations, except where they describe the cohort's like-for-like risk groups. */
-const FRIEND_INFO: Partial<Record<MetricKey, (typeof METRIC_INFO)[MetricKey]>> = {
+const FRIEND_INFO: Partial<Record<FriendMetricKey, (typeof METRIC_INFO)[FriendMetricKey]>> = {
   return: {
     ...METRIC_INFO.return,
     how: "Each month's return compounded together over the months shown above, so adding or withdrawing money does not distort it.",
@@ -93,28 +67,24 @@ const FRIEND_INFO: Partial<Record<MetricKey, (typeof METRIC_INFO)[MetricKey]>> =
 
 // Keep each page short however many friends there are.
 const BOARD_TOP = 5; // rankings rows shown before "Show all"
-const FRIEND_LIST_PAGE = 15; // friends shown in the Holdings list before "Show all"
+const FRIEND_LIST_PAGE = 15; // friends shown in the friends list before "Show all"
 const SEARCH_FROM = 8; // show a search box once there are more friends than this
 
 export function FriendsComparison({ onManage }: { onManage: () => void }) {
+  const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const [data, setData] = useState<Comparison | null>(null);
-  const [holdings, setHoldings] = useState<HoldingsOverview | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [metric, setMetric] = useState<MetricKey>("return");
-  const [view, setView] = useState<"rankings" | "holdings">("rankings");
+  const [metric, setMetric] = useState<FriendMetricKey>("return");
 
   const load = useCallback(() => {
     let cancelled = false;
     setLoading(true);
     setError(null);
 
-    Promise.all([apiFetch<Comparison>("/friends/comparison"), apiFetch<HoldingsOverview>("/friends/holdings")])
-      .then(([comparison, overview]) => {
-        if (!cancelled) {
-          setData(comparison);
-          setHoldings(overview);
-        }
+    apiFetch<Comparison>("/friends/comparison")
+      .then((comparison) => {
+        if (!cancelled) setData(comparison);
       })
       .catch((err) => {
         if (!cancelled) setError(describeError(err));
@@ -129,6 +99,10 @@ export function FriendsComparison({ onManage }: { onManage: () => void }) {
   }, []);
 
   useFocusEffect(load);
+
+  function open(friendshipId: string, displayName: string) {
+    navigation.navigate("FriendCompare", { friendshipId, displayName });
+  }
 
   if (loading) {
     return (
@@ -163,49 +137,26 @@ export function FriendsComparison({ onManage }: { onManage: () => void }) {
     );
   }
 
-  const header = (
-    <>
-      <Text style={styles.title}>Friends</Text>
-      <Text style={styles.subtitle}>
-        {data.friendCount} friend{data.friendCount === 1 ? "" : "s"} · only what each friend has chosen to share is shown.
-      </Text>
-      <View style={styles.segment}>
-        {(["rankings", "holdings"] as const).map((v) => (
-          <Pressable key={v} style={[styles.segmentButton, view === v && styles.segmentButtonSelected]} onPress={() => setView(v)}>
-            <Text style={[styles.segmentText, view === v && styles.segmentTextSelected]}>{v === "rankings" ? "Rankings" : "Holdings"}</Text>
-          </Pressable>
-        ))}
-      </View>
-    </>
-  );
-  const footer = (
-    <Pressable style={styles.secondaryButton} onPress={onManage}>
-      <Text style={styles.secondaryButtonText}>Manage friends & sharing →</Text>
-    </Pressable>
-  );
-
-  if (view === "holdings" && holdings) {
-    return (
-      <KeyboardScreen contentContainerStyle={styles.scrollContainer}>
-        {header}
-        <HoldingsList overview={holdings} />
-        {footer}
-      </KeyboardScreen>
-    );
-  }
+  const meta = FRIEND_METRICS.find((m) => m.key === metric)!;
 
   return (
     <ScrollView contentContainerStyle={styles.scrollContainer}>
-      {header}
+      <Text style={styles.title}>Friends</Text>
+      <Text style={styles.subtitle}>
+        {data.friendCount} friend{data.friendCount === 1 ? "" : "s"} · only what each friend has chosen to share is shown. Tap a friend to compare with them one to one, holdings included.
+      </Text>
       <View style={styles.chipWrap}>
-        {METRICS.map((m) => (
+        {FRIEND_METRICS.map((m) => (
           <Pressable key={m.key} style={[styles.chip, metric === m.key && styles.chipSelected]} onPress={() => setMetric(m.key)}>
             <Text style={[styles.chipText, metric === m.key && styles.chipTextSelected]}>{m.chip}</Text>
           </Pressable>
         ))}
       </View>
-      <RankingsBoard board={data.metrics[metric]} metric={METRICS.find((m) => m.key === metric)!} metricKey={metric} windowMonths={data.windowMonths} />
-      {footer}
+      <RankingsBoard board={data.metrics[metric]} meta={meta} windowMonths={data.windowMonths} onOpen={open} />
+      <FriendList friends={data.friends} onOpen={open} />
+      <Pressable style={styles.secondaryButton} onPress={onManage}>
+        <Text style={styles.secondaryButtonText}>Manage friends & sharing →</Text>
+      </Pressable>
     </ScrollView>
   );
 }
@@ -214,19 +165,19 @@ export function FriendsComparison({ onManage }: { onManage: () => void }) {
  * user's own row (so they can always find themselves), and a toggle for the rest. */
 function RankingsBoard({
   board,
-  metric,
-  metricKey,
+  meta,
   windowMonths,
+  onOpen,
 }: {
   board: MetricBoard;
-  metric: { label: string; format: (v: number) => string };
-  metricKey: MetricKey;
+  meta: FriendMetric;
   windowMonths: number;
+  onOpen: (friendshipId: string, displayName: string) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [explaining, setExplaining] = useState(false);
-  const info = FRIEND_INFO[metricKey] ?? METRIC_INFO[metricKey];
-  const overWindow = metricKey === "return" && windowMonths > 0;
+  const info = FRIEND_INFO[meta.key] ?? METRIC_INFO[meta.key];
+  const overWindow = meta.key === "return" && windowMonths > 0;
 
   const collapsible = board.rows.length > BOARD_TOP + 1;
   const top = board.rows.slice(0, BOARD_TOP);
@@ -236,7 +187,7 @@ function RankingsBoard({
 
   return (
     <View style={styles.card}>
-      <Text style={styles.cardHeading}>{metric.label}</Text>
+      <Text style={styles.cardHeading}>{meta.label}</Text>
       <Text style={styles.metricWhat}>{info.what}</Text>
       {overWindow && (
         <Text style={styles.note}>
@@ -247,13 +198,13 @@ function RankingsBoard({
       {board.rows.length === 0 && <Text style={styles.body}>Nothing to rank yet for this stat.</Text>}
 
       {visible.map((row, i) => (
-        <BoardLine key={`${row.displayName}-${i}`} row={row} format={metric.format} />
+        <BoardLine key={`${row.displayName}-${i}`} row={row} format={meta.format} onOpen={onOpen} />
       ))}
 
       {collapsible && !expanded && meBelowTop && me && (
         <>
           <Text style={styles.gap}>⋯</Text>
-          <BoardLine row={me} format={metric.format} />
+          <BoardLine row={me} format={meta.format} onOpen={onOpen} />
         </>
       )}
 
@@ -287,118 +238,77 @@ function RankingsBoard({
   );
 }
 
-function BoardLine({ row, format }: { row: BoardRow; format: (v: number) => string }) {
-  return (
-    <View style={[styles.row, row.isMe && styles.rowMe]}>
+function BoardLine({ row, format, onOpen }: { row: BoardRow; format: (v: number) => string; onOpen: (friendshipId: string, displayName: string) => void }) {
+  const friendshipId = row.friendshipId;
+  const content = (
+    <>
       <Text style={[styles.rank, row.isMe && styles.rowMeText]}>{row.rank}</Text>
       <Text style={[styles.name, row.isMe && styles.rowMeText]} numberOfLines={1}>
         {row.isMe ? `${row.displayName} (you)` : row.displayName}
       </Text>
       <Text style={[styles.value, row.isMe && styles.rowMeText]}>{format(row.value)}</Text>
-    </View>
+      {!row.isMe && <Text style={styles.chevron}>›</Text>}
+    </>
+  );
+  if (row.isMe || friendshipId === null) return <View style={[styles.row, styles.rowMe]}>{content}</View>;
+  return (
+    <Pressable
+      style={styles.row}
+      onPress={() => onOpen(friendshipId, row.displayName)}
+      accessibilityRole="button"
+      accessibilityLabel={`Compare with ${row.displayName}`}
+    >
+      {content}
+    </Pressable>
   );
 }
 
-/** Who shares their holdings (DECISIONS.md #12): one compact row per person —
- * name, portfolio, fund count, a small asset-class bar. Tap to open the full
- * holdings on their own screen. The user's own row is pinned first. */
-function HoldingsList({ overview }: { overview: HoldingsOverview }) {
-  const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
+/** Every friend, by name: the way in for someone who shares no measure (their holdings, if shared, are on their page). */
+function FriendList({ friends, onOpen }: { friends: FriendLink[]; onOpen: (friendshipId: string, displayName: string) => void }) {
   const [query, setQuery] = useState("");
   const [showAll, setShowAll] = useState(false);
 
   const q = query.trim().toLowerCase();
-  const matches = useMemo(
-    () => (q ? overview.friends.filter((f) => f.displayName.toLowerCase().includes(q)) : overview.friends),
-    [overview.friends, q]
-  );
+  const matches = q ? friends.filter((f) => f.displayName.toLowerCase().includes(q)) : friends;
   const paged = !q && !showAll && matches.length > FRIEND_LIST_PAGE;
   const shown = paged ? matches.slice(0, FRIEND_LIST_PAGE) : matches;
 
-  const classes = useMemo(
-    () => [...new Set([...(overview.me ? [overview.me] : []), ...overview.friends].flatMap((m) => m.mix.map((e) => e.assetClass)))],
-    [overview]
-  );
-
-  function open(person: HoldingsSummary) {
-    navigation.navigate("FriendHoldings", { friendshipId: person.friendshipId ?? "me", displayName: person.displayName });
-  }
-
   return (
-    <>
-      {classes.length > 0 && <MixLegend classes={classes} />}
-
-      {overview.friends.length > SEARCH_FROM && (
+    <View style={styles.card}>
+      <Text style={styles.cardHeading}>Compare with a friend</Text>
+      {friends.length > SEARCH_FROM && (
         <TextInput
           style={styles.search}
-          placeholder={`Search ${overview.friends.length} friends`}
+          placeholder={`Search ${friends.length} friends`}
           autoCapitalize="none"
           autoCorrect={false}
           value={query}
           onChangeText={setQuery}
         />
       )}
-
-      {overview.me && !q && <HoldingsRow person={overview.me} isMe onPress={() => open(overview.me!)} />}
-
-      {overview.friends.length === 0 && (
-        <View style={styles.card}>
-          <Text style={styles.body}>
-            {overview.friendCount === 0 ? "Add friends to see what they invest in." : "None of your friends are sharing their holdings yet."}
-          </Text>
-        </View>
-      )}
-
-      {q && matches.length === 0 && <Text style={styles.panelNote}>No friend matches “{query.trim()}”.</Text>}
-
+      {q && matches.length === 0 && <Text style={styles.note}>No friend matches “{query.trim()}”.</Text>}
       {shown.map((f) => (
-        <HoldingsRow key={f.friendshipId ?? f.displayName} person={f} onPress={() => open(f)} />
+        <Pressable
+          key={f.friendshipId}
+          style={styles.row}
+          onPress={() => onOpen(f.friendshipId, f.displayName)}
+          accessibilityRole="button"
+          accessibilityLabel={`Compare with ${f.displayName}`}
+        >
+          <Text style={styles.name} numberOfLines={1}>
+            {f.close ? "★ " : ""}
+            {f.displayName}
+          </Text>
+          <Text style={styles.chevron}>›</Text>
+        </Pressable>
       ))}
-
       {paged && (
         <Pressable onPress={() => setShowAll(true)}>
           <Text style={styles.toggleLink}>Show all {matches.length} friends</Text>
         </Pressable>
       )}
-
-      {overview.hiddenCount > 0 && (
-        <Text style={styles.panelNote}>
-          {overview.hiddenCount} friend{overview.hiddenCount === 1 ? " keeps" : "s keep"} their holdings private.
-        </Text>
-      )}
-      {overview.noPlanCount > 0 && (
-        <Text style={styles.panelNote}>
-          {overview.noPlanCount} friend{overview.noPlanCount === 1 ? " shares" : "s share"} holdings but{" "}
-          {overview.noPlanCount === 1 ? "hasn't" : "haven't"} invested yet.
-        </Text>
-      )}
-      <Text style={styles.panelNote}>Friends see your holdings only if you turn on “Holdings” in your sharing settings.</Text>
-    </>
-  );
-}
-
-function HoldingsRow({ person, isMe, onPress }: { person: HoldingsSummary; isMe?: boolean; onPress: () => void }) {
-  const detail = [
-    person.portfolioName ?? "Custom mix",
-    `${person.fundCount} fund${person.fundCount === 1 ? "" : "s"}`,
-    !isMe && person.sharedFundCount > 0 ? `${person.sharedFundCount} in common` : null,
-  ]
-    .filter(Boolean)
-    .join(" · ");
-
-  return (
-    <Pressable style={[styles.personRow, isMe && styles.cardMe]} onPress={onPress} accessibilityRole="button" accessibilityLabel={`${person.displayName}'s holdings`}>
-      <View style={styles.personMain}>
-        <Text style={[styles.personName, isMe && styles.rowMeText]} numberOfLines={1}>
-          {isMe ? `${person.displayName} (you)` : person.displayName}
-        </Text>
-        <Text style={styles.personDetail} numberOfLines={1}>
-          {detail}
-        </Text>
-        <MixBar entries={person.mix} />
-      </View>
-      <Text style={styles.chevron}>›</Text>
-    </Pressable>
+      <Text style={styles.note}>Friends see your holdings only if you turn on “Holdings” in your sharing settings.</Text>
+    </View>
   );
 }
 
@@ -434,7 +344,6 @@ const styles = StyleSheet.create({
   metricWhat: { fontSize: 13, color: "#555" },
   explain: { gap: 6, backgroundColor: "#f7f7f7", borderRadius: 6, padding: 10 },
   explainText: { fontSize: 13, color: "#444" },
-  cardMe: { backgroundColor: "#f5f9ff", borderColor: "#2e6fdb" },
   cardHeading: { fontSize: 16, fontWeight: "600" },
   row: { flexDirection: "row", alignItems: "center", gap: 12, paddingVertical: 8, paddingHorizontal: 8, borderRadius: 6 },
   rowMe: { backgroundColor: "#eaf1fd" },
@@ -442,18 +351,12 @@ const styles = StyleSheet.create({
   rank: { width: 24, fontWeight: "600", color: "#555" },
   name: { flex: 1, color: "#333" },
   value: { fontWeight: "600", color: "#333" },
+  chevron: { fontSize: 20, color: "#999", width: 12, textAlign: "right" },
   gap: { textAlign: "center", color: "#999", letterSpacing: 4 },
   toggleLink: { color: "#2e6fdb", fontWeight: "600", textAlign: "center", paddingVertical: 6 },
   note: { fontSize: 12, color: "#777", marginTop: 4 },
-  panelNote: { fontSize: 12, color: "#777", textAlign: "center", maxWidth: 360 },
-  segment: { flexDirection: "row", borderWidth: 1, borderColor: "#ccc", borderRadius: 8, overflow: "hidden", width: "100%", maxWidth: 360 },
-  segmentButton: { flex: 1, paddingVertical: 8, alignItems: "center" },
-  segmentButtonSelected: { backgroundColor: "#eaf1fd" },
-  segmentText: { color: "#555", fontWeight: "600" },
-  segmentTextSelected: { color: "#2e6fdb" },
   search: {
     width: "100%",
-    maxWidth: 360,
     borderWidth: 1,
     borderColor: "#ccc",
     borderRadius: 8,
@@ -462,22 +365,6 @@ const styles = StyleSheet.create({
     fontSize: 15,
     backgroundColor: "#fff",
   },
-  personRow: {
-    width: "100%",
-    maxWidth: 360,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-    borderWidth: 1,
-    borderColor: "#ccc",
-    borderRadius: 8,
-    paddingVertical: 12,
-    paddingHorizontal: 14,
-  },
-  personMain: { flex: 1, gap: 4 },
-  personName: { fontSize: 16, fontWeight: "600", color: "#222" },
-  personDetail: { fontSize: 12, color: "#777" },
-  chevron: { fontSize: 24, color: "#999" },
   submitButton: {
     backgroundColor: "#2e6fdb",
     borderRadius: 8,
