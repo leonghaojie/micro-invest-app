@@ -445,15 +445,18 @@ describe("PortfolioService.getFundDetail (DECISIONS.md #14)", () => {
         await expect(portfolioService.getPortfolioDetail("user-1", ID, "forever")).rejects.toThrow();
       });
 
-      it("gives no dividend yield (the funds' dividends are inside their returns), and warns when the funds are in mixed currencies", async () => {
+      it("gives no dividend yield (the funds' dividends are inside their returns), and names the currencies converted to SGD", async () => {
         const d = await portfolioService.getPortfolioDetail("user-1", ID, "max");
         expect(d.trailingYieldPct).toBeNull();
-        expect(d.mixedCurrencies).toBe(false); // both USD
+        expect(d.convertedCurrencies).toEqual(["USD"]); // both are US dollar funds, converted to SGD
 
         mockedPrisma.portfolio.findUnique.mockResolvedValue(
           pf({ allocations: [{ fundId: "vt", weightPct: "50.00", fund: { ticker: "VT", name: "x", assetClass: "EQUITY", exchange: "US", currency: "USD" } }, { fundId: "agg", weightPct: "50.00", fund: { ticker: "A35.SI", name: "y", assetClass: "BOND", exchange: "SGX", currency: "SGD" } }] })
         );
-        expect((await portfolioService.getPortfolioDetail("user-1", ID, "max")).mixedCurrencies).toBe(true);
+        expect((await portfolioService.getPortfolioDetail("user-1", ID, "max")).convertedCurrencies).toEqual(["USD"]); // the SGD fund needs no conversion
+
+        mockedPrisma.portfolio.findUnique.mockResolvedValue(pf({ allocations: [{ fundId: "vt", weightPct: "100.00", fund: { ticker: "ES3.SI", name: "x", assetClass: "EQUITY", exchange: "SGX", currency: "SGD" } }] }));
+        expect((await portfolioService.getPortfolioDetail("user-1", ID, "max")).convertedCurrencies).toEqual([]); // all SGD: nothing converted
       });
 
       it("says nothing about the limit when the funds start together", async () => {

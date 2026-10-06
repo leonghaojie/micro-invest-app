@@ -15,12 +15,13 @@
  *
  * Prices come from the same source and settings as the original history
  * (yfinance, unadjusted close + dividends), so new months are consistent with
- * old ones.
+ * old ones. Everything is stored in Singapore dollars (DECISIONS.md #29): a fund listed in
+ * US dollars is converted with that month's USD/SGD rate from the same fetch.
  */
 import { readFileSync } from "fs";
 import { join } from "path";
 import { prisma } from "../config/prisma";
-import { deriveMonthlyReturns, DerivedReturn, findGaps, lastCompleteMonth, monthKey, monthsBetween, RawRow } from "../utils/fundIngest";
+import { BASE_CURRENCY, deriveMonthlyReturns, DerivedReturn, findGaps, FxRates, fxRatesFromRows, lastCompleteMonth, monthKey, monthsBetween, RawRow } from "../utils/fundIngest";
 import { oldestLatestMonth } from "./fundClock";
 import { planService } from "./plan.service";
 
@@ -39,6 +40,8 @@ export interface LoadResult {
   funds: number;
   newMonths: number;
   revisedMonths: number;
+  /** Earlier months removed because no exchange rate exists for them (the history starts later). */
+  removedMonths: number;
   rejected: number;
   gaps: { ticker: string; months: string[] }[];
 }
@@ -59,15 +62,34 @@ export interface UpdateSummary {
 
 export { oldestLatestMonth };
 
+/** The monthly USD/SGD rates the fetch wrote, or throws: a US-listed fund cannot be stored without them. */
+function readUsdSgd(dir: string): FxRates {
+  try {
+    const file: { rows: { date: string; close: number }[] } = JSON.parse(readFileSync(join(dir, "_fx.json"), "utf-8"));
+    const rates = fxRatesFromRows(file.rows);
+    if (rates.size === 0) throw new Error("no rates in the file");
+    return rates;
+  } catch (err) {
+    throw new Error(`Exchange rates (_fx.json) are missing or unreadable (${err instanceof Error ? err.message : String(err)}); fetch the data again.`);
+  }
+}
+
 /** Reads the raw files the Python step wrote and applies them. Safe to re-run:
  * existing months are only touched if a value actually changed. */
 export async function loadFundDataFromDir(dir: string, now: Date = new Date()): Promise<LoadResult> {
   const manifest: string[] = JSON.parse(readFileSync(join(dir, "_manifest.json"), "utf-8"));
-  const result: LoadResult = { funds: 0, newMonths: 0, revisedMonths: 0, rejected: 0, gaps: [] };
+  const result: LoadResult = { funds: 0, newMonths: 0, revisedMonths: 0, removedMonths: 0, rejected: 0, gaps: [] };
+  let usdSgd: FxRates | null = null;
 
   for (const symbol of manifest) {
     const raw: RawTicker = JSON.parse(readFileSync(join(dir, `${symbol}.json`), "utf-8"));
-    const { returns, rejected } = deriveMonthlyReturns(raw.rows, now);
+    let fx: FxRates | null = null;
+    if (raw.currency !== BASE_CURRENCY) {
+      if (raw.currency !== "USD") throw new Error(`${raw.symbol} is listed in ${raw.currency}, and only USD is converted to ${BASE_CURRENCY}`);
+      usdSgd = usdSgd ?? readUsdSgd(dir);
+      fx = usdSgd;
+    }
+    const { returns, rejected } = deriveMonthlyReturns(raw.rows, now, fx);
     for (const r of rejected) console.warn(`[fund-data] ${raw.symbol} ${r.month} rejected: ${r.reason}`);
     result.rejected += rejected.length;
 
@@ -93,7 +115,9 @@ export async function loadFundDataFromDir(dir: string, now: Date = new Date()): 
         Number(e.startPrice) !== Number(r.startPrice.toFixed(4)) ||
         Number(e.endPrice) !== Number(r.endPrice.toFixed(4)) ||
         Number(e.dividendAmount) !== Number(r.dividendAmount.toFixed(4)) ||
-        Number(e.returnPct) !== Number(r.returnPct.toFixed(6))
+        Number(e.returnPct) !== Number(r.returnPct.toFixed(6)) ||
+        Number(e.endPriceLocal) !== Number(r.endPriceLocal.toFixed(4)) ||
+        Number(e.fxRate) !== Number(r.fxRate.toFixed(6))
       ) {
         toRevise.push({ id: e.id, r });
       }
@@ -108,6 +132,8 @@ export async function loadFundDataFromDir(dir: string, now: Date = new Date()): 
           endPrice: r.endPrice.toFixed(4),
           dividendAmount: r.dividendAmount.toFixed(4),
           returnPct: r.returnPct.toFixed(6),
+          endPriceLocal: r.endPriceLocal.toFixed(4),
+          fxRate: r.fxRate.toFixed(6),
         })),
         skipDuplicates: true,
       });
@@ -120,11 +146,20 @@ export async function loadFundDataFromDir(dir: string, now: Date = new Date()): 
           endPrice: r.endPrice.toFixed(4),
           dividendAmount: r.dividendAmount.toFixed(4),
           returnPct: r.returnPct.toFixed(6),
+          endPriceLocal: r.endPriceLocal.toFixed(4),
+          fxRate: r.fxRate.toFixed(6),
         },
       });
     }
     result.newMonths += toCreate.length;
     result.revisedMonths += toRevise.length;
+
+    // A converted fund has no history before the exchange rates begin: months stored from before the
+    // conversion (still in the fund's own currency) would be wrong, so they are removed.
+    if (fx && returns.length > 0) {
+      const removed = await prisma.fundMonthlyReturn.deleteMany({ where: { fundId: fund.id, monthDate: { lt: returns[0].monthDate } } });
+      result.removedMonths += removed.count;
+    }
 
     // History is expected to be gap-free (the fund detail screen and the plan
     // engine rely on it): report, loudly, if a load ever leaves a hole.
@@ -135,7 +170,7 @@ export async function loadFundDataFromDir(dir: string, now: Date = new Date()): 
       result.gaps.push({ ticker: raw.symbol, months: gaps });
     }
 
-    console.log(`[fund-data] ${raw.symbol}: +${toCreate.length} new, ${toRevise.length} revised${rejected.length ? `, ${rejected.length} rejected` : ""}.`);
+    console.log(`[fund-data] ${raw.symbol}: +${toCreate.length} new, ${toRevise.length} revised${rejected.length ? `, ${rejected.length} rejected` : ""}${fx ? " (converted to SGD)" : ""}.`);
   }
   return result;
 }

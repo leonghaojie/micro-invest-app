@@ -115,6 +115,12 @@ opens its own page) and a backtest of how its funds, blended at its weights, hav
 (Conservative, Balanced, Growth) are retired by the seed: a monthly buy of one becomes a
 monthly buy of the fund itself.
 
+**Everything in Singapore dollars** (`DECISIONS.md` #29, 7 Oct 2026): the fund fetch also pulls the monthly
+USD/SGD rate and every price, dividend and return is stored in Singapore dollars. A US-listed fund is converted at
+each month's rate, so its return includes what the US dollar did against the Singapore dollar; the ledger, the
+Dashboard, the peer comparisons and the portfolio backtests all read those returns, so they are in SGD too. The
+fund's own price is kept alongside (`endPriceLocal`, `fxRate`).
+
 **Automatic data updates** (`fundDataUpdate.service.ts` — `DECISIONS.md` #15,
 4 Oct 2026): the fund history keeps itself current. The backend sleeps until
 the start of each month, then fetches the month that just ended (the yfinance
@@ -425,6 +431,9 @@ original Word documents, each superseding the last within its phase:
 - `Phase2_SRS_v1.26.docx` — Phase 4 amendment (7 Oct 2026): **Portfolios grouped by risk level, a page for
   each portfolio, the original three presets retired** — new FR60, UC-03 and S-03 amended, new S-11
   Portfolio Detail screen. Not a reopened TBD (`DECISIONS.md` #28). Kept alongside v1.25.
+- `Phase2_SRS_v1.27.docx` — Phase 4 amendment (7 Oct 2026): **all fund prices, dividends and returns in Singapore
+  dollars** — new FR61, UC-03 and the Data Dictionary (FundMonthlyReturn) amended. Not a reopened TBD
+  (`DECISIONS.md` #29). Kept alongside v1.26.
 - `FYP Roadmap.docx` — the full Phase 0–9 plan mapped to the Lab #1–#5
   sequence and semester timeline.
 - `FYP_SRS_UseCase_UI_Lab1Style.docx` — an earlier Lab #1-formatted SRS
@@ -456,6 +465,7 @@ income-based/monthly-backtest rewrite (`DECISIONS.md` #1 third amendment,
 | — | More funds and presets (new scope) | FR29–30 | ✅ Done — 23 funds (15 added, gap-checked), 10 presets (7 diversified; originals untouched), search + asset-class filters, earliest start month per portfolio; every preset verified live (DECISIONS.md #16, SRS v1.13) |
 | — | Portfolio dashboard + account management (new scope) | FR31–34 | ✅ Done — total assets / securities value / unrealised P&L / cash / last-month P&L, holdings that open each fund, and an Account section (name, email, password, log out) with current-password checks and a 5-guess limit (DECISIONS.md #17, SRS v1.14). Email unverified; other devices stay signed in after a password change |
 | — | Peer cohort comparison (new scope) | FR35–37 | ✅ Done — default Peers view: headline vs similar investors and a benchmark, cohort labels, peer group, four per-metric cards with reasons; weighted-distance nearest neighbours per metric, same-risk filter for returns; experience stored for a future filter; verified against an independent implementation (DECISIONS.md #18, SRS v1.15). 97% of peers are simulated; consistency and goal-progress metrics left out |
+| — | Everything in Singapore dollars (amendment) | FR61 | ✅ Done — monthly USD/SGD rate fetched with the funds; US funds' prices, dividends and returns converted at each month's rate and stored in SGD; own-currency price kept; checked against an independent recomputation from the raw files (DECISIONS.md #29, SRS v1.27) |
 | — | Portfolios by risk level and a page for each (amendment) | FR60 | ✅ Done — Low/Medium/High groups, a card per preset with its history, a page with key details, composition and past returns (a backtest, checked against an independent recomputation), the original single-fund presets retired and their monthly buys converted (DECISIONS.md #28, SRS v1.26) |
 | — | Close friends (new scope) | FR59 | ✅ Done — private one-directional close-friends list; each sharing choice is Nobody / Close friends / All friends; a figure shown to a close friend looks missing to others and nobody is told who is listed (DECISIONS.md #27, SRS v1.25) |
 | — | Friends: one-to-one comparison with holdings (amendment) | FR58 | ✅ Done — tap a friend for your figure and theirs on each measure plus both portfolios side by side with shared funds marked; Holdings tab removed; private looks like missing (DECISIONS.md #26, SRS v1.24) |
@@ -467,11 +477,11 @@ income-based/monthly-backtest rewrite (`DECISIONS.md` #1 third amendment,
 | — | Cohort comparison as a table with explanations (new scope) | FR49–50 | ✅ Done — one row per measure (you, peer median, position); tap a row for what it is, how it is worked out, what the numbers mean, your result and who you were compared with (DECISIONS.md #20, SRS v1.18) |
 | — | Buy, sell and a ledger (new scope) | FR38–43 | ✅ Done (PR 2 and PR 3) — buy a fund or a portfolio, sell, cash credited monthly (opening credit at sign-up), profile editable any time (past months never change), real holdings with cost and profit, activity list, monthly buys you can set up, change, pause and resume, with skipped months shown, and contribution consistency in the cohort view; existing plans and the 300 synthetic peers migrated (single-fund plans identical to the cent, multi-fund within 1.23%). Verified live, including a month rollover on a throwaway database (DECISIONS.md #19, SRS v1.16). Recurring-buy screens and the consistency measure followed in PR 3 (DECISIONS.md #19) |
 | 7 | History, polish, NFRs | FR13 | ✅ Done — `GET /plan` returns the one active plan directly (trivial now that there's only ever one) |
-| 8 | Testing (Lab #4) | — | 🟡 In progress — 799 backend tests (32 suites, ~95% line coverage): per-service unit tests (basis-path coverage of the peer-grouping widening/floor branches, equivalence-class/boundary coverage of the monthly engine, reset-code limits) plus a black-box HTTP suite (`src/api.contract.test.ts`) driving every route through the real Express app — auth gate, status codes, error mapping. That suite found a real bug (malformed JSON returned 500, now 400). Still to do: package as the formal Lab #4 deliverable (documented FR-traced results, reflection report) and the coding-agent exercises |
+| 8 | Testing (Lab #4) | — | 🟡 In progress — 811 backend tests (32 suites, ~95% line coverage): per-service unit tests (basis-path coverage of the peer-grouping widening/floor branches, equivalence-class/boundary coverage of the monthly engine, reset-code limits) plus a black-box HTTP suite (`src/api.contract.test.ts`) driving every route through the real Express app — auth gate, status codes, error mapping. That suite found a real bug (malformed JSON returned 500, now 400). Still to do: package as the formal Lab #4 deliverable (documented FR-traced results, reflection report) and the coding-agent exercises |
 | 9 | Demo prep & submission | — | ⬜ Not started |
 
 There is no remaining functional gap against the SRS as of this pass —
-`Phase2_SRS_v1.6.docx`, `v1.7.docx`, `v1.8.docx`, `v1.9.docx`, `v1.10.docx`, `v1.11.docx`, `v1.12.docx`, `v1.13.docx`, `v1.14.docx`, `v1.15.docx`, `v1.16.docx`, `v1.17.docx`, `v1.18.docx`, `v1.19.docx`, `v1.20.docx`, `v1.21.docx`, `v1.22.docx`, `v1.23.docx`, `v1.24.docx`, `v1.25.docx` and `v1.26.docx` each land in the same
+`Phase2_SRS_v1.6.docx`, `v1.7.docx`, `v1.8.docx`, `v1.9.docx`, `v1.10.docx`, `v1.11.docx`, `v1.12.docx`, `v1.13.docx`, `v1.14.docx`, `v1.15.docx`, `v1.16.docx`, `v1.17.docx`, `v1.18.docx`, `v1.19.docx`, `v1.20.docx`, `v1.21.docx`, `v1.22.docx`, `v1.23.docx`, `v1.24.docx`, `v1.25.docx`, `v1.26.docx` and `v1.27.docx` each land in the same
 pass as the code, matching every prior amendment.
 
 The old "Budget band (B1–B4) thresholds" gap is moot, not resolved:

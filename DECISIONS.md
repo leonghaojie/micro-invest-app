@@ -2391,6 +2391,71 @@ Supersedes the original presets of #16. Implements: UC-03 amended (FR60). Owner:
 `backend/src/utils/presetPortfolios.ts`, `portfolioBlend.ts`, `backend/src/services/portfolio.service.ts`,
 `retiredPresets.service.ts`, mobile `PortfoliosScreen.tsx`, `PortfolioDetailScreen.tsx`.
 
+## 29. Everything in Singapore dollars (7 Oct 2026)
+
+**Problem.** Seventeen of the 23 funds are listed in US dollars and six in Singapore dollars, and their
+prices, dividends and returns were stored and used as they came from Yahoo Finance, each in its own
+currency. Everything built on them added them up as if they were the same: an account holding VT and ES3.SI
+valued both in "dollars", the blended history of a portfolio mixed US and Singapore returns, and the peer
+comparison compared returns in two currencies. For a Singapore investor the return of a US fund includes
+what the US dollar did against the Singapore dollar, which was missing: a US fund that was flat in US
+dollars still loses when the US dollar falls.
+
+**Decision.** Every price, dividend and return is stored in **Singapore dollars**, converted when the data
+is loaded:
+1. The fetch (`ingest-funds-yfinance.py`) also pulls the monthly **USD/SGD rate** (Yahoo's `SGD=X`, Singapore
+   dollars per US dollar) and writes it next to the fund files; without it the fetch stops, so nothing is
+   half-converted.
+2. For a US-listed fund each month's close and dividend are multiplied by **that month's rate**, and the
+   start of the month is the previous month's close at the previous month's rate: the return is
+   `(end x rate + dividend x rate - start x previous rate) / (start x previous rate)`, which is the USD return
+   compounded with the change in the exchange rate. A Singapore-listed fund is unchanged (rate 1).
+3. The columns keep their names (`startPrice`, `endPrice`, `dividendAmount`, `returnPct` are now SGD); two are new,
+   `endPriceLocal` (the close in the fund's own currency) and `fxRate` (the rate used), so the original price is
+   still there. `Fund.currency` stays the currency the fund is listed in. Because the ledger, the Dashboard, the
+   peer comparisons and the portfolio backtests all read the stored returns, they became SGD without any change.
+4. Month-end rates are used for the whole month: a monthly series cannot say on which day a dividend was paid
+   or a price was set, so the rate for the month is applied to both.
+5. The exchange-rate series starts in December 2003, so a US fund's history starts in January 2004 at the
+   earliest (the first months of the oldest funds are dropped); months stored before the conversion are removed
+   when a fund is reloaded. A month with no rate after that is rejected and reported as a gap, never stored
+   unconverted.
+6. The screens say it: the fund page shows the price in Singapore dollars with the US dollar price beside it and
+   explains the conversion, the Funds tab and the portfolio page say all figures are in Singapore dollars and
+   that US funds' returns include exchange-rate moves, and the Dashboard marks a US fund "shown in SGD".
+
+**Effect on the numbers** (demo account and presets, from the real data):
+- the demo account's securities value went from $1,728.06 to $1,725.79 and its total profit from $28.06 to $25.79;
+- the five-year total return of Global 60/40 went from +37.41% to +28.95% (the US dollar fell against the Singapore
+  dollar over the period), its whole-history yearly return from 6.62% to 6.26% and its worst fall from -29.24% to -20.99%
+  (the US dollar rose during 2008); Global Equity from 10.38% to 10.01% a year and its worst fall from -45% to -38%;
+  the all-Singapore Singapore Income preset did not change at all.
+
+**Verification.**
+- 811 backend tests pass (12 new): the derivation (converted prices and dividends, the start at the previous
+  month's rate, a flat US price losing in SGD when the dollar falls and gaining when it rises, months before the rates
+  begin skipped quietly, a missing month rejected, bad rates ignored) and the loader (conversion, an SGD fund
+  unchanged, refusing a US fund without rates, refusing another currency, removing months from before the rates, a
+  month stored in dollars corrected).
+- **Independent recomputation from the raw files** the fetch wrote: AGG's September return converts to -0.023612
+  (against -0.026004 in US dollars), the same as the stored value, and the five-year total return of Global 60/40 worked
+  out from the raw VT and AGG prices and the raw rates is +28.95%, the same as the API.
+- **Real data:** `update-fund-data --force` converted 4,135 months of the 17 US funds, left the six Singapore funds
+  untouched, rejected nothing, left no gaps and refreshed 311 plans; afterwards no Singapore fund has a rate other than 1
+  and no US fund has a rate of 1.
+- **UI (Expo web):** the fund page shows "Latest price S$201.69 (USD 157.85)" and the SGD note; the portfolio page says all
+  figures are in Singapore dollars and names the converted currency; the Dashboard marks the holdings "USD fund, shown in SGD".
+
+**Limits.**
+- The month-end rate is an approximation for the month (the rate on the day of a purchase or a dividend differs).
+- Yahoo's rate is a market rate, not the rate a broker or bank would charge, and the figures include no fees or
+  conversion costs.
+- Amounts are written with "$" as before, now always Singapore dollars; only the fund page writes "S$".
+- A fund's history is limited to January 2004 onward for US funds because of the start of the rate series.
+
+Implements: FR61. Owner: `backend/src/utils/fundIngest.ts`, `backend/src/services/fundDataUpdate.service.ts`,
+`backend/prisma/ingest-funds-yfinance.py`, `schema.prisma` (migration `20261007230000_sgd_fund_data`).
+
 ## Open items (Design Model §8, carried forward)
 
 - **`Phase2_SRS_v1.6.docx` — done, no longer open.** Produced in the same

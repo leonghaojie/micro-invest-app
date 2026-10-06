@@ -175,7 +175,7 @@ export function FundBrowserScreen({ navigation }: Props) {
   return (
     <KeyboardScreen contentContainerStyle={styles.scrollContainer}>
       <Text style={styles.title}>Funds</Text>
-      <Text style={styles.subtitle}>Tap a fund to see how it has moved. Use + to add funds to a new portfolio.</Text>
+      <Text style={styles.subtitle}>Tap a fund to see how it has moved. Use + to add funds to a new portfolio. All prices and returns are in Singapore dollars; funds listed in US dollars are converted.</Text>
       {dataThrough && <Text style={styles.dataNote}>Fund data through {dataThrough} · updates automatically each month</Text>}
 
       <View style={styles.form}>

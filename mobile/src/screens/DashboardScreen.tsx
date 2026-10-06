@@ -267,7 +267,7 @@ export function DashboardScreen({ navigation }: Props) {
             </View>
             <View style={styles.holdingBottom}>
               <Text style={styles.holdingMeta}>
-                {ASSET_CLASS_LABELS[h.assetClass] ?? h.assetClass} · {h.currency}
+                {ASSET_CLASS_LABELS[h.assetClass] ?? h.assetClass} · {h.currency === "SGD" ? "SGD" : `${h.currency} fund, shown in SGD`}
               </Text>
               <Text style={[styles.holdingMeta, { color: h.profit >= 0 ? "#1a8f4c" : LOSS }]}>
                 {signedCurrency(h.profit)}

@@ -8,7 +8,8 @@
  *     the trailing dividend yield;
  *   - the last 36 monthly returns as bars, and calendar-year returns.
  *
- * Figures are in the fund's own currency (no FX), come from monthly data, and
+ * Figures are in Singapore dollars (DECISIONS.md #29): a fund listed in US dollars is converted at
+ * month-end rates, so its return includes the currency move. They come from monthly data and
  * describe the past only — the screen says so. Nothing here is a recommendation.
  */
 import { useCallback, useMemo, useState } from "react";
@@ -59,6 +60,8 @@ interface FundDetail {
   calendarYears: { year: number; returnPct: number; partial: boolean }[];
   trailingYieldPct: number | null;
   latestPrice: number;
+  /** The latest price in the fund's own currency. */
+  latestPriceLocal: number;
 }
 
 const RANGE_LABELS: Record<RangeKey, string> = { "1y": "1Y", "3y": "3Y", "5y": "5Y", "10y": "10Y", max: "Max" };
@@ -156,7 +159,8 @@ export function FundDetailScreen({ route, navigation }: Props) {
           {ASSET_CLASS_LABELS[fund.assetClass] ?? fund.assetClass} · {fund.exchange} · {fund.currency}
         </Text>
         <Text style={styles.meta}>
-          Latest price {data.latestPrice.toFixed(2)} {fund.currency} · history from {longMonth(fund.earliestMonth)} ({fund.monthsAvailable} months)
+          Latest price S${data.latestPrice.toFixed(2)}
+          {fund.currency !== "SGD" ? ` (${fund.currency} ${data.latestPriceLocal.toFixed(2)})` : ""} · history from {longMonth(fund.earliestMonth)} ({fund.monthsAvailable} months)
         </Text>
       </View>
 
@@ -206,7 +210,7 @@ export function FundDetailScreen({ route, navigation }: Props) {
       <View style={[styles.card, loading && styles.dim]}>
         <Text style={styles.cardHeading}>Growth of 100</Text>
         <Text style={styles.sub}>
-          What 100 {fund.currency} invested at the start would be worth, dividends reinvested. Drag across the chart to read it.
+          What S$100 invested at the start would be worth, dividends reinvested. Drag across the chart to read it.
         </Text>
 
         <View style={styles.readout}>
@@ -265,7 +269,7 @@ export function FundDetailScreen({ route, navigation }: Props) {
       </View>
 
       <Text style={styles.disclaimer}>
-        Past performance doesn't predict future results. Figures are monthly, include dividends, and are in {fund.currency} (no currency conversion).
+        Past performance doesn't predict future results. Figures are monthly, include dividends, and are in Singapore dollars{fund.currency !== "SGD" ? `: this ${fund.currency} fund is converted at each month-end exchange rate, so its returns include moves in the exchange rate` : ""}.
         Prices are from Yahoo Finance. This is information, not advice.
       </Text>
     </ScrollView>

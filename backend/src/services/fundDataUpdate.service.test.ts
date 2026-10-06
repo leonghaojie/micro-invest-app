@@ -12,7 +12,7 @@ jest.mock("fs", () => ({ ...jest.requireActual("fs"), readFileSync: jest.fn() })
 jest.mock("../config/prisma", () => ({
   prisma: {
     fund: { findMany: jest.fn(), upsert: jest.fn() },
-    fundMonthlyReturn: { findMany: jest.fn(), createMany: jest.fn(), update: jest.fn() },
+    fundMonthlyReturn: { findMany: jest.fn(), createMany: jest.fn(), update: jest.fn(), deleteMany: jest.fn() },
     plan: { findMany: jest.fn() },
   },
 }));
@@ -20,7 +20,7 @@ jest.mock("./plan.service", () => ({ planService: { getActivePlan: jest.fn() } }
 
 const db = prisma as unknown as {
   fund: { findMany: jest.Mock; upsert: jest.Mock };
-  fundMonthlyReturn: { findMany: jest.Mock; createMany: jest.Mock; update: jest.Mock };
+  fundMonthlyReturn: { findMany: jest.Mock; createMany: jest.Mock; update: jest.Mock; deleteMany: jest.Mock };
   plan: { findMany: jest.Mock };
 };
 const plans = planService as unknown as { getActivePlan: jest.Mock };
@@ -96,7 +96,7 @@ describe("runFundDataUpdate", () => {
       .mockResolvedValueOnce([fundWithLatest("2026-07")]) // before
       .mockResolvedValueOnce([fundWithLatest("2026-09")]); // after
     db.fundMonthlyReturn.findMany
-      .mockResolvedValueOnce([{ id: "r1", monthDate: month("2026-08"), startPrice: "100", endPrice: "101", dividendAmount: "0", returnPct: "0.01" }])
+      .mockResolvedValueOnce([{ id: "r1", monthDate: month("2026-08"), startPrice: "100", endPrice: "101", dividendAmount: "0", returnPct: "0.01", endPriceLocal: "101", fxRate: "1" }])
       .mockResolvedValueOnce([{ monthDate: month("2026-07") }, { monthDate: month("2026-08") }, { monthDate: month("2026-09") }]);
 
     const summary = await runFundDataUpdate({ fetchRaw, now: NOW });
@@ -112,8 +112,8 @@ describe("runFundDataUpdate", () => {
     // both derived months already stored, identical
     db.fundMonthlyReturn.findMany
       .mockResolvedValueOnce([
-        { id: "r1", monthDate: month("2026-08"), startPrice: "100", endPrice: "101", dividendAmount: "0", returnPct: "0.010000" },
-        { id: "r2", monthDate: month("2026-09"), startPrice: "101", endPrice: "102", dividendAmount: "0", returnPct: ((102 - 101) / 101).toFixed(6) },
+        { id: "r1", monthDate: month("2026-08"), startPrice: "100", endPrice: "101", dividendAmount: "0", returnPct: "0.010000", endPriceLocal: "101", fxRate: "1" },
+        { id: "r2", monthDate: month("2026-09"), startPrice: "101", endPrice: "102", dividendAmount: "0", returnPct: ((102 - 101) / 101).toFixed(6), endPriceLocal: "102", fxRate: "1" },
       ])
       .mockResolvedValueOnce([{ monthDate: month("2026-08") }, { monthDate: month("2026-09") }]);
 
@@ -197,8 +197,8 @@ describe("loadFundDataFromDir", () => {
     ]);
     db.fundMonthlyReturn.findMany
       .mockResolvedValueOnce([
-        { id: "r-jul", monthDate: month("2026-07"), startPrice: "100.0000", endPrice: "101.0000", dividendAmount: "0.0000", returnPct: "0.010000" }, // identical
-        { id: "r-aug", monthDate: month("2026-08"), startPrice: "101.0000", endPrice: "99.0000", dividendAmount: "0.0000", returnPct: "-0.019802" }, // stale
+        { id: "r-jul", monthDate: month("2026-07"), startPrice: "100.0000", endPrice: "101.0000", dividendAmount: "0.0000", returnPct: "0.010000", endPriceLocal: "101.0000", fxRate: "1.000000" }, // identical
+        { id: "r-aug", monthDate: month("2026-08"), startPrice: "101.0000", endPrice: "99.0000", dividendAmount: "0.0000", returnPct: "-0.019802", endPriceLocal: "99.0000", fxRate: "1.000000" }, // stale
       ])
       .mockResolvedValueOnce([{ monthDate: month("2026-07") }, { monthDate: month("2026-08") }, { monthDate: month("2026-09") }]);
 
@@ -232,6 +232,8 @@ describe("loadFundDataFromDir", () => {
           endPrice: (45.1875).toFixed(4),
           dividendAmount: "0.0000",
           returnPct: ((45.1875 - 44.40625) / 44.40625).toFixed(6),
+          endPriceLocal: (45.1875).toFixed(4),
+          fxRate: "1.000000",
         },
       ])
       .mockResolvedValueOnce([{ monthDate: month("1993-03") }]);
@@ -250,7 +252,7 @@ describe("loadFundDataFromDir", () => {
     ]);
     db.fundMonthlyReturn.findMany
       .mockResolvedValueOnce([
-        { id: "r", monthDate: month("2026-09"), startPrice: "100.0000", endPrice: "101.0000", dividendAmount: "0.0000", returnPct: ((101 - 100) / 100).toFixed(6) },
+        { id: "r", monthDate: month("2026-09"), startPrice: "100.0000", endPrice: "101.0000", dividendAmount: "0.0000", returnPct: ((101 - 100) / 100).toFixed(6), endPriceLocal: "101.0000", fxRate: "1.000000" },
       ])
       .mockResolvedValueOnce([{ monthDate: month("2026-09") }]);
 
@@ -290,12 +292,88 @@ describe("loadFundDataFromDir", () => {
       { date: "2026-09-01", close: 101 },
     ]);
     db.fundMonthlyReturn.findMany
-      .mockResolvedValueOnce([{ id: "r", monthDate: month("2026-09"), startPrice: "100", endPrice: "101", dividendAmount: "0", returnPct: "0.010000" }])
+      .mockResolvedValueOnce([{ id: "r", monthDate: month("2026-09"), startPrice: "100", endPrice: "101", dividendAmount: "0", returnPct: "0.010000", endPriceLocal: "101", fxRate: "1" }])
       .mockResolvedValueOnce([{ monthDate: month("2026-09") }]);
 
     await loadFundDataFromDir("/data", NOW);
 
     expect(db.fundMonthlyReturn.createMany).not.toHaveBeenCalled();
+  });
+  describe("a fund listed in US dollars is stored in Singapore dollars (DECISIONS.md #29)", () => {
+    const usdFund = (rows: { date: string; close: number; dividends?: number }[], fx: { date: string; close: number }[] | null) => {
+      readFile.mockImplementation((path: string) => {
+        const p = String(path);
+        if (p.endsWith("_manifest.json")) return JSON.stringify(["VT"]);
+        if (p.endsWith("_fx.json")) {
+          if (fx === null) throw new Error("ENOENT: no such file");
+          return JSON.stringify({ pair: "USDSGD", symbol: "SGD=X", rows: fx });
+        }
+        return JSON.stringify({ symbol: "VT", exchange: "US", name: "World", assetClass: "EQUITY", currency: "USD", rows: rows.map((r) => ({ dividends: 0, ...r })) });
+      });
+    };
+    const FX = [
+      { date: "2026-07-01", close: 1.3 },
+      { date: "2026-08-01", close: 1.3 },
+      { date: "2026-09-01", close: 1.2 },
+    ];
+
+    it("converts each month's close and dividend at that month's rate, so the return includes the currency move", async () => {
+      usdFund([{ date: "2026-08-01", close: 100 }, { date: "2026-09-01", close: 100, dividends: 1 }], FX);
+      db.fundMonthlyReturn.findMany.mockResolvedValue([]);
+      db.fundMonthlyReturn.deleteMany.mockResolvedValue({ count: 0 });
+
+      await loadFundDataFromDir("/data", NOW);
+
+      const row = db.fundMonthlyReturn.createMany.mock.calls[0][0].data[0];
+      // start 100 x 1.3 = 130 SGD; end 100 x 1.2 = 120; dividend 1 x 1.2 = 1.2: the price is flat in USD but the return is (120 + 1.2 - 130) / 130
+      expect(row).toMatchObject({ startPrice: "130.0000", endPrice: "120.0000", dividendAmount: "1.2000", endPriceLocal: "100.0000", fxRate: "1.200000" });
+      expect(row.returnPct).toBe(((120 + 1.2 - 130) / 130).toFixed(6));
+    });
+
+    it("leaves an SGD fund as it was (rate 1, no rates file needed)", async () => {
+      raw([{ date: "2026-08-01", close: 100 }, { date: "2026-09-01", close: 101 }]);
+      db.fundMonthlyReturn.findMany.mockResolvedValue([]);
+      await loadFundDataFromDir("/data", NOW);
+      expect(db.fundMonthlyReturn.createMany.mock.calls[0][0].data[0]).toMatchObject({ endPrice: "101.0000", endPriceLocal: "101.0000", fxRate: "1.000000" });
+      expect(db.fundMonthlyReturn.deleteMany).not.toHaveBeenCalled();
+    });
+
+    it("refuses to store a US-listed fund without exchange rates, instead of storing it unconverted", async () => {
+      usdFund([{ date: "2026-08-01", close: 100 }, { date: "2026-09-01", close: 101 }], null);
+      await expect(loadFundDataFromDir("/data", NOW)).rejects.toThrow(/Exchange rates \(_fx\.json\) are missing/);
+      expect(db.fundMonthlyReturn.createMany).not.toHaveBeenCalled();
+    });
+
+    it("rejects a currency it cannot convert", async () => {
+      readFile.mockImplementation((path: string) =>
+        String(path).endsWith("_manifest.json") ? JSON.stringify(["X"]) : JSON.stringify({ symbol: "X", exchange: "LSE", name: "x", assetClass: "EQUITY", currency: "GBP", rows: [] })
+      );
+      await expect(loadFundDataFromDir("/data", NOW)).rejects.toThrow(/only USD is converted/);
+    });
+
+    it("removes stored months from before the exchange rates begin, which are still in dollars, and counts them", async () => {
+      usdFund([{ date: "2026-08-01", close: 100 }, { date: "2026-09-01", close: 101 }], FX);
+      db.fundMonthlyReturn.findMany.mockResolvedValue([]);
+      db.fundMonthlyReturn.deleteMany.mockResolvedValue({ count: 3 });
+
+      const result = await loadFundDataFromDir("/data", NOW);
+
+      expect(db.fundMonthlyReturn.deleteMany).toHaveBeenCalledWith({ where: { fundId: "f1", monthDate: { lt: month("2026-09") } } });
+      expect(result.removedMonths).toBe(3);
+    });
+
+    it("corrects a month already stored in dollars: the SGD values and the rate are a revision", async () => {
+      usdFund([{ date: "2026-08-01", close: 100 }, { date: "2026-09-01", close: 101 }], FX);
+      db.fundMonthlyReturn.deleteMany.mockResolvedValue({ count: 0 });
+      db.fundMonthlyReturn.findMany
+        .mockResolvedValueOnce([{ id: "old", monthDate: month("2026-09"), startPrice: "100.0000", endPrice: "101.0000", dividendAmount: "0.0000", returnPct: "0.010000", endPriceLocal: "101.0000", fxRate: "1.000000" }])
+        .mockResolvedValueOnce([{ monthDate: month("2026-09") }]);
+
+      const result = await loadFundDataFromDir("/data", NOW);
+
+      expect(result.revisedMonths).toBe(1);
+      expect(db.fundMonthlyReturn.update.mock.calls[0][0].data).toMatchObject({ endPrice: "121.2000", fxRate: "1.200000", endPriceLocal: "101.0000" });
+    });
   });
 });
 

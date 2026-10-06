@@ -45,7 +45,8 @@ interface PortfolioDetail {
   composition: { fundId: string; ticker: string; name: string; assetClass: string; exchange: string; currency: string; weightPct: number; earliestMonth: string | null }[];
   assetMix: { assetClass: string; pct: number }[];
   limitedBy: { ticker: string; earliestMonth: string } | null;
-  mixedCurrencies: boolean;
+  /** Currencies other than SGD some funds are listed in; converted to SGD. */
+  convertedCurrencies: string[];
   range: RangeKey;
   months: number;
   startMonth: string;
@@ -343,7 +344,7 @@ export function PortfolioDetailScreen({ route, navigation }: Props) {
       )}
       <Text style={styles.disclaimer}>
         Past performance doesn't predict future results. These figures are a backtest: the funds' monthly returns, dividends included, blended at the weights above and restored each month, with no fees
-        {data.mixedCurrencies ? " and no conversion between the funds' currencies (some are in US dollars, some in Singapore dollars)" : ""}. This is information, not advice.
+        {data.convertedCurrencies.length > 0 ? `. All figures are in Singapore dollars: the ${data.convertedCurrencies.join(" and ")} funds are converted at each month-end exchange rate, so their returns include moves in the exchange rate` : ". All figures are in Singapore dollars"}. This is information, not advice.
       </Text>
     </ScrollView>
   );

@@ -12,7 +12,8 @@
  *  - independent of the range: the last 36 monthly returns, calendar-year
  *    returns, and the trailing-12-month dividend yield.
  *
- * Everything is in the fund's own currency; no FX is applied. Past figures only
+ * Everything is in Singapore dollars (DECISIONS.md #29): a fund listed in another currency is converted at
+ * month-end rates when it is loaded, so its return includes the currency move. Past figures only
  * describe history - nothing here is a forecast or a recommendation.
  *
  * All "...Pct" values are percentages (1.25 = 1.25%), rounded to 2 dp.

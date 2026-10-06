@@ -26,8 +26,10 @@ export interface FundSummary {
   latestMonthlyReturn: number | null;
 }
 
-/** One fund's identity plus its history and statistics (DECISIONS.md #14). */
+/** One fund's identity plus its history and statistics (DECISIONS.md #14). Prices and returns are in
+ * Singapore dollars (#29); `latestPriceLocal` is the latest price in the fund's own currency. */
 export interface FundDetail extends FundHistory {
+  latestPriceLocal: number;
   fund: {
     id: string;
     ticker: string;
@@ -58,8 +60,8 @@ export interface PortfolioDetail extends FundHistory {
   assetMix: { assetClass: string; pct: number }[];
   /** The fund whose short history limits how far back the figures go, or null when they have the same start. */
   limitedBy: { ticker: string; earliestMonth: string } | null;
-  /** True when the funds are in more than one currency: the figures take no account of exchange rates. */
-  mixedCurrencies: boolean;
+  /** The currencies (other than SGD) some of its funds are listed in: their figures are converted to SGD at month-end rates, so they include the currency's moves (#29). */
+  convertedCurrencies: string[];
 }
 
 export interface PortfolioAllocationSummary {
@@ -160,6 +162,7 @@ class PortfolioService {
     }));
 
     return {
+      latestPriceLocal: Number(fund.monthlyReturns[fund.monthlyReturns.length - 1].endPriceLocal),
       fund: {
         id: fund.id,
         ticker: fund.ticker,
@@ -244,7 +247,7 @@ class PortfolioService {
       composition,
       assetMix: [...byClass.entries()].map(([assetClass, pct]) => ({ assetClass, pct })).sort((a, b) => b.pct - a.pct),
       limitedBy: !sameStart && limiting && limiting.earliestMonth ? { ticker: limiting.ticker, earliestMonth: limiting.earliestMonth } : null,
-      mixedCurrencies: new Set(composition.map((c) => c.currency)).size > 1,
+      convertedCurrencies: [...new Set(composition.map((c) => c.currency).filter((c) => c !== "SGD"))].sort(),
       ...history,
       // A portfolio's funds' dividends are inside their total returns; a yield figure would be wrong.
       trailingYieldPct: null,
