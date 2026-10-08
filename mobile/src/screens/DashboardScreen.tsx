@@ -3,6 +3,8 @@
  * account screen (DECISIONS.md #17, 4 Oct 2026), built from the user's account
  * (plan.service.ts: a ledger of buys, sells and cash, DECISIONS.md #19).
  *
+ *   0. This month's check-in (DECISIONS.md #31): a prompt to confirm or update income and
+ *      spending, then a one-line summary of what was reported.
  *   1. Summary card — total assets (invested value + cash), last month's profit or
  *      loss, then securities value, total profit and cash balance.
  *   2. Your holdings — real positions, each with its own profit; tap one to see
@@ -22,6 +24,8 @@ import { apiFetch, ApiError, clearStoredAuthToken } from "../api/client";
 import { ASSET_CLASS_COLORS, ASSET_CLASS_LABELS } from "../components/charts/MixBar";
 import { GrowthPoint, monthLabel, ValueVsInvestedChart } from "../components/charts/ValueVsInvestedChart";
 import type { MainTabScreenProps, RootStackParamList } from "../navigation/AppNavigator";
+import { monthName } from "./CheckInScreen";
+import type { CheckInView } from "./CheckInScreen";
 
 type Props = MainTabScreenProps<"Dashboard">;
 
@@ -85,6 +89,7 @@ export function DashboardScreen({ navigation }: Props) {
   const [growth, setGrowth] = useState<DashboardGrowth | null>(null);
   const [profile, setProfile] = useState<ProfileResponse | null>(null);
   const [me, setMe] = useState<Me["user"] | null>(null);
+  const [checkIn, setCheckIn] = useState<CheckInView | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showAllHoldings, setShowAllHoldings] = useState(false);
@@ -100,13 +105,15 @@ export function DashboardScreen({ navigation }: Props) {
       apiFetch<DashboardGrowth>("/dashboard/growth"),
       apiFetch<ProfileResponse>("/user/profile").catch(() => null),
       apiFetch<Me>("/auth/me").catch(() => null),
+      apiFetch<CheckInView>("/checkin/current").catch(() => null),
     ])
-      .then(([summaryRes, growthRes, profileRes, meRes]) => {
+      .then(([summaryRes, growthRes, profileRes, meRes, checkInRes]) => {
         if (cancelled) return;
         setSummary(summaryRes);
         setGrowth(growthRes);
         setProfile(profileRes);
         setMe(meRes?.user ?? null);
+        setCheckIn(checkInRes);
       })
       .catch((err) => {
         if (!cancelled) setError(describeError(err));
@@ -186,6 +193,9 @@ export function DashboardScreen({ navigation }: Props) {
         <Text style={styles.title}>Dashboard</Text>
         {summary.hasHoldings && <Text style={styles.headerSub}>Since {plan.startMonth.slice(0, 7)}</Text>}
       </View>
+
+      {/* 0. This month's check-in */}
+      {checkIn && <CheckInCard view={checkIn} onOpen={() => navigation.navigate("CheckIn")} />}
 
       {/* 1. Summary */}
       <View style={styles.summaryCard}>
@@ -410,6 +420,32 @@ function formatWeight(v: number): string {
   return `${Number.isInteger(v) ? v : v.toFixed(1)}%`;
 }
 
+/** Prompts for this month's income and spending until it is confirmed, then summarises it. */
+function CheckInCard({ view, onOpen }: { view: CheckInView; onOpen: () => void }) {
+  const month = monthName(view.month);
+  if (!view.confirmed) {
+    return (
+      <View style={[styles.card, styles.checkInPrompt]}>
+        <Text style={styles.cardHeading}>Check in for {month}</Text>
+        <Text style={styles.cardSub}>
+          Confirm your income and spending, or tell us about a bonus or a big purchase, so your cash is right. It takes a few seconds.
+        </Text>
+        <Pressable style={styles.submitButton} onPress={onOpen} accessibilityRole="button" accessibilityLabel={`Check in for ${month}`}>
+          <Text style={styles.submitButtonText}>Update this month</Text>
+        </Pressable>
+      </View>
+    );
+  }
+  return (
+    <Pressable style={[styles.card, styles.checkInDone]} onPress={onOpen} accessibilityRole="button" accessibilityLabel={`${month} check-in, edit`}>
+      <Text style={styles.cardHeading}>{month}</Text>
+      <Text style={styles.cardSub}>
+        Earned {formatCurrency(view.thisMonth.income)} · spent {formatCurrency(view.thisMonth.expense)} · {view.credit >= 0 ? "adds" : "takes"} {formatCurrency(Math.abs(view.credit))} {view.credit >= 0 ? "to" : "from"} your cash. Tap to edit.
+      </Text>
+    </Pressable>
+  );
+}
+
 function describeError(err: unknown): string {
   if (err instanceof ApiError) {
     const body = err.body as { error?: string } | undefined;
@@ -440,6 +476,10 @@ const styles = StyleSheet.create({
   summaryNumber: { fontSize: 15, fontWeight: "700", color: "#fff" },
   summarySmall: { fontSize: 11, color: "#b8c7e6" },
   summaryFoot: { fontSize: 11, color: "#b8c7e6" },
+
+  // check-in
+  checkInPrompt: { borderColor: "#e0a100", backgroundColor: "#fff8e1" },
+  checkInDone: { backgroundColor: "#f6f8fc" },
 
   // cards
   card: { width: "100%", maxWidth: 360, borderWidth: 1, borderColor: "#ccc", borderRadius: 8, padding: 16, gap: 8 },

@@ -2,7 +2,7 @@
  * The ledger engine (DECISIONS.md #19): months, money helpers and the replay that turns
  * credits, buys and sells into holdings, cash and monthly snapshots.
  */
-import { addMonths, averageMonthlyBuy, contributionConsistency, LedgerEntry, monthRange, monthsBetween, replay, spareIncome, splitByWeights, tradeMonthAfter } from "./ledger";
+import { addMonths, averageMonthlyBuy, contributionConsistency, creditFor, LedgerEntry, monthRange, monthsBetween, replay, spareIncome, splitByWeights, tradeMonthAfter } from "./ledger";
 
 const buy = (month: string, fundId: string, amount: number): LedgerEntry => ({ month, side: "BUY", fundId, amount });
 const sell = (month: string, fundId: string, amount: number): LedgerEntry => ({ month, side: "SELL", fundId, amount });
@@ -28,10 +28,28 @@ describe("months", () => {
 });
 
 describe("spareIncome", () => {
-  it("is income minus expense, never negative", () => {
+  it("is income minus expense, negative when the month spends more than it earns (DECISIONS.md #31)", () => {
     expect(spareIncome(4000, 2400)).toBe(1600);
-    expect(spareIncome(2000, 2500)).toBe(0);
+    expect(spareIncome(2000, 2500)).toBe(-500);
     expect(spareIncome(3000.5, 1000.25)).toBe(2000.25);
+  });
+});
+
+describe("creditFor (DECISIONS.md #31)", () => {
+  it("credits a surplus whole", () => {
+    expect(creditFor(1600, 0)).toBe(1600);
+    expect(creditFor(0, 500)).toBe(0);
+  });
+
+  it("pays a deficit from the cash the account has", () => {
+    expect(creditFor(-500, 2000)).toBe(-500);
+    expect(creditFor(-500, 500)).toBe(-500);
+  });
+
+  it("never takes more than the cash: the account does not go into debt", () => {
+    expect(creditFor(-500, 120.5)).toBe(-120.5);
+    expect(creditFor(-500, 0)).toBe(0);
+    expect(creditFor(-500, -30)).toBe(0);
   });
 });
 
@@ -76,6 +94,20 @@ describe("replay", () => {
     A: { "2026-01": 0.1, "2026-02": -0.05, "2026-03": 0.02 },
     B: { "2026-01": 0, "2026-02": 0.2, "2026-03": 0 },
   };
+
+  it("a negative credit (a month that spent more than it earned) lowers cash, DECISIONS.md #31", () => {
+    const r = replay({
+      credits: [
+        { month: "2026-01", amount: 1000 },
+        { month: "2026-02", amount: -300 },
+        { month: "2026-03", amount: 500 },
+      ],
+      entries: [],
+      returns,
+      latestDataMonth: "2026-03",
+    });
+    expect(r.cash).toBe(1200);
+  });
 
   it("is empty with no facts", () => {
     expect(replay({ credits: [], entries: [], returns, latestDataMonth: "2026-03" })).toEqual({

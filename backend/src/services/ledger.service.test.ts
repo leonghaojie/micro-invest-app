@@ -33,6 +33,8 @@ type Tx = ReturnType<typeof makeTx>;
 const asTx = (t: Tx) => t as unknown as Parameters<typeof advance>[0];
 
 const profile = { userId: "u", monthlyIncome: "4000.00", monthlyExpense: "2400.00" };
+/** Every credit written, in order, across the one-month-at-a-time createMany calls. */
+const credited = (tx: Tx): { month: Date; amount: number; source: string }[] => tx.cashCredit.createMany.mock.calls.flatMap((c) => c[0].data);
 
 beforeEach(() => jest.resetAllMocks());
 
@@ -71,7 +73,7 @@ describe("ensureAccount", () => {
     expect(tx.cashCredit.create).toHaveBeenCalledWith({ data: { planId: "plan-new", month: d("2026-10"), amount: 1600, source: "SETUP" } });
   });
 
-  it("never credits a negative amount when expenses exceed income", async () => {
+  it("opens at zero, not in debt, when the setup's expenses exceed its income (there is no cash to pay the gap)", async () => {
     const tx = makeTx();
     tx.plan.findUnique.mockResolvedValue(null);
     tx.userProfile.findUnique.mockResolvedValue({ ...profile, monthlyExpense: "5000.00" });
@@ -97,9 +99,9 @@ describe("advance (catching up)", () => {
 
     await advance(asTx(tx), "plan-1", "u", CLOCK);
 
-    const data = tx.cashCredit.createMany.mock.calls[0][0].data;
-    expect(data.map((c: { month: Date }) => c.month.toISOString().slice(0, 7))).toEqual(["2026-09", "2026-10"]);
-    expect(data.every((c: { amount: number; source: string }) => c.amount === 1600 && c.source === "MONTHLY")).toBe(true);
+    const data = credited(tx);
+    expect(data.map((c) => c.month.toISOString().slice(0, 7))).toEqual(["2026-09", "2026-10"]);
+    expect(data.every((c) => c.amount === 1600 && c.source === "MONTHLY")).toBe(true);
     expect(tx.cashCredit.createMany.mock.calls[0][0].skipDuplicates).toBe(true);
   });
 
@@ -109,7 +111,46 @@ describe("advance (catching up)", () => {
     tx.cashCredit.findMany.mockResolvedValue([{ month: d("2026-07") }, { month: d("2026-10") }]);
     tx.recurringRule.findMany.mockResolvedValue([]);
     await advance(asTx(tx), "plan-1", "u", CLOCK);
-    expect(tx.cashCredit.createMany.mock.calls[0][0].data.map((c: { month: Date }) => c.month.toISOString().slice(0, 7))).toEqual(["2026-08", "2026-09"]);
+    expect(credited(tx).map((c) => c.month.toISOString().slice(0, 7))).toEqual(["2026-08", "2026-09"]);
+  });
+
+  describe("a month that spends more than it earns (DECISIONS.md #31)", () => {
+    const overspend = { ...profile, monthlyExpense: "4500.00" }; // spare -500
+
+    it("is paid from the cash the account has", async () => {
+      const tx = makeTx();
+      tx.userProfile.findUnique.mockResolvedValue(overspend);
+      tx.cashCredit.findMany.mockResolvedValue([{ month: d("2026-09") }]);
+      tx.recurringRule.findMany.mockResolvedValue([]);
+      tx.cashCredit.aggregate.mockResolvedValue({ _sum: { amount: 2000 } });
+      tx.ledgerEntry.aggregate.mockResolvedValue({ _sum: { amount: 0 } });
+
+      await advance(asTx(tx), "plan-1", "u", CLOCK);
+
+      expect(credited(tx)).toEqual([{ planId: "plan-1", month: d("2026-10"), amount: -500, source: "MONTHLY" }]);
+    });
+
+    it("is limited to the cash there is, so the account never goes into debt", async () => {
+      const tx = makeTx();
+      tx.userProfile.findUnique.mockResolvedValue(overspend);
+      tx.cashCredit.findMany.mockResolvedValue([{ month: d("2026-09") }]);
+      tx.recurringRule.findMany.mockResolvedValue([]);
+      tx.cashCredit.aggregate.mockResolvedValue({ _sum: { amount: 120.5 } });
+      tx.ledgerEntry.aggregate.mockResolvedValue({ _sum: { amount: 0 } });
+
+      await advance(asTx(tx), "plan-1", "u", CLOCK);
+
+      expect(credited(tx)[0].amount).toBe(-120.5);
+    });
+
+    it("a surplus month does not look at the cash at all", async () => {
+      const tx = makeTx();
+      tx.userProfile.findUnique.mockResolvedValue(profile);
+      tx.cashCredit.findMany.mockResolvedValue([{ month: d("2026-09") }]);
+      tx.recurringRule.findMany.mockResolvedValue([]);
+      await advance(asTx(tx), "plan-1", "u", CLOCK);
+      expect(tx.cashCredit.aggregate).not.toHaveBeenCalled();
+    });
   });
 
   it("does nothing when every month is already credited (idempotent)", async () => {

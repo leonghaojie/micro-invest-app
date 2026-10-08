@@ -112,8 +112,13 @@ class ProfileService {
 
         const updated = await tx.userProfile.update({ where: { userId }, data: { ...parsed } });
         const newSpare = spareIncome(parsed.monthlyIncome, parsed.monthlyExpense);
-        const credit = await tx.cashCredit.findUnique({ where: { planId_month: { planId: plan.id, month: monthDate(clock.tradeMonth) } } });
-        if (credit) {
+        // A month the user has already reported (the monthly check-in) is left as they reported it.
+        const month = monthDate(clock.tradeMonth);
+        const [credit, checkIn] = await Promise.all([
+          tx.cashCredit.findUnique({ where: { planId_month: { planId: plan.id, month } } }),
+          tx.monthlyCheckIn.findUnique({ where: { planId_month: { planId: plan.id, month } } }),
+        ]);
+        if (credit && !checkIn) {
           const delta = round2(newSpare - Number(credit.amount));
           const state = await computeState(tx, plan.id, clock);
           if (state.cash + delta < -0.005) {

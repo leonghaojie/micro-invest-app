@@ -102,9 +102,21 @@ export function monthRange(from: string, to: string): string[] {
 export const round2 = (v: number) => Math.round(v * 100) / 100;
 const toCents = (v: number) => Math.round(v * 100);
 
-/** What is left of a month's income after expenses; never negative (there is no debt in the app). */
+/** What is left of a month's income after expenses. Negative when the month's spending is more than its income. */
 export function spareIncome(income: number, expense: number): number {
-  return Math.max(0, round2(income - expense));
+  return round2(income - expense);
+}
+
+/**
+ * The cash credit for a month whose income minus expenses is `spare` (DECISIONS.md #31). A surplus is
+ * credited whole. A deficit is paid from the cash the account already has (`cashBefore`); the account
+ * never goes into debt, so a deficit larger than the cash is limited to the cash. Use this where a
+ * month is credited automatically; a month the user reports by hand is refused instead (see
+ * checkin.service.ts), because the user can then fix it.
+ */
+export function creditFor(spare: number, cashBefore: number): number {
+  if (spare >= 0) return round2(spare);
+  return round2(0 - Math.min(-spare, Math.max(0, cashBefore)));
 }
 
 /**

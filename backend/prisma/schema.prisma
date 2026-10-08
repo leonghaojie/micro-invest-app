@@ -288,6 +288,7 @@ model Plan {
   months    PlanMonth[]
   entries   LedgerEntry[]
   credits   CashCredit[]
+  checkIns  MonthlyCheckIn[]
   holdings  PlanHolding[]
   rules     RecurringRule[]
 
@@ -337,6 +338,7 @@ enum CreditSource {
   SETUP
   MONTHLY
   MIGRATED
+  CHECKIN
 }
 
 // DECISIONS.md #19: the facts. Every buy and sell, in the order they happened. Holdings,
@@ -375,6 +377,25 @@ model CashCredit {
 
   @@unique([planId, month])
   @@map("cash_credits")
+}
+
+// DECISIONS.md #31: what the user said they earned and spent in one month, for that month only.
+// The profile's income and expenses are the USUAL figures that credit a month by default; a
+// check-in replaces the month's credit (income - expense, which may be negative) without touching
+// the profile, so a one-off cannot recur. Unique per month: submitting again replaces it.
+model MonthlyCheckIn {
+  id        String   @id @default(uuid())
+  planId    String
+  month     DateTime
+  income    Decimal  @db.Decimal(12, 2)
+  expense   Decimal  @db.Decimal(12, 2)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  plan Plan @relation(fields: [planId], references: [id], onDelete: Cascade)
+
+  @@unique([planId, month])
+  @@map("monthly_checkins")
 }
 
 // Derived, latest only: what the account holds now (including the trade month at cost).

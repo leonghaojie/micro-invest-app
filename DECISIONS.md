@@ -2502,6 +2502,76 @@ share), `utils/investTabs.ts`; `MainTabNavigator.tsx` and the links above.
 Supersedes the tab structure of the 20 Aug 2026 UI restructuring and the Funds and Portfolios tabs of #14, #16 and
 #28. Implements: UC-03 and FR04 amended (FR62).
 
+## 31. A month can spend more than it earns, and the app asks once a month (8 Oct 2026)
+
+**Problem.** The account was credited each month with income minus expenses, and that was clamped at zero
+(`spareIncome` never went below 0). A real month is not like that. A person who has saved for a while can make a
+big purchase, so that one month spends far more than it earns, and the app had no way to show it. The only way to
+record it was to change the income or expenses on the profile, and the profile applies to every month after, so a
+one-off purchase would keep being deducted from (or, with expenses above income, silently ignored in) every
+following month until the user remembered to change it back.
+
+**Decision.**
+1. **A month's cash credit can be negative.** `spareIncome` is income minus expenses without the floor. A deficit is
+   paid from the cash the account has. The account never goes into debt:
+   - a month the user **reports** (see 3) that the cash cannot cover is **refused** with the amounts and the
+     options (sell something first, or enter a smaller expense), as a profile edit already was;
+   - a month **credited automatically** at the profile's usual figures, when those spend more than they earn, takes
+     what it can from the cash and no more (`creditFor`): a deficit larger than the cash is limited to the cash.
+     The opening credit at set-up, when there is no cash yet, is zero.
+2. **The profile's income and expenses are the usual figures.** They credit a month by default and decide the peer
+   comparisons (savings rate, income band, investment capacity). A one-off never has to touch them.
+3. **A monthly check-in** (new table `monthly_checkins`, one row per account and month; `CHECKIN` added to the credit
+   sources) records what the user says they earned and spent in the current trade month. It replaces that month's
+   credit with income minus expenses and changes nothing else. Income and spending of zero are valid (no pay this
+   month). Submitting again replaces it. Ticking **Make these my usual monthly figures** also updates the profile, for a
+   real change such as a new job; it is off by default and is not offered when the figures equal the usual ones.
+   Past months are never touched.
+4. **The app asks every month.** The Dashboard leads with a card: until the month is confirmed it asks "Check in
+   for October 2026" with an **Update this month** button; once confirmed it is one line (earned, spent, the effect on
+   cash) that opens the form again. Because each month starts from the usual figures, an unconfirmed month still
+   works, and a one-off reported last month does not recur this month. The check-in screen shows, as the user types,
+   what the month does to the cash, and disables Save, with the reason, when the cash cannot cover it.
+5. **The profile screen says what it is**: the labels read "Usual monthly income / expense", and the text points to the
+   check-in for one-offs. A profile edit leaves a month the user has already reported as they reported it.
+6. **Activity** labels a negative credit "Spent more than earned" and shows it as money out.
+
+**Cash that can pay for an overspend** is what was saved before the month: the month's own credit is being replaced,
+so it is not counted, and what has already been bought this month is spent. A new user with only this month's spare
+income therefore cannot report a deficit; someone with savings can, up to those savings.
+
+**Where it lives.** `utils/ledger.ts` (`spareIncome`, `creditFor`); `services/ledger.service.ts` (`advance` now goes
+month by month, crediting then running that month's monthly buys, because a deficit and a skipped buy both depend on the
+cash left by earlier months); `services/checkin.service.ts`, `controllers/checkin.controller.ts`,
+`routes/checkin.routes.ts` (`GET` and `PUT /checkin/current`); `services/profile.service.ts`; migration
+`20261008100000_monthly_checkin`. Mobile: `CheckInScreen.tsx`, the card in `DashboardScreen.tsx`, `ProfileSetupScreen.tsx`,
+`ActivityScreen.tsx`, `AppNavigator.tsx`.
+
+**Verification.**
+- Backend: 844 tests in 33 suites (33 new: `creditFor`; a negative credit in the replay; `advance` paying a deficit from
+  cash and limiting it to the cash; the profile edit leaving a reported month alone and accepting expenses above income when
+  the cash can pay; the whole `CheckInService`, including refusal, replacement, the usual-figures option and ordering).
+  Typecheck clean in both apps.
+- **Live API** (a fresh local test account): the first check-in is unconfirmed with the usual figures; reporting a month
+  spending $2,500 more than earned is refused with $0 saved; confirming the usual figures, then reporting 3,000 / 2,500,
+  changes only the month's credit (the profile still reads 4,000 / 2,400); making 5,200 / 2,600 the usual figures updates the
+  profile. With $4,800 of earlier credits added, the $2,500 overspend is accepted (cash 7,400 → 2,300, Activity shows
+  "CREDIT −2,500 CHECKIN") and a $5,000 overspend is refused naming $4,800 saved.
+- **UI (Expo web):** the Dashboard card showed the confirmed month; the form showed "You spent $2,500.00 more than you
+  earned. That comes out of your cash. Cash after this: $2,300.00"; with spending 9,500 it showed the red refusal and
+  disabled Save; saving 4,000 / 3,000 returned to the Dashboard showing "adds $1,000.00" and cash $5,800.
+
+**Limits.**
+- Only the **current** month can be reported. A big purchase from an earlier month cannot be added afterwards,
+  because past months are fixed (BR-05); the user reports it in the month it happens.
+- The check-in is a prompt, not a gate: nothing stops a user ignoring it, and the usual figures then credit the month.
+- A monthly buy that the deficit makes unaffordable is skipped and recorded, as any unaffordable monthly buy is.
+- The peer comparisons use the **usual** figures, so one big month does not move a user's savings rate or cohort.
+- The Insights tab's "cash buffer" divides cash by the usual expenses, so it moves with the cash, not with one month.
+
+Amends #19 (the credit is no longer clamped at zero and a month can be reported) and #17 (the profile's income and
+expenses are the usual figures). Implements: UC-02 and FR38 and FR41 amended.
+
 ## Open items (Design Model §8, carried forward)
 
 - **`Phase2_SRS_v1.6.docx` — done, no longer open.** Produced in the same

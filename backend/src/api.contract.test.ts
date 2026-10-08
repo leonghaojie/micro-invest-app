@@ -24,6 +24,7 @@ import { peerCohortService } from "./services/peerCohort.service";
 import { peerGroupingService } from "./services/peerGrouping.service";
 import { peerInsightsService } from "./services/peerInsights.service";
 import { planService } from "./services/plan.service";
+import { checkInService } from "./services/checkin.service";
 import { recurringService } from "./services/recurring.service";
 import { tradeService } from "./services/trade.service";
 import { portfolioService } from "./services/portfolio.service";
@@ -62,6 +63,7 @@ jest.mock("./services/peerInsights.service", () => ({
   peerInsightsService: { getDashboard: jest.fn() },
 }));
 jest.mock("./services/plan.service", () => ({ planService: { getActivePlan: jest.fn() } }));
+jest.mock("./services/checkin.service", () => ({ checkInService: { current: jest.fn(), submit: jest.fn() } }));
 jest.mock("./services/recurring.service", () => ({ recurringService: { list: jest.fn(), create: jest.fn(), pause: jest.fn(), resume: jest.fn(), changeAmount: jest.fn() } }));
 jest.mock("./services/trade.service", () => ({ tradeService: { buy: jest.fn(), sell: jest.fn(), history: jest.fn() } }));
 jest.mock("./services/portfolio.service", () => ({
@@ -106,6 +108,8 @@ const protectedRoutes: RouteCase[] = [
   { name: "POST /recurring/:id/pause", method: "post", path: "/recurring/r1/pause", fn: recurringService.pause as jest.Mock, returns: { id: "r1" }, status: 200, args: [USER_ID, "r1"] },
   { name: "POST /recurring/:id/resume", method: "post", path: "/recurring/r1/resume", fn: recurringService.resume as jest.Mock, returns: { rule: {} }, status: 200, args: [USER_ID, "r1"] },
   { name: "PUT /recurring/:id", method: "put", path: "/recurring/r1", body, fn: recurringService.changeAmount as jest.Mock, returns: { id: "r2" }, status: 200, args: [USER_ID, "r1", body] },
+  { name: "GET /checkin/current", method: "get", path: "/checkin/current", fn: checkInService.current as jest.Mock, returns: { month: "2026-10" }, status: 200, args: [USER_ID] },
+  { name: "PUT /checkin/current", method: "put", path: "/checkin/current", body, fn: checkInService.submit as jest.Mock, returns: { month: "2026-10" }, status: 200, args: [USER_ID, body] },
   { name: "POST /trades/sell", method: "post", path: "/trades/sell", body, fn: tradeService.sell as jest.Mock, returns: { side: "SELL" }, status: 201, args: [USER_ID, body] },
   { name: "GET /plan", method: "get", path: "/plan", fn: planService.getActivePlan as jest.Mock, returns: { planId: "pl" }, status: 200, args: [USER_ID] },
   { name: "GET /dashboard/summary", method: "get", path: "/dashboard/summary", fn: dashboardService.getSummary as jest.Mock, returns: {}, status: 200, args: [USER_ID] },

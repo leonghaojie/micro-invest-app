@@ -21,6 +21,7 @@ import {
   addMonths,
   averageMonthlyBuy,
   Credit,
+  creditFor,
   FundReturns,
   LedgerEntry,
   monthRange,
@@ -128,7 +129,8 @@ export async function ensureAccount(tx: Tx, userId: string, clock: AccountClock)
     data: {
       planId: plan.id,
       month: monthDate(clock.tradeMonth),
-      amount: spareIncome(Number(profile.monthlyIncome), Number(profile.monthlyExpense)),
+      // No cash yet, so a month that spends more than it earns opens the account at zero.
+      amount: creditFor(spareIncome(Number(profile.monthlyIncome), Number(profile.monthlyExpense)), 0),
       source: "SETUP",
     },
   });
@@ -136,9 +138,11 @@ export async function ensureAccount(tx: Tx, userId: string, clock: AccountClock)
 }
 
 /**
- * Brings the account up to the trade month: a credit for every month missing one (at the
- * profile's current spare income, which is right because profile edits first catch up
- * before they apply), then the due recurring buys. Idempotent.
+ * Brings the account up to the trade month, one month at a time: a credit for the month if it has
+ * none (at the profile's usual spare income, which is right because profile edits first catch up
+ * before they apply; a deficit is paid from the cash the account has, DECISIONS.md #31), then the
+ * recurring buys due that month. Doing the months in order matters: a deficit and a skipped buy
+ * both depend on the cash left by the months before. Idempotent.
  */
 export async function advance(tx: Tx, planId: string, userId: string, clock: AccountClock): Promise<void> {
   const profile = await tx.userProfile.findUnique({ where: { userId } });
@@ -148,50 +152,62 @@ export async function advance(tx: Tx, planId: string, userId: string, clock: Acc
   const have = new Set(credits.map((c) => monthKey(c.month)));
   const first = credits.length > 0 ? monthKey(credits[0].month) : clock.tradeMonth;
   const spare = spareIncome(Number(profile.monthlyIncome), Number(profile.monthlyExpense));
-  const missing = monthRange(first, clock.tradeMonth).filter((m) => !have.has(m));
-  if (missing.length > 0) {
-    await tx.cashCredit.createMany({
-      data: missing.map((m) => ({ planId, month: monthDate(m), amount: spare, source: "MONTHLY" as const })),
-      skipDuplicates: true,
-    });
-  }
 
-  await runDueRules(tx, planId, clock);
+  const rules = await loadRules(tx, planId);
+  const firstRule = rules.map((r) => monthKey(r.startMonth)).sort()[0];
+  const start = firstRule !== undefined && firstRule < first ? firstRule : first;
+  for (const month of monthRange(start, clock.tradeMonth)) {
+    if (month >= first && !have.has(month)) {
+      const amount = spare >= 0 ? spare : creditFor(spare, await cashAtStartOf(tx, planId, month));
+      await tx.cashCredit.createMany({ data: [{ planId, month: monthDate(month), amount, source: "MONTHLY" as const }], skipDuplicates: true });
+    }
+    await runRulesForMonth(tx, planId, month, rules);
+  }
 }
 
-/** Runs every active recurring buy once for each month it has not yet run, oldest month first. */
-export async function runDueRules(tx: Tx, planId: string, clock: AccountClock): Promise<void> {
-  const rules = await tx.recurringRule.findMany({
+/** The account's monthly buys with the runs each already has and the weights of a portfolio target. */
+async function loadRules(tx: Tx, planId: string) {
+  return tx.recurringRule.findMany({
     where: { planId },
     include: { runs: true, portfolio: { include: { allocations: true } } },
     orderBy: [{ createdAt: "asc" }, { id: "asc" }],
   });
+}
+type LoadedRule = Awaited<ReturnType<typeof loadRules>>[number];
+
+/** Runs every active recurring buy once for each month it has not yet run, oldest month first. */
+export async function runDueRules(tx: Tx, planId: string, clock: AccountClock): Promise<void> {
+  const rules = await loadRules(tx, planId);
   if (rules.length === 0) return;
-
   const firstMonth = rules.map((r) => monthKey(r.startMonth)).sort()[0];
-  for (const month of monthRange(firstMonth, clock.tradeMonth)) {
-    for (const rule of rules) {
-      const start = monthKey(rule.startMonth);
-      const end = rule.endMonth ? monthKey(rule.endMonth) : null;
-      if (month < start || (end !== null && month > end)) continue;
-      if (rule.runs.some((r) => monthKey(r.month) === month)) continue;
+  for (const month of monthRange(firstMonth, clock.tradeMonth)) await runRulesForMonth(tx, planId, month, rules);
+}
 
-      const amount = Number(rule.amount);
-      const legs = rule.fundId
-        ? [{ fundId: rule.fundId, amount }]
-        : splitByWeights(amount, (rule.portfolio?.allocations ?? []).map((a) => ({ fundId: a.fundId, weightPct: Number(a.weightPct) })));
+/** Runs each active recurring buy that has not yet run in `month`: bought if the cash covers it, else skipped. */
+async function runRulesForMonth(tx: Tx, planId: string, month: string, rules: LoadedRule[]): Promise<void> {
+  for (const rule of rules) {
+    const start = monthKey(rule.startMonth);
+    const end = rule.endMonth ? monthKey(rule.endMonth) : null;
+    if (month < start || (end !== null && month > end)) continue;
+    if (rule.runs.some((r) => monthKey(r.month) === month)) continue;
 
-      const cash = await cashAtStartOf(tx, planId, month);
-      if (legs.length === 0 || cash < amount) {
-        await tx.recurringRun.create({ data: { ruleId: rule.id, month: monthDate(month), status: "SKIPPED" } });
-        continue;
-      }
-      const batchId = randomUUID();
-      await tx.ledgerEntry.createMany({
-        data: legs.map((l) => ({ planId, month: monthDate(month), side: "BUY" as const, fundId: l.fundId, amount: l.amount, source: "RECURRING" as TradeSource, batchId })),
-      });
-      await tx.recurringRun.create({ data: { ruleId: rule.id, month: monthDate(month), status: "BOUGHT" } });
+    const amount = Number(rule.amount);
+    const legs = rule.fundId
+      ? [{ fundId: rule.fundId, amount }]
+      : splitByWeights(amount, (rule.portfolio?.allocations ?? []).map((a) => ({ fundId: a.fundId, weightPct: Number(a.weightPct) })));
+
+    const cash = await cashAtStartOf(tx, planId, month);
+    if (legs.length === 0 || cash < amount) {
+      await tx.recurringRun.create({ data: { ruleId: rule.id, month: monthDate(month), status: "SKIPPED" } });
+      rule.runs.push({ id: "", ruleId: rule.id, month: monthDate(month), status: "SKIPPED", createdAt: new Date() });
+      continue;
     }
+    const batchId = randomUUID();
+    await tx.ledgerEntry.createMany({
+      data: legs.map((l) => ({ planId, month: monthDate(month), side: "BUY" as const, fundId: l.fundId, amount: l.amount, source: "RECURRING" as TradeSource, batchId })),
+    });
+    await tx.recurringRun.create({ data: { ruleId: rule.id, month: monthDate(month), status: "BOUGHT" } });
+    rule.runs.push({ id: "", ruleId: rule.id, month: monthDate(month), status: "BOUGHT", createdAt: new Date() });
   }
 }
 
