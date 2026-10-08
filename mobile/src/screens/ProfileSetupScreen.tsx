@@ -169,8 +169,8 @@ export function ProfileSetupScreen({ navigation, route }: Props) {
       <Text style={styles.title}>{isEdit ? "Edit your profile" : "Set up your profile"}</Text>
       <Text style={styles.subtitle}>
         {isEdit
-          ? "Changes to income or expenses update this month's cash only; past months stay as they were."
-          : "Your income and expenses decide how much cash you can invest each month, and shape your peer comparisons."}
+          ? "These are your usual monthly figures. Changing them updates this month's cash (unless you have already checked in this month); past months stay as they were. For a one-off, use this month's check-in on the Dashboard instead, so it does not repeat."
+          : "Your usual income and expenses decide how much cash you can invest each month, and shape your peer comparisons. Each month you can confirm them or report a one-off."}
       </Text>
 
       <View style={styles.form}>
@@ -215,7 +215,7 @@ export function ProfileSetupScreen({ navigation, route }: Props) {
           ))}
         </View>
 
-        <Text style={styles.label}>Monthly income (SGD)</Text>
+        <Text style={styles.label}>Usual monthly income (SGD)</Text>
         <TextInput
           style={styles.input}
           placeholder="e.g. 4000"
@@ -225,7 +225,7 @@ export function ProfileSetupScreen({ navigation, route }: Props) {
           editable={!submitting}
         />
 
-        <Text style={styles.label}>Monthly expense (SGD)</Text>
+        <Text style={styles.label}>Usual monthly expense (SGD)</Text>
         <TextInput
           style={styles.input}
           placeholder="e.g. 2500"
@@ -235,7 +235,7 @@ export function ProfileSetupScreen({ navigation, route }: Props) {
           editable={!submitting}
         />
         {currentSavingsRate !== null && (
-          <Text style={styles.hint}>Current Savings Rate: {currentSavingsRate.toFixed(0)}%</Text>
+          <Text style={styles.hint}>Current Savings Rate: {currentSavingsRate.toFixed(0)}%{currentSavingsRate < 0 ? " (you spend more than you earn, which comes out of your cash)" : ""}</Text>
         )}
 
         <Text style={styles.label}>Age</Text>

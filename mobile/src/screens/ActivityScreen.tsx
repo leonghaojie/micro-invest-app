@@ -22,7 +22,7 @@ interface Item {
 const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const longMonth = (m: string) => `${MONTH_NAMES[Number(m.split("-")[1]) - 1]} ${m.split("-")[0]}`;
 
-const SOURCE_NOTE: Record<string, string> = { RECURRING: "monthly buy", MIGRATED: "from your earlier plan", SETUP: "opening cash", MONTHLY: "monthly cash" };
+const SOURCE_NOTE: Record<string, string> = { RECURRING: "monthly buy", MIGRATED: "from your earlier plan", SETUP: "opening cash", MONTHLY: "monthly cash", CHECKIN: "your monthly check-in" };
 
 export function ActivityScreen() {
   const [items, setItems] = useState<Item[] | null>(null);
@@ -88,7 +88,9 @@ export function ActivityScreen() {
       month: it.month,
       title:
         it.kind === "CREDIT"
-          ? "Cash added"
+          ? it.amount < 0
+            ? "Spent more than earned"
+            : "Cash added"
           : it.kind === "SKIPPED"
             ? `Monthly buy skipped: ${it.ticker ?? it.name ?? ""}`.trim()
             : `${it.kind === "BUY" ? "Bought" : "Sold"} ${it.ticker}`,
@@ -112,15 +114,15 @@ export function ActivityScreen() {
             {r.kind === "SKIPPED" ? (
               <Text style={styles.skipped}>{formatCurrency(r.amount)} not bought</Text>
             ) : (
-              <Text style={[styles.amount, r.kind === "BUY" ? styles.out : styles.in]}>
-                {r.kind === "BUY" ? "-" : "+"}
-                {formatCurrency(r.amount)}
+              <Text style={[styles.amount, r.kind === "BUY" || r.amount < 0 ? styles.out : styles.in]}>
+                {r.kind === "BUY" || r.amount < 0 ? "-" : "+"}
+                {formatCurrency(Math.abs(r.amount))}
               </Text>
             )}
           </View>
         ))}
       </View>
-      <Text style={styles.foot}>Amounts are the effect on your cash: buys take it out; sells and monthly cash add to it.</Text>
+      <Text style={styles.foot}>Amounts are the effect on your cash: buys, and months you spent more than you earned, take it out; sells and monthly cash add to it.</Text>
     </ScrollView>
   );
 }

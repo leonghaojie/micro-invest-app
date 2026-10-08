@@ -13,6 +13,7 @@ import { profileService } from "./profile.service";
 const tx = {
   userProfile: { update: jest.fn() },
   cashCredit: { findUnique: jest.fn(), update: jest.fn() },
+  monthlyCheckIn: { findUnique: jest.fn() },
 };
 
 jest.mock("../config/prisma", () => ({
@@ -175,6 +176,26 @@ describe("ProfileService", () => {
     it("explains the refusal in terms of this month's cash", async () => {
       ledger.computeState.mockResolvedValue({ cash: 300 });
       await expect(profileService.upsertProfile("user-1", { ...base, monthlyIncome: 3000 })).rejects.toThrow(/lower this month's cash by \$1000\.00.*only \$300\.00/);
+    });
+
+    it("leaves a month the user has already reported (the monthly check-in) as they reported it, DECISIONS.md #31", async () => {
+      tx.monthlyCheckIn.findUnique.mockResolvedValue({ id: "ci-1" });
+
+      const result = await profileService.upsertProfile("user-1", { ...base, monthlyIncome: 5000 });
+
+      expect(result).toMatchObject({ monthlyIncome: 5000 }); // the usual figures still change
+      expect(tx.cashCredit.update).not.toHaveBeenCalled();
+    });
+
+    it("accepts expenses above income (a month can spend more than it earns) when the cash can pay the gap", async () => {
+      ledger.computeState.mockResolvedValue({ cash: 5000 });
+      await profileService.upsertProfile("user-1", { ...base, monthlyExpense: 4500 }); // spare -500, was 1600
+      expect(tx.cashCredit.update).toHaveBeenCalledWith({ where: { id: "credit-1" }, data: { amount: -500 } });
+    });
+
+    it("refuses expenses above income that the cash cannot pay", async () => {
+      ledger.computeState.mockResolvedValue({ cash: 1000 });
+      await expect(profileService.upsertProfile("user-1", { ...base, monthlyExpense: 4500 })).rejects.toMatchObject({ statusCode: 422 });
     });
 
     it("never touches any other month's credit", async () => {

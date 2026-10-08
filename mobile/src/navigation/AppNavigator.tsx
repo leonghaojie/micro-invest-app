@@ -34,6 +34,7 @@ import { PortfolioDetailScreen } from "../screens/PortfolioDetailScreen";
 import { ForgotPasswordScreen } from "../screens/ForgotPasswordScreen";
 import { FriendsScreen } from "../screens/FriendsScreen";
 import { ActivityScreen } from "../screens/ActivityScreen";
+import { CheckInScreen } from "../screens/CheckInScreen";
 import { ProfileSetupScreen } from "../screens/ProfileSetupScreen";
 import { RecurringScreen } from "../screens/RecurringScreen";
 import { TradeScreen } from "../screens/TradeScreen";
@@ -64,6 +65,8 @@ export type RootStackParamList = {
   Recurring: undefined;
   // DECISIONS.md #19: buys, sells and monthly cash credits.
   Activity: undefined;
+  // DECISIONS.md #31: the monthly check-in of income and spending.
+  CheckIn: undefined;
   Main: NavigatorScreenParams<MainTabParamList> | undefined;
   // DECISIONS.md #8: friend management, opened from the Peers tab.
   Friends: undefined;
@@ -151,6 +154,7 @@ export function AppNavigator() {
       <Stack.Screen name="Main" component={MainTabNavigator} options={{ headerShown: false }} />
       <Stack.Screen name="Trade" component={TradeScreen} options={({ route }) => ({ title: route.params.mode === "buy" ? "Buy" : "Sell" })} />
       <Stack.Screen name="Activity" component={ActivityScreen} options={{ title: "Activity" }} />
+      <Stack.Screen name="CheckIn" component={CheckInScreen} options={{ title: "Monthly check-in" }} />
       <Stack.Screen name="Recurring" component={RecurringScreen} options={{ title: "Monthly buys" }} />
       <Stack.Screen name="Friends" component={FriendsScreen} options={{ title: "Friends" }} />
       <Stack.Screen

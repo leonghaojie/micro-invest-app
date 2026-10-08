@@ -8,6 +8,7 @@ import express, { Express } from "express";
 import { requireAuth } from "./middleware/auth.middleware";
 import { errorHandler, notFoundHandler } from "./middleware/errorHandler.middleware";
 import { authRouter } from "./routes/auth.routes";
+import { checkInRouter } from "./routes/checkin.routes";
 import { dashboardRouter } from "./routes/dashboard.routes";
 import { friendsRouter } from "./routes/friends.routes";
 import { insightsRouter } from "./routes/insights.routes";
@@ -38,6 +39,7 @@ export function createApp(): Express {
   app.use("/plan", planRouter);
   app.use("/trades", tradeRouter);
   app.use("/recurring", recurringRouter);
+  app.use("/checkin", checkInRouter);
   app.use("/dashboard", dashboardRouter);
   app.use("/peers", peersRouter);
   app.use("/friends", friendsRouter);
