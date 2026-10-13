@@ -56,6 +56,8 @@ export interface Member {
   monthlyReturns: Record<string, number>;
   /** What the securities held are worth now. Only the anonymous comparisons use it, never the friends ranking. */
   value?: number;
+  /** Uninvested cash at the same month-end as `value`. Only the Insights cash buffer uses it (DECISIONS.md #32). */
+  cash?: number;
 }
 
 export type MetricKey = "value" | "return" | "monthlyReturn" | "investmentRate" | "consistency" | "diversification";

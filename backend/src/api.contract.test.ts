@@ -19,7 +19,6 @@ import { authService } from "./services/auth.service";
 import { dashboardService } from "./services/dashboard.service";
 import { friendsService } from "./services/friends.service";
 import { insightService } from "./services/insight.service";
-import { peerBenchmarkService } from "./services/peerBenchmark.service";
 import { peerCohortService } from "./services/peerCohort.service";
 import { peerGroupingService } from "./services/peerGrouping.service";
 import { peerInsightsService } from "./services/peerInsights.service";
@@ -48,14 +47,11 @@ jest.mock("./services/friends.service", () => ({
     removeFriendship: jest.fn(),
   },
 }));
-jest.mock("./services/peerBenchmark.service", () => ({
-  peerBenchmarkService: { computeStats: jest.fn(), getMyMetrics: jest.fn() },
-}));
-// Keep the real parsePeerDimensions/describeTier so the controller's dimension
+// Keep the real parsePeerDimensions so the controller's dimension
 // validation is exercised; only the DB-touching instance is replaced.
 jest.mock("./services/peerGrouping.service", () => ({
   ...jest.requireActual("./services/peerGrouping.service"),
-  peerGroupingService: { assignPeerGroup: jest.fn(), resolveSegment: jest.fn() },
+  peerGroupingService: { resolveSegment: jest.fn() },
 }));
 jest.mock("./services/peerCohort.service", () => ({ peerCohortService: { getCohort: jest.fn() } }));
 jest.mock("./services/peerInsights.service", () => ({
@@ -131,8 +127,6 @@ describe("authentication gate on protected routes", () => {
     ["GET /auth/me", "get", "/auth/me"] as const,
     ["POST /auth/change-password", "post", "/auth/change-password"] as const,
     ["PUT /auth/email", "put", "/auth/email"] as const,
-    ["GET /peers/summary", "get", "/peers/summary"] as const,
-    ["GET /peers/distribution", "get", "/peers/distribution"] as const,
     ["GET /peers/dashboard", "get", "/peers/dashboard"] as const,
     ["GET /peers/cohort", "get", "/peers/cohort"] as const,
   ];
@@ -391,32 +385,16 @@ describe("/peers routes", () => {
     expect(peerGroupingService.resolveSegment).not.toHaveBeenCalled();
   });
 
+  it("the income-band /peers/summary and /peers/distribution are gone (DECISIONS.md #32)", async () => {
+    expect((await request(app).get("/peers/summary").set(auth)).status).toBe(404);
+    expect((await request(app).get("/peers/distribution").set(auth)).status).toBe(404);
+  });
+
   it("GET /peers/cohort passes the token's user id and returns the report", async () => {
     (peerCohortService.getCohort as jest.Mock).mockResolvedValue({ status: "no-plan" });
     const res = await request(app).get("/peers/cohort").set(auth);
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ status: "no-plan" });
     expect(peerCohortService.getCohort).toHaveBeenCalledWith(USER_ID);
-  });
-
-  it("GET /peers/summary combines group, stats and the caller's own metrics", async () => {
-    (peerGroupingService.assignPeerGroup as jest.Mock).mockResolvedValue({ ...group, tier: "income-band" });
-    (peerBenchmarkService.computeStats as jest.Mock).mockResolvedValue({ stats: true });
-    (peerBenchmarkService.getMyMetrics as jest.Mock).mockResolvedValue({ mine: true });
-
-    const res = await request(app).get("/peers/summary").set(auth);
-
-    expect(res.status).toBe(200);
-    expect(peerBenchmarkService.getMyMetrics).toHaveBeenCalledWith(USER_ID);
-  });
-
-  it("GET /peers/distribution returns the band and the stats", async () => {
-    (peerGroupingService.assignPeerGroup as jest.Mock).mockResolvedValue(group);
-    (peerBenchmarkService.computeStats as jest.Mock).mockResolvedValue({ p50: 1 });
-
-    const res = await request(app).get("/peers/distribution").set(auth);
-
-    expect(res.status).toBe(200);
-    expect(res.body).toMatchObject({ bandPct: 10, p50: 1 });
   });
 });

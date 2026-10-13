@@ -4,7 +4,7 @@
  * Instantiated once here and imported wherever needed, rather than each
  * service creating its own connection. Every controller/service accesses
  * persistent data through this instance (or, for PeerBenchmarkService only,
- * via prisma.$queryRaw — see peerBenchmark.service.ts and Design Model §5.3).
+ * via prisma.$queryRaw — see peerInsights.service.ts and Design Model §5.3).
  */
 import { PrismaClient } from "@prisma/client";
 

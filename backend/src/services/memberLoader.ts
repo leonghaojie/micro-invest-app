@@ -77,6 +77,7 @@ export async function loadMembers(userIds?: string[]): Promise<LoadedMembers | n
       contribution: Number(plan.contributionAmount),
       // At the latest month-end, like the Explore view's value; what was bought since shows once its data arrives.
       value: latestHeldValue(plan.months),
+      cash: plan.months[0] ? Number(plan.months[0].walletBalance) : undefined,
       consistencyPct: contributionConsistency(buyMonthsByPlan.get(plan.id) ?? [], tradeMonth)?.pct ?? null,
       holdings: plan.holdings.map((h) => ({ assetClass: h.fund.assetClass, weight: heldTotal > 0 ? Number(h.value) / heldTotal : 0, ticker: h.fund.ticker, name: h.fund.name })),
       // Months with nothing invested have no return and are left out.

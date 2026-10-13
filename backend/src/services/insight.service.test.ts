@@ -1,178 +1,82 @@
 /**
- * InsightService unit tests — FR12/UC-06, rewritten for DECISIONS.md #2's
- * income-range peer grouping and the new Savings Rate / Emergency Buffer
- * metrics (25 Aug 2026). Mocks the already-tested plan/peer services
- * directly since InsightService only orchestrates them.
+ * InsightService — FR12/UC-06 on the cohort engine (DECISIONS.md #32): the "not ready"
+ * states and how loaded members become cards. The member loader, Prisma and the plan
+ * service are mocked; the card rules themselves are tested in utils/insightCards.test.ts.
  */
+import { prisma } from "../config/prisma";
+import { Member } from "../utils/peerCohort";
 import { insightService } from "./insight.service";
-import { peerBenchmarkService } from "./peerBenchmark.service";
-import { peerGroupingService } from "./peerGrouping.service";
+import { loadMembers } from "./memberLoader";
 import { planService } from "./plan.service";
 
-jest.mock("./peerGrouping.service", () => ({
-  peerGroupingService: { assignPeerGroup: jest.fn() },
-}));
-jest.mock("./peerBenchmark.service", () => ({
-  peerBenchmarkService: { computeStats: jest.fn(), getMyMetrics: jest.fn() },
-}));
-jest.mock("./plan.service", () => ({
-  planService: { getActivePlan: jest.fn() },
-  round2: (v: number) => Math.round(v * 100) / 100,
-}));
+jest.mock("../config/prisma", () => ({ prisma: { userProfile: { findUnique: jest.fn() } } }));
+jest.mock("./plan.service", () => ({ planService: { getActivePlan: jest.fn() } }));
+jest.mock("./memberLoader", () => ({ loadMembers: jest.fn() }));
 
-const mockedGrouping = peerGroupingService as unknown as { assignPeerGroup: jest.Mock };
-const mockedBenchmark = peerBenchmarkService as unknown as { computeStats: jest.Mock; getMyMetrics: jest.Mock };
-const mockedPlan = planService as unknown as { getActivePlan: jest.Mock };
+const profiles = (prisma as unknown as { userProfile: { findUnique: jest.Mock } }).userProfile;
+const plans = planService as unknown as { getActivePlan: jest.Mock };
+const load = loadMembers as unknown as jest.Mock;
 
-const GROUP = { bandPct: 10, lo: 3600, hi: 4400, memberCount: 12 };
-
-function mockActivePlan(finalValue: number, contributionAmount = 50) {
-  mockedPlan.getActivePlan.mockResolvedValue({
-    planId: "plan-1",
-    tradeMonth: "2026-10",
-    latestDataMonth: "2026-09",
-    holdings: [{ fundId: "f1", value: finalValue, costBasis: finalValue }],
-    contributionAmount,
-    startMonth: "2026-01-01",
-    finalValue,
-    totalContributed: contributionAmount * 4,
-    growth: finalValue - contributionAmount * 4,
-    walletBalance: 100,
-    months: [],
-  });
+function member(id: string, i: number): Member {
+  return {
+    id,
+    age: 25 + (i % 10),
+    income: 3000 + i * 50,
+    expense: 2000 + i * 20,
+    risk: "MEDIUM",
+    contribution: 300,
+    consistencyPct: 100,
+    value: 1000 + i * 100,
+    cash: 500 + i * 40,
+    holdings: [{ assetClass: "EQUITY", weight: 1 }],
+    monthlyReturns: {},
+  };
 }
 
-function mockStats(overrides: Partial<{ memberCount: number; value: object; savingsRatePct: object; emergencyBuffer: object }> = {}) {
-  mockedBenchmark.computeStats.mockResolvedValue({
-    memberCount: 10,
-    value: { p25: 100, p50: 200, p75: 300 },
-    savingsRatePct: { p25: 10, p50: 30, p75: 50 },
-    emergencyBuffer: { p25: 0.5, p50: 1.5, p75: 3 },
-    ...overrides,
-  });
-}
+const members = [member("user-1", 20), ...Array.from({ length: 39 }, (_, i) => member(`peer-${i}`, i))];
 
-function mockMyMetrics(overrides: Partial<{ finalValue: number | null; savingsRatePct: number; emergencyBuffer: number | null }> = {}) {
-  mockedBenchmark.getMyMetrics.mockResolvedValue({
-    finalValue: 250,
-    savingsRatePct: 40,
-    emergencyBuffer: 2,
-    ...overrides,
-  });
-}
-
-describe("InsightService", () => {
+describe("InsightService.generate", () => {
   beforeEach(() => {
-    mockedGrouping.assignPeerGroup.mockResolvedValue(GROUP);
+    profiles.findUnique.mockResolvedValue({ userId: "user-1" });
+    plans.getActivePlan.mockResolvedValue({ planId: "plan-1" });
+    load.mockResolvedValue({ asOf: "2026-09", members, simulated: 30, fundReturns: {} });
   });
 
-  it("returns a single no-plan card when the user has no profile (so no account)", async () => {
-    mockedPlan.getActivePlan.mockResolvedValue(null);
-
-    const cards = await insightService.generate("user-1");
-
-    expect(cards).toEqual([expect.objectContaining({ id: "no-plan" })]);
+  it("asks for a profile first", async () => {
+    profiles.findUnique.mockResolvedValue(null);
+    expect(await insightService.generate("user-1")).toEqual({ status: "no-profile" });
+    expect(load).not.toHaveBeenCalled();
   });
 
-  it("returns the same card for an account that holds nothing yet (cash alone is not an investment)", async () => {
-    mockActivePlan(0);
-    mockedPlan.getActivePlan.mockResolvedValue({ ...(await mockedPlan.getActivePlan()), holdings: [], finalValue: 0 });
-
-    const cards = await insightService.generate("user-1");
-
-    expect(cards).toEqual([expect.objectContaining({ id: "no-plan", title: "Make your first investment" })]);
+  it("says there is nothing to compare before the account exists", async () => {
+    plans.getActivePlan.mockResolvedValue(null);
+    expect(await insightService.generate("user-1")).toEqual({ status: "no-plan" });
   });
 
-  it("returns a no-peer-data card when the peer group has no members yet", async () => {
-    mockActivePlan(100);
-    mockStats({ memberCount: 0, value: { p25: 0, p50: 0, p75: 0 } });
-    mockMyMetrics();
-
-    const cards = await insightService.generate("user-1");
-
-    expect(cards[0]).toEqual(expect.objectContaining({ id: "no-peer-data", tone: "neutral" }));
+  it("says there is nothing to compare until the user has invested (is a member)", async () => {
+    load.mockResolvedValue({ asOf: "2026-09", members: members.slice(1), simulated: 30, fundReturns: {} });
+    expect(await insightService.generate("user-1")).toEqual({ status: "no-plan" });
   });
 
-  it("flags a value gap below the 25th percentile", async () => {
-    mockActivePlan(80, 50);
-    mockStats();
-    mockMyMetrics();
-
-    const cards = await insightService.generate("user-1");
-
-    expect(cards[0].id).toBe("value-gap");
-    expect(cards[0].tone).toBe("suggestion");
-    expect(cards[0].showAdjustPlanAction).toBe(true);
+  it("reports missing fund data", async () => {
+    load.mockResolvedValue(null);
+    expect(await insightService.generate("user-1")).toEqual({ status: "no-data" });
   });
 
-  it("flags in-line-with-peers between p25 and p50", async () => {
-    mockActivePlan(150, 50);
-    mockStats();
-    mockMyMetrics();
-
-    const cards = await insightService.generate("user-1");
-
-    expect(cards[0].id).toBe("value-in-line");
+  it("brings the user's own account up to date before loading everyone", async () => {
+    await insightService.generate("user-1");
+    expect(plans.getActivePlan).toHaveBeenCalledWith("user-1");
+    expect(plans.getActivePlan.mock.invocationCallOrder[0]).toBeLessThan(load.mock.invocationCallOrder[0]);
   });
 
-  it("gives positive reinforcement with no suggestion when ahead of the median", async () => {
-    mockActivePlan(250, 50);
-    mockStats();
-    mockMyMetrics({ savingsRatePct: 40, emergencyBuffer: 2 }); // both above their peer medians (30, 1.5) — no gap cards
-
-    const cards = await insightService.generate("user-1");
-
-    expect(cards[0]).toEqual(expect.objectContaining({ id: "value-ahead", tone: "positive", showAdjustPlanAction: false }));
-    expect(cards).toHaveLength(1);
-  });
-
-  it("skips peer-relative cards (without crashing) when the user has no profile yet", async () => {
-    mockActivePlan(100);
-    mockedGrouping.assignPeerGroup.mockRejectedValue(Object.assign(new Error("no profile"), { statusCode: 404 }));
-
-    const cards = await insightService.generate("user-1");
-
-    expect(cards).toEqual([]);
-  });
-
-  it("adds a Savings Rate gap card when below the peer median", async () => {
-    mockActivePlan(250, 50);
-    mockStats();
-    mockMyMetrics({ savingsRatePct: 15, emergencyBuffer: 2 }); // below savings p50 (30), above buffer p50 (1.5)
-
-    const cards = await insightService.generate("user-1");
-
-    expect(cards.map((c) => c.id)).toContain("savings-rate-gap");
-    expect(cards.map((c) => c.id)).not.toContain("emergency-buffer-gap");
-  });
-
-  it("adds an Emergency Buffer gap card when below the peer median", async () => {
-    mockActivePlan(250, 50);
-    mockStats();
-    mockMyMetrics({ savingsRatePct: 40, emergencyBuffer: 0.8 }); // above savings p50, below buffer p50 (1.5)
-
-    const cards = await insightService.generate("user-1");
-
-    expect(cards.map((c) => c.id)).toContain("emergency-buffer-gap");
-  });
-
-  it("omits the Emergency Buffer card when the user has no wallet data yet", async () => {
-    mockActivePlan(250, 50);
-    mockStats();
-    mockMyMetrics({ savingsRatePct: 40, emergencyBuffer: null });
-
-    const cards = await insightService.generate("user-1");
-
-    expect(cards.map((c) => c.id)).not.toContain("emergency-buffer-gap");
-  });
-
-  it("never returns more than 3 cards", async () => {
-    mockActivePlan(80, 50); // triggers value-gap
-    mockStats();
-    mockMyMetrics({ savingsRatePct: 15, emergencyBuffer: 0.8 }); // triggers both gap cards too
-
-    const cards = await insightService.generate("user-1");
-
-    expect(cards.length).toBeLessThanOrEqual(3);
+  it("returns the three cards, the data month and the simulated share", async () => {
+    const res = await insightService.generate("user-1");
+    expect(res.status).toBe("ok");
+    if (res.status !== "ok") return;
+    expect(res.asOf).toBe("2026-09");
+    expect(res.simulatedPct).toBe(75);
+    expect(res.cards.map((c) => c.key)).toEqual(["value", "savingsRate", "cashBuffer"]);
+    expect(res.cards[0]).toMatchObject({ status: "ok", you: 3000, cohortSize: 39 });
+    expect(JSON.stringify(res)).not.toMatch(/peer-\d/);
   });
 });

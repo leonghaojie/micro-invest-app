@@ -2572,6 +2572,68 @@ cash left by earlier months); `services/checkin.service.ts`, `controllers/checki
 Amends #19 (the credit is no longer clamped at zero and a month can be reported) and #17 (the profile's income and
 expenses are the usual figures). Implements: UC-02 and FR38 and FR41 amended.
 
+## 32. Insights compare with investors like you, and describe instead of advise (13 Oct 2026)
+
+**Problem.** The Insights tab was the last part of the app still built on the income bands of #2: peers were everyone
+whose income was within ±10% of the user's, widened 5 points at a time. The Peers tab had already moved to "investors
+like you" (#18), so the two tabs could describe the same user against two different groups. The cards also gave advice
+("Raising your monthly contribution to about $X would put you in line with peers"; "Trimming monthly expenses would close
+the gap"; an Adjust Plan button), which the SRS had to carry as an exception (INS-04) and a known limitation (L-03).
+
+**Decision.**
+1. **The same three cards**: portfolio value, savings rate and cash buffer. Each is always shown, and has one of three
+   states: compared, withheld (fewer comparable investors than the privacy floor of 10), or not available yet (with
+   the reason in words).
+2. **Peers come from the cohort engine** (`utils/peerCohort.ts`): the 50 nearest investors on profile features only,
+   with weights per card.
+   - Value: income 0.4, investment capacity 0.4, life stage 0.2 (as the Peers tab's value row).
+   - Savings rate: income 0.6, life stage 0.4. **Investment capacity is left out on purpose.** Capacity is
+     (income − expenses) ÷ income, which *is* the savings rate, so matching on it would compare people with the same
+     savings rate on their savings rate (the circularity #18 rules out).
+   - Cash buffer: income 0.4, investment capacity 0.4, life stage 0.2. Cash builds up from what is left each month.
+   Only investors who have the measure count as peers (someone holding only cash is not a value peer).
+3. **The cash buffer** is the account's uninvested cash at the latest month-end ÷ the usual monthly expenses, in
+   months. A negative balance counts as 0. It is read at the same month-end as the value, so the two cards describe
+   the same moment.
+4. **Descriptive only.** A card states the user's figure, the peer median, the middle half (p25–p75), the user's
+   position (mid-rank percentile) and who the peers are ("50 investors with similar income and life stage"). Its title
+   says below, in or above the middle of similar investors. No suggestions, no tone colours, no Adjust Plan button.
+   The screen ends with the simulated share of the population and "not advice".
+5. **The income-band endpoints go.** `GET /peers/summary` and `GET /peers/distribution`, `peerBenchmark.service.ts`,
+   `assignPeerGroup` and `describeTier` had no other users and are removed. Income ranges remain only in Explore
+   (#9), where the user chooses what "peers" means.
+
+**Response.** `GET /insights` now returns `{ status: "ok", asOf, simulatedPct, cards }`, or `{ status }` with `no-profile`,
+`no-plan` (no investments yet) or `no-data`, the same states as `/peers/cohort`.
+
+**Where it lives.** `backend/src/utils/insightCards.ts` (pure: weights, measures, wording); `services/insight.service.ts`
+(loads members with `memberLoader.ts`, which now also reads each member's month-end cash); `Member.cash` in
+`utils/peerCohort.ts`; mobile `InsightsScreen.tsx` (cards with a small range bar: the middle half, the median and the
+user).
+
+**Verification.**
+- Backend: 836 tests in 33 suites, all passing (844 before: the income-band suite and `describeTier` tests went with the
+  code); typecheck clean in both apps. New
+  `insightCards.test.ts` (13): the order of the cards, the figures against a hand-worked crowd (median 4,900, middle
+  half 2,950–6,850, 51st percentile), the savings rate and buffer arithmetic, the negative-cash rule, the savings-rate
+  weights choosing same-age peers over same-rate ones, unavailable and withheld states, the "not yet" wording after a
+  first purchase, no advice words, and no member ids in the output. `insight.service.test.ts` rewritten (6) for the
+  not-ready states and ordering. The contract test checks the two removed routes return 404.
+- **Live API** (a fresh local test account, income 4,200, expenses 2,900, age 27, buying $800 of VT): before the
+  profile `no-profile`; before buying `no-plan`; after buying, the savings-rate card compared 31% with 50 investors
+  (median 41%, middle half 34%–45%, 12th percentile) and the value and cash cards said they show after the first
+  month-end.
+- **UI (Expo web):** the three cards rendered with the range bar, no console errors.
+
+**Limits.**
+- Value and cash are month-end figures, so a purchase made this month shows only after that month's fund data arrives
+  (as on the Peers tab).
+- About 97% of the population is simulated (#4, #18), and the savings rate and cash buffer of simulated peers follow
+  the generator's assumptions.
+
+Supersedes the income-band part of #2 for everything but Explore, and #7's Emergency Buffer card (renamed cash buffer,
+measured the same way). Removes SRS limitation L-03 and the INS-04 advice exception. Implements: FR12 / UC-06 amended.
+
 ## Open items (Design Model §8, carried forward)
 
 - **`Phase2_SRS_v1.6.docx` — done, no longer open.** Produced in the same

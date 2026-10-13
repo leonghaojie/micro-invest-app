@@ -2,8 +2,8 @@
  * FriendsService — DECISIONS.md #8 (friends comparison, 3 Oct 2026).
  *
  * A consent-based way to compare with people the user chose, alongside the
- * anonymous income-range peer group (peerGrouping/peerBenchmark services,
- * which are untouched). Friends comparison shows *named individuals'*
+ * anonymous peer comparisons (the cohort engine and the Explore view, which
+ * are untouched). Friends comparison shows *named individuals'*
  * numbers, so it is a deliberate exception to NFR-03 ("only aggregated
  * stats") and is guarded accordingly:
  *  - friendships are mutual (request + accept);

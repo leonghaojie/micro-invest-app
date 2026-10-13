@@ -59,7 +59,9 @@ goal-type three-tier fallback with a continuous income range — peers are
 users whose monthly income is within ±10% of the requesting user's,
 widening by 5 percentage points at a time until at least
 `MIN_GROUP_SIZE` (10) match, falling back to "everyone with a plan" as
-the floor tier. The old contribution-mechanism scope (`DECISIONS.md` #6:
+the floor tier. Since `DECISIONS.md` #32 (13 Oct 2026) income ranges are used
+only in Explore, where the user picks them; Insights and the Peers tab use the
+cohort engine below. The old contribution-mechanism scope (`DECISIONS.md` #6:
 Scheduled deposit vs Round-up, `Phase2_SRS_v1.5.docx`) is superseded, not
 extended further — the rewritten engine is monthly-scheduled
 contributions only.
@@ -207,7 +209,7 @@ micro-invest-app/
 │  ├─ prisma/ingest-funds-yfinance.ts Live yfinance ingestion, step 2/2 — derives monthly returns from the .py output, upserts Fund + FundMonthlyReturn via Prisma
 │  ├─ src/routes/                     auth, profile, portfolio (funds + portfolios), plan, dashboard, peers, friends, insights
 │  ├─ src/controllers/                thin — delegate to services
-│  ├─ src/services/                   auth, mailer, profile, portfolio, plan, dashboard, ledger (+ ledgerBackfill), trade, peerGrouping, peerBenchmark, peerInsights, peerCohort, friends, insight
+│  ├─ src/services/                   auth, mailer, profile, portfolio, plan, dashboard, ledger (+ ledgerBackfill), trade, peerGrouping, peerInsights, peerCohort, friends, insight
 │  ├─ src/middleware/                 auth.middleware.ts (requireAuth), errorHandler.middleware.ts
 │  ├─ src/config/                     prisma.ts (PrismaClient singleton), env.ts
 │  └─ src/app.ts, src/index.ts        AppServer
@@ -464,7 +466,7 @@ income-based/monthly-backtest rewrite (`DECISIONS.md` #1 third amendment,
 | 3 | Auth, profile, fund catalog & portfolio composition | FR01–04 | ✅ Done — profile now collects income/expense/age (DECISIONS.md #1 third amendment) instead of a monthly budget; fund catalog sourced from real yfinance monthly data |
 | 4 | Plan engine (formerly "simulation"), dashboard | FR05–08 | ✅ Done — real-calendar monthly backtest replacing the annual-replay engine and the contribution-mechanism scope (DECISIONS.md #1 third amendment; #6 superseded); dashboard adds Wallet and Savings Rate, drops Consistency (DECISIONS.md #3, #7) |
 | 5 | Peer benchmarking engine | FR09–11 | ✅ Done — income-range grouping (DECISIONS.md #2 rewrite) replacing the risk/budget/goal tiers; synthetic peer data generation now implemented (DECISIONS.md #4) |
-| 6 | Insight generation | FR12 | ✅ Done — value/Savings-Rate/Emergency-Buffer gap cards, ConsistencyScore card removed |
+| 6 | Insight generation | FR12 | ✅ Done — value, savings rate and cash buffer cards against investors like you (cohort engine, own weights per card; savings rate matched on income and life stage only); descriptive, no advice; income-band `/peers/summary` and `/peers/distribution` removed (DECISIONS.md #32) |
 | — | Friends comparison (new scope) | FR14–17 | ✅ Done — mutual friends, invite code/email only, per-metric opt-in sharing, ranked Friends view on the Peers tab (DECISIONS.md #8, SRS v1.7) |
 | — | Peer dashboard views (new scope) | FR18–21 | ✅ Done — segmentation, percentile + histogram, month-by-month trajectory, allocation panel; ~300 calibrated synthetic peers; privacy guards (min group 10, min cell 3) (DECISIONS.md #9, SRS v1.8) |
 | — | Password reset (new scope) | FR22–23 | ✅ Done — emailed 6-digit code via Gmail SMTP (console fallback in dev); attempt cap, expiry, no account enumeration (DECISIONS.md #10, SRS v1.9). Gmail delivery itself untested until SMTP credentials are set |
