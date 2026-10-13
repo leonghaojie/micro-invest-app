@@ -9,9 +9,13 @@
  * RISK_ONLY floor — returned even if still below threshold) is "everyone
  * with a profile and an active plan", once widening exceeds ±100%.
  *
+ * Since DECISIONS.md #32 this serves only the Explore view (/peers/dashboard),
+ * where the user picks the dimensions. The default comparison, Insights and
+ * the Peers tab all pick peers with the cohort engine (utils/peerCohort.ts).
+ *
  * A "member" is a User with a matching UserProfile who has an active Plan
  * with at least one PlanMonth (mirrors the old "ran ≥1 simulation with a
- * finalValue" bar) — peerBenchmark.service.ts's percentile population must
+ * finalValue" bar) — peerInsights.service.ts's percentile population must
  * agree with this count, or memberCount would disagree with the N behind
  * the percentiles. Synthetic (isSynthetic) users are not filtered out
  * here — DECISIONS.md #4 has them participate in counts/percentiles, just
@@ -77,7 +81,7 @@ function wideningStepsPct(): number[] {
 
 /** Counts peers — other users with a profile and an active plan — matching
  * the filters, optionally restricted to an income range. A "member" here
- * must agree with the population peerBenchmark/peerInsights aggregate over. */
+ * must agree with the population peerInsights aggregates over. */
 async function countPeers(userId: string, filters: PeerGroupFilters, income?: { lo: number; hi: number }): Promise<number> {
   return prisma.userProfile.count({
     where: {
@@ -92,12 +96,6 @@ async function countPeers(userId: string, filters: PeerGroupFilters, income?: { 
 }
 
 class PeerGroupingService {
-  /** The default comparison: peers by income range only. Unchanged behaviour
-   * — used by /peers/summary and the insight cards. */
-  async assignPeerGroup(userId: string): Promise<PeerGroupAssignment> {
-    return this.resolveSegment(userId, ["income"]);
-  }
-
   /**
    * Resolves a user-chosen segment (DECISIONS.md #9). Each selected
    * dimension restricts peers to those matching the user's OWN value:
@@ -184,19 +182,4 @@ export function describeSegment(group: PeerGroupAssignment): string {
     }
   }
   return text;
-}
-
-// UC-05 step 6 transparency text — which band width the comparison
-// actually used, since a wider band silently narrows how "peer" is
-// defined and the user should know that.
-export function describeTier(group: PeerGroupAssignment): string {
-  if (group.bandPct === null) {
-    return group.memberCount < env.minGroupSize
-      ? `Only ${group.memberCount} peer${group.memberCount === 1 ? "" : "s"} with a profile so far — this comparison is based on a small sample and will get more reliable as more people join.`
-      : "Not enough peers shared an income close to yours yet, so this compares you against everyone with a profile instead.";
-  }
-  if (group.bandPct === STEP_START_PCT) {
-    return `Compared against peers earning within ${group.bandPct}% of your monthly income.`;
-  }
-  return `Not enough peers were within a tighter income range, so this compares you against peers earning within ${group.bandPct}% of your monthly income.`;
 }

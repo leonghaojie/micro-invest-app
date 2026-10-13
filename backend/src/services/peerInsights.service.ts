@@ -22,8 +22,7 @@
  * window functions) rather than loading peers into JS — Decision #5 — via one
  * shared peer-population fragment, so every panel describes exactly the same
  * group. SQL expressions that vary by metric come from fixed whitelists, never
- * from request text. The older /peers/summary logic in peerBenchmark.service.ts
- * is untouched.
+ * from request text.
  */
 import { Prisma } from "@prisma/client";
 import { env } from "../config/env";

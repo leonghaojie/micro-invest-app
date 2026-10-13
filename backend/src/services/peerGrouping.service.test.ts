@@ -6,7 +6,7 @@
  */
 import { env } from "../config/env";
 import { prisma } from "../config/prisma";
-import { describeTier, peerGroupingService } from "./peerGrouping.service";
+import { peerGroupingService } from "./peerGrouping.service";
 
 jest.mock("../config/prisma", () => ({
   prisma: {
@@ -24,11 +24,11 @@ const mockedPrisma = prisma as unknown as {
 const PROFILE = { monthlyIncome: "4000.00" };
 
 describe("PeerGroupingService", () => {
-  describe("assignPeerGroup", () => {
+  describe("resolveSegment, income only (the Explore default)", () => {
     it("404s when the user has no profile set up", async () => {
       mockedPrisma.userProfile.findUnique.mockResolvedValue(null);
 
-      await expect(peerGroupingService.assignPeerGroup("user-1")).rejects.toMatchObject({ statusCode: 404 });
+      await expect(peerGroupingService.resolveSegment("user-1", ["income"])).rejects.toMatchObject({ statusCode: 404 });
       expect(mockedPrisma.userProfile.count).not.toHaveBeenCalled();
     });
 
@@ -36,7 +36,7 @@ describe("PeerGroupingService", () => {
       mockedPrisma.userProfile.findUnique.mockResolvedValue(PROFILE);
       mockedPrisma.userProfile.count.mockResolvedValueOnce(env.minGroupSize);
 
-      const result = await peerGroupingService.assignPeerGroup("user-1");
+      const result = await peerGroupingService.resolveSegment("user-1", ["income"]);
 
       expect(result.bandPct).toBe(10);
       expect(result.lo).toBeCloseTo(3600);
@@ -52,7 +52,7 @@ describe("PeerGroupingService", () => {
         .mockResolvedValueOnce(5) // ±15%
         .mockResolvedValueOnce(env.minGroupSize); // ±20%
 
-      const result = await peerGroupingService.assignPeerGroup("user-1");
+      const result = await peerGroupingService.resolveSegment("user-1", ["income"]);
 
       expect(result.bandPct).toBe(20);
       expect(mockedPrisma.userProfile.count).toHaveBeenCalledTimes(3);
@@ -62,32 +62,13 @@ describe("PeerGroupingService", () => {
       mockedPrisma.userProfile.findUnique.mockResolvedValue(PROFILE);
       mockedPrisma.userProfile.count.mockResolvedValue(1); // every widening step, still under threshold
 
-      const result = await peerGroupingService.assignPeerGroup("user-1");
+      const result = await peerGroupingService.resolveSegment("user-1", ["income"]);
 
       expect(result.bandPct).toBeNull();
       expect(result.lo).toBe(0);
       expect(result.hi).toBe(Infinity);
       // 19 widening steps (10..100 step 5) + 1 final "everyone" count.
       expect(mockedPrisma.userProfile.count).toHaveBeenCalledTimes(20);
-    });
-  });
-
-  describe("describeTier", () => {
-    it("names the exact ±10% band on the first match", () => {
-      expect(describeTier({ bandPct: 10, lo: 0, hi: 1, memberCount: env.minGroupSize })).toMatch(/within 10%/);
-    });
-
-    it("flags that widening was needed for a wider band", () => {
-      expect(describeTier({ bandPct: 25, lo: 0, hi: 1, memberCount: env.minGroupSize })).toMatch(/within 25%/);
-      expect(describeTier({ bandPct: 25, lo: 0, hi: 1, memberCount: env.minGroupSize })).toMatch(/not enough peers/i);
-    });
-
-    it("flags a small-sample floor tier", () => {
-      expect(describeTier({ bandPct: null, lo: 0, hi: Infinity, memberCount: 3 })).toMatch(/small sample/);
-    });
-
-    it("does not flag a small sample once the floor tier itself reaches MIN_GROUP_SIZE", () => {
-      expect(describeTier({ bandPct: null, lo: 0, hi: Infinity, memberCount: env.minGroupSize })).not.toMatch(/small sample/);
     });
   });
 });
